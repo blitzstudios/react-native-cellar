@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-native-cellar/inspector",
+  "private": true,
+  "main": "../lib/module/inspector/index.js",
+  "module": "../lib/module/inspector/index.js",
+  "types": "../lib/typescript/module/inspector/index.d.ts"
+}
