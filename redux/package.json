@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-native-cellar/redux",
+  "private": true,
+  "main": "../lib/module/redux/index.js",
+  "module": "../lib/module/redux/index.js",
+  "types": "../lib/typescript/module/redux/index.d.ts"
+}

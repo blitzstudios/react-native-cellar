@@ -1,0 +1,1 @@
+{"version":3,"names":["bindSqlJsStore","openSqlJsConnection"],"sourceRoot":"../../../src","sources":["sqljs/index.ts"],"mappings":";;AAAA;AACA;AACA;AACA;;AAEA,SAASA,cAAc,EAAEC,mBAAmB,QAAQ,uBAAoB","ignoreList":[]}
