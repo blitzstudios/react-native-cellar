@@ -1,0 +1,1 @@
+{"version":3,"file":"prime_state.d.ts","sourceRoot":"","sources":["../../../src/prime_state.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,MAAM,WAAW,UAAU;IACzB,kFAAkF;IAClF,gBAAgB,EAAE,OAAO,CAAC;IAC1B;;;;;;OAMG;IACH,UAAU,EAAE,OAAO,CAAC;IACpB,iDAAiD;IACjD,OAAO,EAAE,OAAO,CAAC;CAClB;AAED;;;GAGG;AACH,eAAO,MAAM,UAAU,EAAE,UAA2E,CAAC;AAErG;;;GAGG;AACH,eAAO,MAAM,UAAU,QAAO,UAAwB,CAAC"}
