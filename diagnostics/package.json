@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-native-cellar/diagnostics",
+  "private": true,
+  "main": "../lib/module/diagnostics/index.js",
+  "module": "../lib/module/diagnostics/index.js",
+  "types": "../lib/typescript/module/diagnostics/index.d.ts"
+}
