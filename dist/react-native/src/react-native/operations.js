@@ -1,0 +1,60 @@
+/** What the app answers the panel and agents with, over Cellar's inspector. */
+import * as cellarInspector from '@sleeperhq/react-native-cellar/inspector';
+export const defaultInspector = cellarInspector;
+/** Cellar's dump, loaded when first asked for, since only a device running nitro can write one. */
+export const nitroDump = (name = 'cellar-dump.db') => Object.assign(() => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores({ name }), { fileName: name });
+/**
+ * Opens a file through React Native's networking, which reads `file://` URLs into a native blob on both platforms, so
+ * the whole file never enters JS: each part is sliced off the blob and read as a data URL.
+ */
+export const openDeviceFile = async (path) => {
+    const blob = await (await fetch(`file://${encodeURI(path)}`)).blob();
+    return {
+        size: blob.size,
+        read: (offset, length) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const url = String(reader.result ?? '');
+                resolve(url.slice(url.indexOf(',') + 1));
+            };
+            reader.onerror = () => reject(reader.error ?? new Error(`Couldn't read ${path}`));
+            reader.readAsDataURL(blob.slice(offset, Math.min(offset + length, blob.size)));
+        }),
+        close: () => blob.close?.(),
+    };
+};
+/** The store named `name`, or an error that lists the stores there are. */
+export function storeOf(inspector, name) {
+    const store = inspector.inspectedStore(name);
+    if (store)
+        return store;
+    const names = inspector.inspectedStores().map((candidate) => candidate.name);
+    throw new Error(`Unknown store "${name}". Stores: ${names.join(', ') || '(none declared)'}.`);
+}
+export async function listStores(inspector) {
+    return Promise.all(inspector.inspectedStores().map(async (store) => ({ name: store.name, schema: store.schema(), summary: await store.summary() })));
+}
+export function runQuery(inspector, { store, sql, params, limit, offset }) {
+    return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
+}
+export function listCaches(inspector, store, heap = false) {
+    return store ? storeOf(inspector, store).caches({ heap }) : inspector.inspectedCaches(undefined, { heap });
+}
+export function refetchPartition(inspector, { store, key }) {
+    return storeOf(inspector, store).refetch(key);
+}
+export function clearPartitionEtag(inspector, { store, key }) {
+    storeOf(inspector, store).clearEtag(key);
+}
+export function ingestReport(inspector) {
+    const timings = inspector.getIngestTimings();
+    return {
+        timings: timings.map((timing) => ({ ...timing, store: timing.store.replace(/_ingest$/, '') })),
+        rollup: inspector.rollupIngestTimings(timings).map((roll) => ({ ...roll, store: roll.store.replace(/_ingest$/, '') })),
+    };
+}
+/** The recorded events of `kinds` for `store`, newest last, at most `limit` of them. */
+export function filterEvents(events, { store, kinds, limit }) {
+    const matching = events.filter((event) => (!kinds?.length || kinds.includes(event.kind)) && (!store || !('store' in event) || event.store === store));
+    return limit === undefined ? matching : matching.slice(-limit);
+}

@@ -1,0 +1,73 @@
+{
+  "name": "@sleeperhq/rozenite-plugin-cellar",
+  "version": "1.0.11",
+  "description": "A React Native DevTools panel for @sleeperhq/react-native-cellar: every store, its partitions, live read-only SQL over its database, and what the stores are doing as they do it.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blitzstudios/react-native-cellar.git",
+    "directory": "rozenite-plugin"
+  },
+  "keywords": [
+    "rozenite",
+    "rozenite-plugin",
+    "react-native",
+    "devtools",
+    "sqlite",
+    "cellar"
+  ],
+  "main": "./dist/react-native/cjs/react-native.js",
+  "module": "./dist/react-native/react-native.js",
+  "types": "./dist/react-native/react-native.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/react-native/react-native.d.ts",
+      "import": "./dist/react-native/react-native.js",
+      "require": "./dist/react-native/cjs/react-native.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rozenite build",
+    "dev": "rozenite dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@rozenite/agent-bridge": "2.4.0",
+    "@rozenite/plugin-bridge": "2.4.0"
+  },
+  "peerDependencies": {
+    "@sleeperhq/react-native-cellar": ">=1.2.17",
+    "react": ">=18",
+    "react-native": ">=0.76"
+  },
+  "devDependencies": {
+    "@rozenite/testing": "2.4.0",
+    "@rozenite/vite-plugin": "2.4.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "~19.2.3",
+    "@types/react-dom": "~19.2.3",
+    "@types/react-native-web": "^0",
+    "@types/sql.js": "^1.4.9",
+    "jsdom": "^26.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native-web": "^0.21.2",
+    "rozenite": "2.4.0",
+    "sql.js": "1.13.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "yarn@4.14.1",
+  "bin": {
+    "cellar-open-dump": "bin/open-dump.mjs"
+  }
+}
