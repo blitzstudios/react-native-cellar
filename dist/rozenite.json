@@ -1,0 +1,1 @@
+{"name":"@sleeperhq/rozenite-plugin-cellar","version":"1.0.16","description":"A React Native DevTools panel for @sleeperhq/react-native-cellar: every store, its partitions, live read-only SQL over its database, and what the stores are doing as they do it.","panels":[{"name":"Cellar","source":"/devtools/panel.html"}],"integrations":["react-native"]}
