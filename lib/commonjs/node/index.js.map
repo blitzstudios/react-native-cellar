@@ -1,0 +1,1 @@
+{"version":3,"names":["_node_connection","require","g","globalThis","__DEV__","process","env","NODE_ENV"],"sourceRoot":"../../../src","sources":["node/index.ts"],"mappings":";;;;;;;;;;;;;;;;;AAUA,IAAAA,gBAAA,GAAAC,OAAA;AAVA;AACA;AACA;AACA;AACA;;AAEA,MAAMC,CAAC,GAAGC,UAAmC;AAC7CD,CAAC,CAACE,OAAO,KAAKC,OAAO,CAACC,GAAG,CAACC,QAAQ,KAAK,YAAY","ignoreList":[]}

@@ -1,0 +1,6 @@
+{
+  "name": "@sleeperhq/react-native-cellar/node",
+  "private": true,
+  "main": "../lib/commonjs/node/index.js",
+  "types": "../lib/typescript/commonjs/node/index.d.ts"
+}
