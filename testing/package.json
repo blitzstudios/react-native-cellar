@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-native-cellar/testing",
+  "private": true,
+  "main": "../lib/module/testing/index.js",
+  "module": "../lib/module/testing/index.js",
+  "types": "../lib/typescript/module/testing/index.d.ts"
+}
