@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-native-cellar/sqljs",
+  "private": true,
+  "main": "../lib/module/sqljs/index.js",
+  "module": "../lib/module/sqljs/index.js",
+  "types": "../lib/typescript/module/sqljs/index.d.ts"
+}
