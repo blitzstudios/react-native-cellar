@@ -79,18 +79,11 @@ export function identityOf(part: object): string {
 }
 
 /**
- * A value a read varies by: anything {@linkcode ReadDef.select | select} reads beyond the partition itself. An object
- * or an array keys by its content, so a read can vary by a config or an options object without the caller serializing
- * one — but it must be plain data, since only own enumerable properties count towards the key (see
- * {@linkcode stableKey}).
+ * A value one of a read's args holds. An object or an array keys by its content, so a read can take a config or an
+ * options object without the caller serializing one — but it must be plain data, since only own enumerable properties
+ * count towards the key (see {@linkcode stableKey}).
  */
-export type VaryValue = string | number | boolean | null | undefined | readonly unknown[] | object;
-
-/**
- * The vary list of a read that declares no {@linkcode CommonDef.varyBy | varyBy}, and of one called with no args: one
- * shared array, not a fresh one per call.
- */
-export const EMPTY_VARY: readonly VaryValue[] = Object.freeze([]);
+export type ArgValue = string | number | boolean | null | undefined | readonly unknown[] | object;
 
 /** Separator between groups of parts, one level above {@linkcode KEY_SEP}, so the grouping is part of the key. */
 export const GROUP_SEP = '\u0001';
@@ -109,28 +102,31 @@ export function partitionLabel(parts: readonly string[]): string {
   return parts.join(':');
 }
 
-/** `undefined`, `null`, `''` and an empty array count as absent; `0` and `false` count as present. */
-export function isVaryPresent(value: VaryValue): boolean {
+/** Whether an arg has a value: `undefined`, `null`, `''` and an empty array count as none; `0` and `false` are values. */
+export function isArgPresent(value: unknown): boolean {
   if (value === undefined || value === null || value === '') return false;
   if (Array.isArray(value)) return value.length > 0;
   return true;
 }
 
 /**
- * A read's key: its partition, then everything it varies by, which a hook runs its select again for when it changes.
- * Vary values go through {@linkcode stableKey}, so an object or array arg keys by its content and a caller rebuilding
- * one per render doesn't count as a change.
+ * A call's key: its partition, then each of its args by name, which a hook runs its select again for when it changes.
+ * Args go through {@linkcode stableKey} one by one, so an object or array arg keys by its content and a caller
+ * rebuilding one per render doesn't count as a change, and the args object itself is never held or frozen.
  */
-export function varyKey(parts: readonly string[], vary: readonly VaryValue[]): string {
-  if (!vary.length) return cacheKeyOf(parts);
-  // One array rather than three: `cacheKey(...parts, ...vary.map(stableKey))` allocates the mapped list and a
-  // spread of both. Structured values go through {@linkcode identityOf}, so a caller holding an options object across
-  // a list serializes it once instead of once per row.
-  const joined = new Array<string>(parts.length + vary.length);
+export function argsKeyOf(parts: readonly string[], args: object): string {
+  const fields = Object.keys(args);
+  if (!fields.length) return cacheKeyOf(parts);
+  // Sorted, so two callers spelling the same args in a different order share a key.
+  if (fields.length > 1) fields.sort();
+  const joined = new Array<string>(parts.length + fields.length * 2);
   for (let index = 0; index < parts.length; index++) joined[index] = parts[index];
-  for (let index = 0; index < vary.length; index++) {
-    const value = vary[index];
-    joined[parts.length + index] = value !== null && typeof value === 'object' ? identityOf(value) : stableKey(value);
+  for (let index = 0; index < fields.length; index++) {
+    const value = (args as Record<string, unknown>)[fields[index]];
+    joined[parts.length + index * 2] = fields[index];
+    // Structured values go through {@linkcode identityOf}, so a caller holding an options object across a list
+    // serializes it once instead of once per row.
+    joined[parts.length + index * 2 + 1] = value !== null && typeof value === 'object' ? identityOf(value) : stableKey(value);
   }
   return cacheKeyOf(joined);
 }

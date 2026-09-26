@@ -153,10 +153,8 @@ store is reaching past its entry point; import it from its own module only if yo
   imperative reads.
 - **`createReadSurface`** — **the read engine, reached through `definePartitions`'s `read` / `readMany`.** A read is
   one identical five-part shape — locate the partition, prime it, subscribe its version, select a bounded
-  subset, wrap in an envelope. You declare it once as a `read<Args, Value>()({ partition, varyBy, select, empty })`
-  descriptor — two calls, the first naming what the read takes and returns and the second taking the read, which is
-  what leaves TypeScript free to infer `varyBy` from the list itself — and
-  the engine generates both halves: `read.getValue` (imperative, self-priming, reference-stable) and
+  subset, wrap in an envelope. You declare it once as a `read<Args, Value>({ partition, select, empty })`
+  descriptor, and the engine generates both halves: `read.getValue` (imperative, self-priming, reference-stable) and
   `read.useValue` (reactive `DataResult<T>`; named `useValue` so React Compiler treats it as a normal hook,
   not React's `use()` API). Your
   only job is `select(args, key)` — the SQL subset → VM — everything mechanical is the engine, including skipping
@@ -166,17 +164,22 @@ store is reaching past its entry point; import it from its own module only if yo
   `partition` **defaults to the store's `key.fields`, or to `key.of` for a record partition**, so a read
   declares no partition at all, which is the common case.
   Give it explicitly only for an address one read computes differently from its siblings. `readMany` always names
-  its own `partitions`, since the set is the read's. `varyBy` is everything else `select` reads — named as args
-  fields (`varyBy: ['itemId']`) or computed — and it is both what a hook runs `select` again for and the read's gate:
-  the read is off while any of those values is absent. A read caches nothing itself. A hook runs `select` when what it
-  read changes and keeps its last object while the new value is equal; `getValue` runs `select` on every call. So
-  `select` returns values out of the store's caches, and whatever it builds that costs anything, it builds inside one.
+  its own `partitions`, since the set is the read's.
 
-  Prefer the field names, which is the form that carries its own guarantee: `select` is handed those fields and
-  nothing else, each non-null, so a cast at the call is unnecessary and reaching an arg the read never declared —
-  the mistake that would leave a hook's value stale when that arg changed — does not compile. A computed `varyBy` names no
-  fields to narrow to, so such a read is handed the whole args and answers for them itself;
-  `no_undeclared_select_arg`, a lint rule in the consuming app, is what holds it to the same rule.
+  A read declares none of its args. It is ready once every arg its caller passed has a value — `undefined`, `null`,
+  `''` and an empty list count as none, `0` and `false` are values — and until then it fetches nothing and runs
+  nothing: one gate, for the fetch and the read alike. `optionalArgs` names the few a read may be handed without a
+  value, such as a player id its partition takes for some locators and not others; they are its third type
+  argument too, `read<Args, Value, 'playerId'>`, which is what types them. The read's functions — `select`, its
+  `partition`, `enabled` — see the args through a view (`args_view.ts`), one per read and reused across calls:
+  every arg arrives non-null, and reading one the caller left out entirely stops the function and returns `empty`,
+  with a dev warning naming the arg. The view costs a trap per arg read, a fraction of a microsecond a call.
+
+  A read caches nothing itself. A hook runs `select` again when its args change, compared field by field and by
+  content, or when what it read changes, and keeps its last object while the new value is equal; `getValue` runs
+  `select` on every call. So `select` returns values out of the store's caches, and whatever it builds that costs
+  anything, it builds inside one. In dev, a read whose `select` builds the same value from rows no cache holds three
+  times over, for the same args and the same rows, is warned about by name.
 
   Three variations cover the rest: `readMany({ partitions, … })` for a read spanning a variable set
   of partitions (it observes the same fetches through `usePrimeMany`, so it reports loading like any other read);
@@ -277,7 +280,8 @@ store.
 ## The facade
 
 The service facade publishes reads; it does not re-implement them. `pairRead` takes the read and returns both
-halves, with params typed as `Loose<Args>` so a caller may pass what it has:
+halves, with params typed as `Loose<Args>`: every field the args type requires, each as a value the caller may
+not have yet.
 
 ```ts
 const Reads = {
@@ -288,16 +292,13 @@ export const Hooks = { useGroupItems: Reads.GroupItems.useValue };
 export const Get = { getGroupItems: Reads.GroupItems.getValue };
 ```
 
-The read supplies its own gate. `read({ … })` publishes `requires` — its partition's fields plus its `varyBy`
-fields — and the pair holds the read inert until a caller has every one of them, so the facade restates nothing the
-store already declared. A field counts as in hand unless it is `undefined`, `null` or `''`; `[]`, `0` and `false`
-are answers, and what a read does with an empty list is its `varyBy`'s business. A read naming its partitions with a
-function, where there are no fields to read them off, declares `requires` itself: a read that parses one arg into
-a set of candidate partitions has no field the pair could gate on, so it names that arg.
+The read supplies its own gate, so the pair adds none: it hands the params over as they are, and the read waits
+until each has a value. `Loose<Args>` keeps every field the args type requires, so a caller that leaves one out
+fails to compile rather than fetching a partition for a read that cannot run; passing it as `null` is how a caller
+says it doesn't know it yet.
 
 A facade read's params are the store read's own args, so a service names no vocabulary of its own and translates
-nothing: `pairRead` takes the read and nothing else. `pairRead` throws on a read that publishes no `requires`, since
-it has been asked to gate on nothing.
+nothing: `pairRead` takes the read and nothing else.
 
 Both halves resolve the backend per call, so the SQLite bind at startup is picked up by callers that ran before
 it. Publishing only one half is what pushes a Redux selector into a loop of point reads, so a read-pairing guard

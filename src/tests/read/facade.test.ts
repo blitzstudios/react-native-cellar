@@ -3,10 +3,10 @@ import { pairRead } from '../../read/facade';
 import { makeResult } from '../../store_result';
 
 describe('pairRead', () => {
-  type Args = { region: string; cohort: string; ids: readonly string[] };
+  type Args = { region: string; cohort: string; ids?: readonly string[] };
 
-  /** A read as `definePartitions` publishes one: it carries the fields it waits on, which is the pair's whole gate. */
-  const fakeRead = (requires: readonly string[] = ['region', 'cohort']) => {
+  /** A read as `definePartitions` publishes one, recording what each half is handed. */
+  const fakeRead = () => {
     const calls: { get: unknown[]; use: unknown[] } = { get: [], use: [] };
     const read: Read<Args, string> = {
       getValue: (args) => {
@@ -17,12 +17,11 @@ describe('pairRead', () => {
         calls.use.push([args, options]);
         return makeResult('used', 'success');
       },
-      requires,
     };
     return { read, calls };
   };
 
-  it('hands both halves the fields the read says it needs, unchanged', () => {
+  it('hands both halves the params, unchanged', () => {
     const { read, calls } = fakeRead();
     const pair = pairRead(() => read);
 
@@ -42,39 +41,13 @@ describe('pairRead', () => {
     expect(calls.use).toEqual([[{ region: 'us', cohort: 'PHI' }, { enabled: false }]]);
   });
 
-  it.each([
-    ['undefined', undefined],
-    ['null', null],
-    ['an empty string', ''],
-  ])('holds both halves inert while a required field is %s, rather than making the caller gate the call', (_label, absent) => {
+  it('hands over a param without a value as it is, since the read itself waits for it and fetches nothing meanwhile', () => {
     const { read, calls } = fakeRead();
     const pair = pairRead(() => read);
 
-    pair.getValue({ params: { region: 'us', cohort: absent } });
-    pair.useValue({ params: { region: 'us', cohort: absent } });
+    pair.getValue({ params: { region: 'us', cohort: null, ids: [] } });
 
-    expect(calls.get).toEqual([undefined]);
-    expect(calls.use).toEqual([[undefined, undefined]]);
-  });
-
-  it.each([
-    ['an empty array', [] as readonly string[]],
-    ['zero', 0 as unknown as readonly string[]],
-    ['false', false as unknown as readonly string[]],
-  ])('counts %s as a field the caller has answered', (_label, answered) => {
-    const { read, calls } = fakeRead(['ids']);
-    const pair = pairRead(() => read);
-
-    pair.getValue({ params: { ids: answered } });
-
-    expect(calls.get).toEqual([{ ids: answered }]);
-  });
-
-  it('says so plainly when a read names nothing to gate on', () => {
-    const { read } = fakeRead();
-    const pair = pairRead(() => ({ ...read, requires: undefined }));
-
-    expect(() => pair.getValue({ params: { region: 'us', cohort: 'PHI' } })).toThrow(/gate on nothing/);
+    expect(calls.get).toEqual([{ region: 'us', cohort: null, ids: [] }]);
   });
 
   it('resolves the read per call, so a backend swapped at runtime is picked up', () => {

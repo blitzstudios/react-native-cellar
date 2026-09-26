@@ -172,6 +172,16 @@ describe('derived values — a write rebuilds only the entities it changed', () 
     expect(fromRows).toHaveBeenCalledTimes(1);
   });
 
+  it('hands back the previous object when the rebuilt value is equal to it, as for a column the value does not show', () => {
+    const { derived, seed } = harness();
+    seed([player('p1', 'Alice', 'NE', 1)]);
+    const before = derived.at(NFL, 'p1');
+
+    seed([player('p1', 'Alice', 'NE', 2)]);
+
+    expect(derived.at(NFL, 'p1')).toBe(before);
+  });
+
   it('shares one memo across every read of the shape, so an entity asked for three ways is built once', () => {
     const { derived, fromRows, seed } = harness();
     seed([player('p1', 'Alice'), player('p2', 'Bob')]);

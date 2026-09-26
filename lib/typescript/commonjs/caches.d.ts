@@ -201,7 +201,8 @@ export declare function byPartition<V, Parts extends readonly CacheKeyPart[] = [
     max: number;
     /**
      * Compares a rebuilt value with the previous one; when they're equal, the previous object is kept, so readers
-     * comparing by reference don't re-render.
+     * comparing by reference don't see a change. Defaults to {@linkcode shallowEqualValue}, which compares arrays by
+     * their elements and plain objects by their values, one level deep.
      */
     isEqual?: (prev: V, next: V) => boolean;
 }): MemoDecl<BoundVersionMemo<V, Parts>>;

@@ -46,9 +46,8 @@ function makeSurface(name?: string) {
     },
   });
 
-  return surface.read<{ region: string; id: string }, string>()({
+  return surface.read<{ region: string; id: string }, string>({
     partition: (args) => args.region,
-    varyBy: ['id'],
     select: (args) => args.id,
     empty: '',
   });
@@ -82,7 +81,7 @@ describeDev('per-row fan-out tripwire', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('[item_store]');
     expect(warnings[0]).toContain('60 separate reads');
-    expect(warnings[0]).toContain('us\u0000"p0"');
+    expect(warnings[0]).toContain('id\u0000"p0"');
   });
 
   it('tells a per-row reader to batch, since that is the fix when each row names one thing', () => {
@@ -107,9 +106,8 @@ describeDev('per-row fan-out tripwire', () => {
         ensure: () => {},
         refetch: () => {},
       },
-    }).read<{ region: string; ids: string[] }, string>()({
+    }).read<{ region: string; ids: string[] }, string>({
       partition: (args) => args.region,
-      varyBy: ['ids'],
       select: (args) => args.ids.join(),
       empty: '',
     });

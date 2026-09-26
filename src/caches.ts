@@ -380,14 +380,15 @@ export function byPartition<V, Parts extends readonly CacheKeyPart[] = []>(spec:
   max: number;
   /**
    * Compares a rebuilt value with the previous one; when they're equal, the previous object is kept, so readers
-   * comparing by reference don't re-render.
+   * comparing by reference don't see a change. Defaults to {@linkcode shallowEqualValue}, which compares arrays by
+   * their elements and plain objects by their values, one level deep.
    */
   isEqual?: (prev: V, next: V) => boolean;
 }): MemoDecl<BoundVersionMemo<V, Parts>> {
   return {
     by: ['key parts'],
     bind: (store, diagnostics) => {
-      const cache = createVersionedCache<V>(spec.max, spec.isEqual, diagnostics);
+      const cache = createVersionedCache<V>(spec.max, spec.isEqual ?? shallowEqualValue, diagnostics);
       const keyer = createPartKeyer();
       return {
         for: (key) => {
@@ -396,7 +397,8 @@ export function byPartition<V, Parts extends readonly CacheKeyPart[] = []>(spec:
           return {
             read: (...args) => {
               const { parts, last } = splitArgs<() => V>(args);
-              return cache.read(keyer(prefix, parts), version, last);
+              // Covered: `.for(key)` has already made the caller depend on the whole partition the build reads.
+              return cache.read(keyer(prefix, parts), version, () => covered(last));
             },
             peek: (...parts) => cache.peek(keyer(prefix, parts), version),
             set: (...args) => {

@@ -91,27 +91,24 @@ export const itemStore = defineSqliteStore({
     });
     return {
       reads: {
-        Item: items.defineRead<ItemKey, { id: string } | undefined>()({
-          varyBy: ['id'],
+        Item: items.defineRead<ItemKey, { id: string } | undefined>({
           select: (args, key) => card.at(key, args.id),
           empty: undefined,
         }),
-        Rows: items.defineRead<LeagueKey, ItemRow[]>()({
+        Rows: items.defineRead<LeagueKey, ItemRow[]>({
           select: (_args, key) => rowsOf(table).where(items.where(key)).map((row) => row, []),
           empty: [],
         }),
-        Memoized: items.defineRead<LeagueKey, number>()({
+        Memoized: items.defineRead<LeagueKey, number>({
           select: (_args, key) => byTeam.for(key).read(() => new Map()).size,
           empty: 0,
         }),
-        Across: items.defineReadMany<ItemsKey, number>()({
-          varyBy: ['id'],
+        Across: items.defineReadMany<ItemsKey, number>({
           select: (_args, keys) => keys.length,
           empty: 0,
         }),
-        Grouped: items.defineReadGrouped<{ groups: readonly (readonly LeagueKey[])[] }, number>()({
+        Grouped: items.defineReadGrouped<{ groups: readonly (readonly LeagueKey[])[] }, number>({
           groups: (args) => args.groups,
-          requires: ['groups'],
           select: (_args, groups) => groups.length,
           empty: 0,
         }),

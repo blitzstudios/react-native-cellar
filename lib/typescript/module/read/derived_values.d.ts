@@ -119,7 +119,11 @@ export declare function isEntityCacheDeclaration(decl: unknown): decl is EntityC
  * entity's rows.
  */
 export type DerivedValueMemo<Key, V> = Memo<Key, BoundEntityMemo<V | undefined, readonly ['scope']>>;
-/** The declaration a {@linkcode byEntity} cache's memo is built from. */
+/**
+ * The declaration a {@linkcode byEntity} cache's memo is built from. A rebuilt value equal to the previous one by
+ * {@linkcode shallowEqualValue} keeps the previous object, so a write that changed a column the value doesn't show
+ * hands its readers the same reference.
+ */
 export declare function derivedValueMemo<V>(max: number): MemoDeclaration;
 /**
  * What a {@linkcode byEntity} cache needs from the store around it: its name, the rows, how a key addresses them, the

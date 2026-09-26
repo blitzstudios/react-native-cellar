@@ -11,6 +11,7 @@ import { NativeShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
 import { createSqliteRowTable } from './table/sqlite';
 import type { PartitionFetchSpec, Partitions, definePartitions } from './define_partitions';
+import { labelReads } from './read/surface';
 import type { CommonDef, Read } from './read/surface';
 import type { pairRead } from './read/facade';
 import type { bindSqliteStore } from './nitro/nitro_connection';
@@ -261,7 +262,9 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
 
   const buildOver = (conn: SqliteConnection, temporary: boolean, atom: VersionAtom = version): { surface: Surface; table: RowTable<Row> } => {
     const table = createSqliteRowTable(config.schema, conn, config.nativeShredSpec, { temporary });
-    return { surface: config.build(table, atom, capabilitiesOf(conn)), table };
+    const surface = config.build(table, atom, capabilitiesOf(conn));
+    labelReads(surface.reads);
+    return { surface, table };
   };
 
   const install = (surface: Surface): Surface => {

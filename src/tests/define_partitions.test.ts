@@ -251,7 +251,7 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
 describe('definePartitions — reads take the key rather than a positional array', () => {
   it('defaults a read to the key fields, so a read whose args include them declares no partition', async () => {
     const harness = makeEvents();
-    const ids = harness.events.defineRead<EventKey, string[]>()({
+    const ids = harness.events.defineRead<EventKey, string[]>({
       select: (_args, key) => harness.table.find(harness.events.where(key)).map((row) => row.event_id),
       empty: [],
     });
@@ -264,7 +264,7 @@ describe('definePartitions — reads take the key rather than a positional array
   it('gates a read on the partition holding rows, so `select` never runs against an empty one', () => {
     const harness = makeEvents();
     const select = jest.fn(() => ['x']);
-    const ids = harness.events.defineRead<EventKey, string[]>()({ select, empty: [] });
+    const ids = harness.events.defineRead<EventKey, string[]>({ select, empty: [] });
 
     expect(ids.getValue(US)).toEqual([]);
     expect(select).not.toHaveBeenCalled();
@@ -273,7 +273,7 @@ describe('definePartitions — reads take the key rather than a positional array
   it('hands `select` the same key `where` is written against', async () => {
     const harness = makeEvents();
     const seen: EventKey[] = [];
-    const ids = harness.events.defineRead<EventKey, string[]>()({
+    const ids = harness.events.defineRead<EventKey, string[]>({
       select: (_args, key) => {
         seen.push(key);
         return [];
@@ -406,7 +406,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
 
   it('reaches the key through `key.of`, so a read over the record declares no partition', async () => {
     const harness = makeMetrics();
-    const ids = harness.metrics.defineRead<Args, string[]>()({
+    const ids = harness.metrics.defineRead<Args, string[]>({
       select: (_args, key) => harness.table.find({ partition_key: key }).map((row) => row.id),
       empty: [],
     });
@@ -420,7 +420,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
   it('interns the records a read names, so the read names partitions rather than keys', async () => {
     const harness = makeMetrics();
     const event: Spec = { request: 'event', region: 'us' };
-    const ids = harness.metrics.defineReadMany<{ specs: Spec[] }, string[]>()({
+    const ids = harness.metrics.defineReadMany<{ specs: Spec[] }, string[]>({
       partitions: (args) => args.specs,
       select: (_args, keys) => keys.flatMap((key) => harness.table.find({ partition_key: key }).map((row) => row.id)),
       empty: [],
@@ -433,7 +433,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
 
   it('takes the partitions off args named `partitions`, so a read that spans the ones it was handed says nothing', async () => {
     const harness = makeMetrics();
-    const ids = harness.metrics.defineReadMany<{ partitions: Spec[] }, string[]>()({
+    const ids = harness.metrics.defineReadMany<{ partitions: Spec[] }, string[]>({
       select: (_args, keys) => keys.flatMap((key) => harness.table.find({ partition_key: key }).map((row) => row.id)),
       empty: [],
     });
@@ -445,7 +445,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
 
   it('keeps an absent partition as a gap, so a result stays parallel to the list the caller named', async () => {
     const harness = makeMetrics();
-    const seen = harness.metrics.defineReadMany<{ specs: (Spec | null)[] }, boolean[]>()({
+    const seen = harness.metrics.defineReadMany<{ specs: (Spec | null)[] }, boolean[]>({
       partitions: (args) => args.specs,
       select: (_args, keys) => keys.map(Boolean),
       empty: [],
@@ -461,7 +461,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
   it('groups partitions parallel to what the caller asked about, so `select` does no index arithmetic', async () => {
     const harness = makeMetrics();
     const event: Spec = { request: 'event', region: 'us' };
-    const perItem = harness.metrics.defineReadGrouped<{ items: { candidates: Spec[] }[] }, number[]>()({
+    const perItem = harness.metrics.defineReadGrouped<{ items: { candidates: Spec[] }[] }, number[]>({
       groups: (args) => args.items.map((item) => item.candidates),
       select: (_args, groups) => groups.map((keys) => keys.reduce((total, key) => total + harness.table.find({ partition_key: key }).length, 0)),
       empty: [],
@@ -475,7 +475,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
   it('keeps a partition warm by re-interning it on every path that names it, rather than only at declaration', () => {
     const harness = makeMetrics();
     const event: Spec = { request: 'event', region: 'us' };
-    const ids = harness.metrics.defineRead<Args, string[]>()({ select: () => [], empty: [] });
+    const ids = harness.metrics.defineRead<Args, string[]>({ select: () => [], empty: [] });
 
     ids.getValue({ partition: WEEK1 });
     ids.getValue({ partition: event });
@@ -534,7 +534,7 @@ describe('definePartitions — args that resolve to no partition at all', () => 
         canShredNatively: () => false,
       },
     });
-    const ids = loose.defineRead<Args, string[]>()({
+    const ids = loose.defineRead<Args, string[]>({
       select: (_args, key) => table.find({ partition_key: key }).map((row) => row.id),
       empty: [],
     });

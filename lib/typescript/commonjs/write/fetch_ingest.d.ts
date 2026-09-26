@@ -148,8 +148,8 @@ export interface FetchIngest<Key> {
 /** What a caller fetching a partition intends to do with it, which decides whether a very large fetch is reported. */
 export interface PrimeIntent {
     /**
-     * True when the caller will use only part of the partition, such as a read with a
-     * {@linkcode CommonDef.varyBy | varyBy}. A fetch of more than 5,000 rows or 2M characters is reported once per
+     * True when the caller will use only part of the partition, such as a read whose args carry more than names the
+     * partition (a player id beside its sport). A fetch of more than 5,000 rows or 2M characters is reported once per
      * session only when every caller that fetched the partition wanted a part of it, since then most of what was fetched
      * isn't used.
      */

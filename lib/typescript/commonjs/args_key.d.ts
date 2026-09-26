@@ -7,17 +7,11 @@ export { cacheKey, cacheKeyOf, KEY_SEP };
 export declare function stableKey(value: unknown): string;
 export declare function identityOf(part: object): string;
 /**
- * A value a read varies by: anything {@linkcode ReadDef.select | select} reads beyond the partition itself. An object
- * or an array keys by its content, so a read can vary by a config or an options object without the caller serializing
- * one — but it must be plain data, since only own enumerable properties count towards the key (see
- * {@linkcode stableKey}).
+ * A value one of a read's args holds. An object or an array keys by its content, so a read can take a config or an
+ * options object without the caller serializing one — but it must be plain data, since only own enumerable properties
+ * count towards the key (see {@linkcode stableKey}).
  */
-export type VaryValue = string | number | boolean | null | undefined | readonly unknown[] | object;
-/**
- * The vary list of a read that declares no {@linkcode CommonDef.varyBy | varyBy}, and of one called with no args: one
- * shared array, not a fresh one per call.
- */
-export declare const EMPTY_VARY: readonly VaryValue[];
+export type ArgValue = string | number | boolean | null | undefined | readonly unknown[] | object;
 /** Separator between groups of parts, one level above {@linkcode KEY_SEP}, so the grouping is part of the key. */
 export declare const GROUP_SEP = "\u0001";
 /**
@@ -28,13 +22,13 @@ export declare const GROUP_SEP = "\u0001";
 export declare function partitionsKey(partitions: readonly (readonly string[])[]): string;
 /** A partition's parts as a human reads them. Never as a key: `:` occurs inside a part (`region:us-west`). */
 export declare function partitionLabel(parts: readonly string[]): string;
-/** `undefined`, `null`, `''` and an empty array count as absent; `0` and `false` count as present. */
-export declare function isVaryPresent(value: VaryValue): boolean;
+/** Whether an arg has a value: `undefined`, `null`, `''` and an empty array count as none; `0` and `false` are values. */
+export declare function isArgPresent(value: unknown): boolean;
 /**
- * A read's key: its partition, then everything it varies by, which a hook runs its select again for when it changes.
- * Vary values go through {@linkcode stableKey}, so an object or array arg keys by its content and a caller rebuilding
- * one per render doesn't count as a change.
+ * A call's key: its partition, then each of its args by name, which a hook runs its select again for when it changes.
+ * Args go through {@linkcode stableKey} one by one, so an object or array arg keys by its content and a caller
+ * rebuilding one per render doesn't count as a change, and the args object itself is never held or frozen.
  */
-export declare function varyKey(parts: readonly string[], vary: readonly VaryValue[]): string;
+export declare function argsKeyOf(parts: readonly string[], args: object): string;
 export type { CommonDef, Partitions, ReadDef };
 //# sourceMappingURL=args_key.d.ts.map

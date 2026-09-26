@@ -41,6 +41,29 @@ function store() {
 }
 
 describe('a store cache block', () => {
+  it('keeps the previous object for a byPartition value rebuilt equal to it, by default', () => {
+    const table = createTestRowTable(SCHEMA);
+    table.init();
+    const partitions = definePartitions<GameRow, SeasonKey>({ name: 'games_eq', table, version: createVersionAtom('cache_block_eq'), key: { fields: ['season'], where: ({ season }) => ({ season }) } });
+    const { teams } = partitions.defineCaches({ teams: byPartition<string[]>({ max: 4 }) });
+    const write = (rows: GameRow[]) => partitions.bump(S2026, table.overwrite(S2026, rows).changes);
+    const teamsNow = () => teams.for(S2026).read(() => [...new Set(table.find(S2026).map((row) => row.team))].sort());
+
+    write([
+      { season: '2026', team: 'KC', week: 1 },
+      { season: '2026', team: 'BUF', week: 1 },
+    ]);
+    const before = teamsNow();
+    write([
+      { season: '2026', team: 'KC', week: 1 },
+      { season: '2026', team: 'KC', week: 2 },
+      { season: '2026', team: 'BUF', week: 1 },
+    ]);
+
+    expect(teamsNow()).toEqual(['BUF', 'KC']);
+    expect(teamsNow()).toBe(before);
+  });
+
   it('returns one cache per entry, each of its declared kind, under the entry key', () => {
     const { weeksByTeam, write, lastWeek } = store();
     write([

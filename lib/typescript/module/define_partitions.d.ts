@@ -8,7 +8,7 @@
  * args, and reading a partition that has never been fetched fetches it.
  */
 import { RawQuery } from './write/fetch_ingest';
-import { Read, ReadDef, ReadGroupedDef, ReadManyDef, VarySpec } from './read/surface';
+import { Read, ReadDef, ReadGroupedDef, ReadManyDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -258,22 +258,22 @@ type PartitionsFrom<Args, Descriptor> = (args: Args) => readonly MaybePartition<
  * {@linkcode Partitions.defineReadMany | defineReadMany}, naming its partitions as the records a caller holds. Optional
  * when the args already carry them.
  */
-type PartitionReadManyDef<Args, Key, T, Descriptor, V extends VarySpec<Args>> = Omit<ReadManyDef<Args, Key, T, V>, 'partitions'> & (Args extends NamesPartitions<Descriptor> ? {
-    partitions?: PartitionsFrom<Args, Descriptor>;
+type PartitionReadManyDef<Args, Key, T, Descriptor, Optional extends keyof Args> = Omit<ReadManyDef<Args, Key, T, Optional>, 'partitions'> & (Args extends NamesPartitions<Descriptor> ? {
+    partitions?: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
 } : {
-    partitions: PartitionsFrom<Args, Descriptor>;
+    partitions: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
 });
 /**
  * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}, likewise: one group of candidate records per thing the
  * caller is asking about.
  */
-interface PartitionReadGroupedDef<Args, Key, T, Descriptor, V extends VarySpec<Args>> extends Omit<ReadGroupedDef<Args, Key, T, V>, 'groups'> {
+interface PartitionReadGroupedDef<Args, Key, T, Descriptor, Optional extends keyof Args> extends Omit<ReadGroupedDef<Args, Key, T, Optional>, 'groups'> {
     /**
      * The candidate partitions for each lookup the read answers, one group per lookup, such as the partitions each of
      * several stat keys could live in. Every partition in every group is fetched and subscribed to, and
      * {@linkcode ReadGroupedDef.select | select} gets the groups back in the same order.
      */
-    groups: (args: Args) => readonly (readonly MaybePartition<Descriptor>[])[];
+    groups: (args: ReadyArgs<Args, Optional>) => readonly (readonly MaybePartition<Descriptor>[])[];
 }
 /**
  * What {@linkcode definePartitions} returns to a store's {@linkcode SqliteStoreConfig.build | build}: the functions
@@ -284,29 +284,29 @@ interface PartitionReadGroupedDef<Args, Key, T, Descriptor, V extends VarySpec<A
 export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
     /**
      * Declares a read of one partition: the args name the partition, and {@linkcode ReadDef.select | select} computes the
-     * value from its rows. The read fetches the partition when it hasn't been fetched, caches its value, and re-renders
-     * its callers when the rows it used change. It returns {@linkcode CommonDef.empty | empty} until the partition has
-     * rows.
+     * value from its rows. The read fetches the partition when it hasn't been fetched, and re-renders its callers when
+     * their args or the rows it used change. It returns {@linkcode CommonDef.empty | empty} until every arg its caller
+     * passed has a value and the partition has rows.
      *
-     * Called in two steps, `read<Args, Value>()({ ... })`: the first sets the args and value types, the second takes the
-     * definition. The split lets TypeScript infer the exact {@linkcode CommonDef.varyBy | varyBy} list, which is what
-     * restricts {@linkcode ReadDef.select | select}'s args to those fields.
+     * `defineRead<Args, Value>({ … })`. A read that may be handed an arg without a value names it twice, as the third type
+     * argument, which types it, and in {@linkcode CommonDef.optionalArgs | optionalArgs}, which the read checks:
+     * `defineRead<Args, Value, 'playerId'>({ optionalArgs: ['playerId'], … })`.
      */
-    defineRead: <A extends Args, T>() => <const V extends VarySpec<A> = readonly []>(def: ReadDef<A, Key, T, V>) => Read<A, T>;
+    defineRead: <A extends Args, T, Optional extends keyof A = never>(def: ReadDef<A, Key, T, Optional>) => Read<A, T>;
     /**
      * Declares a read across several partitions, such as one player's stats across several weeks: the args name a list of
      * partitions (by default their {@linkcode ReadManyDef.partitions | partitions} field), all of them are fetched and
-     * subscribed to, and {@linkcode ReadDef.select | select} computes one value from all of them. Called in the same two
-     * steps as {@linkcode Partitions.defineRead | defineRead}.
+     * subscribed to, and {@linkcode ReadDef.select | select} computes one value from all of them. Declared like
+     * {@linkcode Partitions.defineRead | defineRead}.
      */
-    defineReadMany: <A, T>() => <const V extends VarySpec<A> = readonly []>(def: PartitionReadManyDef<A, Key, T, Descriptor, V>) => Read<A, T>;
+    defineReadMany: <A, T, Optional extends keyof A = never>(def: PartitionReadManyDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
     /**
      * Declares a read that answers several lookups at once, where each lookup's rows could be in any of several candidate
      * partitions: the args give one group of candidate partitions per lookup, every candidate is fetched and subscribed
-     * to, and {@linkcode ReadDef.select | select} gets the groups back in order to answer each lookup. Called in the same
-     * two steps as {@linkcode Partitions.defineRead | defineRead}.
+     * to, and {@linkcode ReadDef.select | select} gets the groups back in order to answer each lookup. Declared like
+     * {@linkcode Partitions.defineRead | defineRead}.
      */
-    defineReadGrouped: <A, T>() => <const V extends VarySpec<A> = readonly []>(def: PartitionReadGroupedDef<A, Key, T, Descriptor, V>) => Read<A, T>;
+    defineReadGrouped: <A, T, Optional extends keyof A = never>(def: PartitionReadGroupedDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
     /**
      * Declares the store's caches: every value it keeps on the heap beyond its rows, in one object, each under a name,
      * with entries kept per partition. Each entry is one of two kinds, named for what a write discards:

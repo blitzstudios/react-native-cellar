@@ -21,12 +21,12 @@ export type ReadOptions = {
     options?: ReadCallOptions;
 };
 /**
- * `T` with every field optional and nullable. A published read takes its params this way, so a caller can pass values
- * it may not have yet (`string | null | undefined`) as they are, and the read returns
- * {@linkcode CommonDef.empty | empty} until they arrive.
+ * `T` with every value nullable. A published read takes its params this way: a caller passes every field `T` requires,
+ * each as a value it may not have yet (`string | null | undefined`), and the read returns
+ * {@linkcode CommonDef.empty | empty} until they arrive. A field `T` makes optional may still be left out.
  */
 export type Loose<T> = {
-    [K in keyof T]?: T[K] | null;
+    [K in keyof T]: T[K] | null | undefined;
 };
 /**
  * A store read as a service publishes it (from {@linkcode pairRead}): a hook for components and a getter for other
@@ -37,12 +37,12 @@ export interface PairedRead<Params, T> {
     /**
      * The read as a hook: fetches its partition if it hasn't been fetched or is stale, returns the value with the fetch's
      * state as a {@linkcode DataResult}, and re-renders the component when the value changes. Returns
-     * {@linkcode CommonDef.empty | empty} until every field the read requires has a value.
+     * {@linkcode CommonDef.empty | empty}, and fetches nothing, until every field it was passed has a value.
      */
     useValue: (args: {
         /**
-         * The read's args. Every field is optional and nullable; the read returns {@linkcode CommonDef.empty | empty} until
-         * the fields it needs arrive.
+         * The read's args. Every value is nullable; the read returns {@linkcode CommonDef.empty | empty} until each has
+         * one, apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}.
          */
         params: Params;
     } & ReadOptions) => DataResult<T>;
@@ -54,8 +54,8 @@ export interface PairedRead<Params, T> {
      */
     getValue: (args: {
         /**
-         * The read's args. Every field is optional and nullable; the read returns {@linkcode CommonDef.empty | empty} until
-         * the fields it needs arrive.
+         * The read's args. Every value is nullable; the read returns {@linkcode CommonDef.empty | empty} until each has
+         * one, apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}.
          */
         params: Params;
     }) => T;
@@ -64,9 +64,10 @@ export interface PairedRead<Params, T> {
  * Publishes a store read as a hook ({@linkcode Read.useValue | useValue}) and a getter
  * ({@linkcode Read.getValue | getValue}) for a service's public API, each taking one `{ params }` argument. `read`
  * returns the read from the store, such as `() => playerStore.reads.byId`; it is called on every use, so it always
- * reaches the read built over the store's current database. The params are the read's args with every field optional
- * and nullable, and both return {@linkcode CommonDef.empty | empty} until every field in the read's
- * {@linkcode Read.requires} has a value (`undefined`, `null` and `''` count as missing).
+ * reaches the read built over the store's current database. The params are the read's args with every value nullable,
+ * and both return {@linkcode CommonDef.empty | empty} until each has one (`undefined`, `null`, `''` and an empty list
+ * count as none), apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}: the read itself waits for
+ * them, fetching nothing meanwhile.
  *
  * The two return the same value but fetch differently. {@linkcode Read.useValue | useValue} fetches through React
  * Query, and refetches when the partition is older than its {@linkcode RawQuery.staleTime | staleTime}.

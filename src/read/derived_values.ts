@@ -16,7 +16,7 @@
  * keep which entities matched until the partition changes, so asking again runs no query.
  */
 
-import { BoundEntityMemo, Memo, MemoDeclaration, createBoundedLru, entityMemo, shallowEqualArray, shallowEqualRecord } from '../caches';
+import { BoundEntityMemo, Memo, MemoDeclaration, createBoundedLru, entityMemo, shallowEqualArray, shallowEqualRecord, shallowEqualValue } from '../caches';
 import { cacheKeyOf, KEY_SEP, stableKey } from '../args_key';
 import { createOnceGuard } from '../diagnostics/once_guard';
 import { covered } from '../table/read_coverage';
@@ -136,9 +136,13 @@ const thrashWarned = createOnceGuard();
  */
 export type DerivedValueMemo<Key, V> = Memo<Key, BoundEntityMemo<V | undefined, readonly ['scope']>>;
 
-/** The declaration a {@linkcode byEntity} cache's memo is built from. */
+/**
+ * The declaration a {@linkcode byEntity} cache's memo is built from. A rebuilt value equal to the previous one by
+ * {@linkcode shallowEqualValue} keeps the previous object, so a write that changed a column the value doesn't show
+ * hands its readers the same reference.
+ */
 export function derivedValueMemo<V>(max: number): MemoDeclaration {
-  return entityMemo<V | undefined>()({ max, by: ['scope'] }) as MemoDeclaration;
+  return entityMemo<V | undefined>()({ max, by: ['scope'], isEqual: shallowEqualValue }) as MemoDeclaration;
 }
 
 /**

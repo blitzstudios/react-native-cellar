@@ -36,12 +36,11 @@ function store() {
     key: { fields: ['sport'], where: ({ sport }) => ({ sport }) },
   });
   const { names } = players.defineCaches({ names: byEntity({ max: 64, fromRows: ([row]) => row.name }) });
-  const PlayerNames = players.defineRead<{ sport: string; ids: string[] }, string[]>()({
-    varyBy: ['ids'],
+  const PlayerNames = players.defineRead<{ sport: string; ids: string[] }, string[]>({
     select: ({ ids }, key) => names.atEach(key, ids),
     empty: [],
   });
-  const RawNames = players.defineRead<{ sport: string }, string[]>()({
+  const RawNames = players.defineRead<{ sport: string }, string[]>({
     select: (_args, key) => table.find(players.where(key)).map((row) => row.name),
     empty: [],
   });

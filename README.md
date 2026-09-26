@@ -144,7 +144,7 @@ export const itemStore = defineSqliteStore({
 
     return {
       reads: {
-        GroupItems: partitions.defineRead<ItemKey, ItemVM[]>()({
+        GroupItems: partitions.defineRead<ItemKey, ItemVM[]>({
           select: (_args, key) => groupItems.for(key).read(() => rows.where(partitions.where(key), { orderBy: 'rank' }).map(toVM, NO_ITEMS)),
           empty: NO_ITEMS,
         }),
@@ -173,8 +173,7 @@ Reading a cold partition fetches it, automatically, and that is meant to be unre
 layer exists. Worth knowing once, though: the fetch is scoped to the **partition**, never to what the read selects.
 
 ```ts
-ItemsByIds: partitions.defineRead<ItemIdsKey, ItemVM[]>()({
-  varyBy: ['ids'],
+ItemsByIds: partitions.defineRead<ItemIdsKey, ItemVM[]>({
   select: (args, key) => rows.byIds(partitions.where(key), args.ids),
   empty: NO_ITEMS,
 }),
@@ -347,8 +346,8 @@ with nothing to compare against, its rows go straight in and every entity counts
 
 | export | what it gives you |
 | --- | --- |
-| `partitions.defineRead()`, `.defineReadMany()`, `.defineReadGrouped()` | a `{ getValue, useValue }` pair per read: one slice, a variable set of them, or one group of candidates per thing asked about. A `varyBy` value that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once — which is why `__DEV__` freezes it: a key remembered for a reference is only sound while the content holds still |
-| `pairRead(read)` | publishes a read's two halves on a service, gated on the args the read declares. They return the same value but do not fetch alike: `useValue` refetches on React Query's staleness, `getValue` fetches a partition that has never been fetched and otherwise leaves it |
+| `partitions.defineRead()`, `.defineReadMany()`, `.defineReadGrouped()` | a `{ getValue, useValue }` pair per read: one slice, a variable set of them, or one group of candidates per thing asked about. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once — which is why `__DEV__` freezes it: a key remembered for a reference is only sound while the content holds still |
+| `pairRead(read)` | publishes a read's two halves on a service. A caller passes every arg the read's args type requires, each as a value it may not have yet. They return the same value but do not fetch alike: `useValue` refetches on React Query's staleness, `getValue` fetches a partition that has never been fetched and otherwise leaves it |
 | `rowsOf(table)` | a query, then a shape: `.rows`, `.map`, `.indexed`, `.grouped`, and `.ordered` for results parallel to the ids asked for — each returning the caller's stable empty |
 | `createWindowedList(...)` | windowed list reads: fetch a page, keep the rest off-heap |
 | `DataResult<T>`, `makeResult` | the envelope a read hands back, and the builder for a bespoke read the surface can't express |

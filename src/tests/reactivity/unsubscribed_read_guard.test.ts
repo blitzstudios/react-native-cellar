@@ -154,7 +154,7 @@ describeDev('the unsubscribed-read guard', () => {
       has: () => true,
       ingest: { usePrime: () => PRIME_IDLE, usePrimeMany: () => PRIME_IDLE, ensure: () => {}, refetch: () => {} },
     });
-    const ItemRow = surface.read<{ region: string }, number>()({
+    const ItemRow = surface.read<{ region: string }, number>({
       partition: (args) => args.region,
       select: () => 1,
       empty: 0,
@@ -178,7 +178,7 @@ describeDev('the unsubscribed-read guard', () => {
       has: () => true,
       ingest: { usePrime: () => PRIME_IDLE, usePrimeMany: () => PRIME_IDLE, ensure: () => {}, refetch: () => {} },
     });
-    const ItemRow = surface.read<{ region: string }, number>()({
+    const ItemRow = surface.read<{ region: string }, number>({
       partition: (args) => args.region,
       select: () => 1,
       empty: 0,

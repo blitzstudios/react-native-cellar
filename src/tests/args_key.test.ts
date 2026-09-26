@@ -3,7 +3,7 @@
  * share one cache entry, so a value that changes the answer and not the key would serve one caller another's data.
  */
 
-import { cacheKey, isVaryPresent, partitionsKey, stableKey, varyKey, VaryValue } from '../args_key';
+import { ArgValue, argsKeyOf, cacheKey, isArgPresent, partitionsKey, stableKey } from '../args_key';
 import { resetOnceGuards } from '../diagnostics/once_guard';
 import { itDev } from '../testing/dev_mode';
 
@@ -79,15 +79,23 @@ describe('cacheKey', () => {
   });
 });
 
-describe('varyKey', () => {
-  it('keys by the partition and every vary value, so one partition read two ways holds two entries', () => {
-    expect(varyKey(['us'], ['KC'])).not.toBe(varyKey(['us'], ['SF']));
-    expect(varyKey(['us'], ['KC'])).not.toBe(varyKey(['eu'], ['KC']));
-    expect(varyKey(['us'], [])).not.toBe(varyKey(['us'], ['KC']));
+describe('argsKeyOf', () => {
+  it('keys by the partition and every arg by name, so one partition read two ways is two calls', () => {
+    expect(argsKeyOf(['us'], { cohort: 'KC' })).not.toBe(argsKeyOf(['us'], { cohort: 'SF' }));
+    expect(argsKeyOf(['us'], { cohort: 'KC' })).not.toBe(argsKeyOf(['eu'], { cohort: 'KC' }));
+    expect(argsKeyOf(['us'], {})).not.toBe(argsKeyOf(['us'], { cohort: 'KC' }));
+    expect(argsKeyOf(['us'], { a: 'KC' })).not.toBe(argsKeyOf(['us'], { b: 'KC' }));
   });
 
-  it('keys an object vary value by its content, so a caller rebuilding one per render still hits', () => {
-    expect(varyKey(['us'], [{ limit: 5, cohort: 'KC' }])).toBe(varyKey(['us'], [{ cohort: 'KC', limit: 5 }]));
+  it('keys an object arg by its content, and the args in any order alike, so a caller rebuilding them is no change', () => {
+    expect(argsKeyOf(['us'], { opts: { limit: 5, cohort: 'KC' } })).toBe(argsKeyOf(['us'], { opts: { cohort: 'KC', limit: 5 } }));
+    expect(argsKeyOf(['us'], { a: 1, b: 2 })).toBe(argsKeyOf(['us'], { b: 2, a: 1 }));
+  });
+
+  it('leaves the args object itself unfrozen, since it belongs to the caller', () => {
+    const args = { cohort: 'KC' };
+    argsKeyOf(['us'], args);
+    expect(Object.isFrozen(args)).toBe(false);
   });
 });
 
@@ -98,13 +106,13 @@ describe('partitionsKey', () => {
   });
 });
 
-describe('isVaryPresent', () => {
-  it('counts a value a read cannot address with as absent, and a falsy one it can as present', () => {
-    const absent: VaryValue[] = [undefined, null, '', []];
-    const present: VaryValue[] = [0, false, 'KC', ['a'], {}];
+describe('isArgPresent', () => {
+  it('counts a value a read cannot use as none, and a falsy one it can as a value', () => {
+    const absent: ArgValue[] = [undefined, null, '', []];
+    const present: ArgValue[] = [0, false, 'KC', ['a'], {}];
 
-    expect(absent.filter(isVaryPresent)).toEqual([]);
-    expect(present.every(isVaryPresent)).toBe(true);
+    expect(absent.filter(isArgPresent)).toEqual([]);
+    expect(present.every(isArgPresent)).toBe(true);
   });
 });
 
@@ -130,8 +138,8 @@ describe('key encoding', () => {
 
   it('joins parts and groups exactly', () => {
     expect(cacheKey('nfl', '2025')).toBe(`nfl${NUL}2025`);
-    expect(varyKey(['nfl'], [])).toBe('nfl');
-    expect(varyKey(['nfl', '2025'], ['x', 3, { a: 1 }])).toBe(`nfl${NUL}2025${NUL}"x"${NUL}3${NUL}{"a":1}`);
+    expect(argsKeyOf(['nfl'], {})).toBe('nfl');
+    expect(argsKeyOf(['nfl', '2025'], { c: 'x', b: 3, a: { a: 1 } })).toBe(`nfl${NUL}2025${NUL}a${NUL}{"a":1}${NUL}b${NUL}3${NUL}c${NUL}"x"`);
     expect(
       partitionsKey([
         ['nfl', '1'],

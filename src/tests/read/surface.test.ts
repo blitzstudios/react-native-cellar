@@ -1,8 +1,11 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
-import { createReadSurface, ReadDef, ReadSurfaceKernel } from '../../read/surface';
-import { VaryValue } from '../../args_key';
+import { createReadSurface, labelReads, ReadDef, ReadSurfaceKernel } from '../../read/surface';
+import { ArgValue } from '../../args_key';
+import { covered, noteTableRead } from '../../table/read_coverage';
+import { itDev } from '../../testing/dev_mode';
+import { resetOnceGuards } from '../../diagnostics/once_guard';
 import { createVersionAtom } from '../../reactivity/version_atom';
 import { createVersionedCache, shallowEqualRecord } from '../../caches';
 import { runTracked } from '../../reactivity/tracking';
@@ -36,7 +39,7 @@ function renderHook<T>(useHook: () => T): Probe<T> {
 type Row = { score: number };
 type Slice = Record<string, Row>;
 /** A read whose args carry one vary value beyond its partition, for the tests that exercise the gate. */
-type ScopedArgs = { key: string; id?: VaryValue };
+type ScopedArgs = { key: string; id?: ArgValue };
 
 function makeHarness() {
   const atom = createVersionAtom('read_surface_test_version');
@@ -82,7 +85,7 @@ function makeHarness() {
   const EMPTY: Slice = {};
   const surface = createReadSurface(kernel);
   // The shape most of these tests take, applied once, so a test hands over a def and nothing else.
-  const read = surface.read<{ key: string }, Slice>();
+  const read = (def: ReadDef<{ key: string }, string, Slice>) => surface.read(def);
   const sliceDef: ReadDef<{ key: string }, string, Slice> = {
     partition: (args) => args.key,
     select: (_args, key) => slices.get(key) ?? EMPTY,
@@ -155,7 +158,7 @@ describe('createReadSurface — getValue reports what it depends on to the track
 
   it('and readMany reports the presence of every live partition while skipping the dead ones', () => {
     const harness = makeHarness();
-    const read = harness.surface.readMany<{ keys: string[] }, Slice>()({
+    const read = harness.surface.readMany<{ keys: string[] }, Slice>({
       partitions: (args: { keys: string[] }) => args.keys,
       select: () => ({}),
       empty: {},
@@ -198,7 +201,7 @@ describe('createReadSurface — the two halves of a read', () => {
     const cache = createVersionedCache<Slice>(8);
     const build = jest.fn((key: string): Slice => ({ ...(harness.slices.get(key) ?? harness.EMPTY) }));
     const select = jest.fn((_args: unknown, key: string) => cache.read(key, harness.atom.get([key]), () => build(key)));
-    const read = harness.surface.read<{ key: string }, Slice>()({ ...harness.sliceDef, select });
+    const read = harness.surface.read<{ key: string }, Slice>({ ...harness.sliceDef, select });
     harness.land('p1', { a: { score: 1 } });
 
     const probes = [renderHook(() => read.useValue({ key: 'p1' })), renderHook(() => read.useValue({ key: 'p1' }))];
@@ -233,11 +236,10 @@ function makeFieldHarness() {
 }
 
 describe('createReadSurface — a read declared by field name', () => {
-  it('picks the named fields into the key, and varies by the named fields, as the equivalent functions would', () => {
+  it('picks the named fields into the key, and hands select every other arg', () => {
     const harness = makeFieldHarness();
-    const read = harness.surface.read<{ key: string; id: string }, Slice>()({
+    const read = harness.surface.read<{ key: string; id: string }, Slice>({
       partition: ['key'],
-      varyBy: ['id'],
       select: (args, key) => ({ [args.id]: { score: (harness.slices.get(key.key) ?? {})[args.id]?.score ?? 0 } }),
       empty: harness.EMPTY,
       isEqual: shallowEqualRecord,
@@ -253,34 +255,52 @@ describe('createReadSurface — a read declared by field name', () => {
     ]);
   });
 
-  it('gates on an absent named vary field, exactly as a varyBy function does', () => {
+  it('stops a select that reads an arg its caller left out, and returns empty rather than handing it `undefined`', () => {
     const harness = makeFieldHarness();
-    const read = harness.surface.read<{ key: string; id?: string }, Slice>()({
+    const seen: unknown[] = [];
+    const read = harness.surface.read<{ key: string; id?: string }, Slice>({
       partition: ['key'],
-      varyBy: ['id'],
-      select: () => ({ a: { score: 1 } }),
+      select: (args) => {
+        seen.push(args.id);
+        return { a: { score: 1 } };
+      },
       empty: harness.EMPTY,
     });
     harness.land('us', {});
 
     expect(read.getValue({ key: 'us' })).toBe(harness.EMPTY);
     expect(read.getValue({ key: 'us', id: 'a' })).toEqual({ a: { score: 1 } });
+    expect(seen).toEqual(['a']);
+  });
+
+  it('hands select an optional arg as it is, without a value, when the read names it in optionalArgs', () => {
+    const harness = makeFieldHarness();
+    const read = harness.surface.read<{ key: string; id?: string | null }, Slice, 'id'>({
+      partition: ['key'],
+      optionalArgs: ['id'],
+      select: (args) => ({ [args.id ?? 'all']: { score: 1 } }),
+      empty: harness.EMPTY,
+    });
+    harness.land('us', {});
+
+    expect(read.getValue({ key: 'us' })).toEqual({ all: { score: 1 } });
+    expect(read.getValue({ key: 'us', id: null })).toEqual({ all: { score: 1 } });
+    expect(read.getValue({ key: 'us', id: 'a' })).toEqual({ a: { score: 1 } });
   });
 });
 
-describe('createReadSurface — varyBy (the read is keyed and gated by one declaration)', () => {
-  const scopedRead = (harness: ReturnType<typeof makeHarness>, varyBy: (args: ScopedArgs) => VaryValue[]) =>
-    harness.surface.read<ScopedArgs, Slice>()({
+describe('createReadSurface — args (a read declares none, and waits for every one it is passed)', () => {
+  const scopedRead = (harness: ReturnType<typeof makeHarness>) =>
+    harness.surface.read<ScopedArgs, Slice>({
       partition: (args) => args.key,
-      varyBy,
       select: (args) => ({ a: { score: Number(args.id) } }),
       empty: harness.EMPTY,
       isEqual: shallowEqualRecord,
     });
 
-  it('keys the read by its scope without being told to, so two scopes never share an entry', () => {
+  it('answers each call for its own args, so two calls on one partition never share a value', () => {
     const harness = makeHarness();
-    const read = scopedRead(harness, (args) => [args.id]);
+    const read = scopedRead(harness);
     harness.land('us', {});
 
     expect(read.getValue({ key: 'us', id: 1 })).toEqual({ a: { score: 1 } });
@@ -292,12 +312,11 @@ describe('createReadSurface — varyBy (the read is keyed and gated by one decla
     ['null', null],
     ['an empty string', ''],
     ['an empty array', []],
-  ])('is off while its scope is %s, without an `enabled` clause saying so', (_label, id) => {
+  ])('is off while an arg it was passed is %s, without an `enabled` clause saying so', (_label, id) => {
     const harness = makeHarness();
     const select = jest.fn(() => ({ a: { score: 1 } }));
-    const read = harness.surface.read<ScopedArgs, Slice>()({
+    const read = harness.surface.read<ScopedArgs, Slice>({
       partition: (args) => args.key,
-      varyBy: (args: ScopedArgs) => [args.id],
       select,
       empty: harness.EMPTY,
     });
@@ -315,20 +334,42 @@ describe('createReadSurface — varyBy (the read is keyed and gated by one decla
     ['false', false],
   ])('treats %s as present, because it is a value and not an absence', (_label, id) => {
     const harness = makeHarness();
-    const read = scopedRead(harness, (args) => [args.id]);
+    const read = scopedRead(harness);
     harness.land('us', {});
 
     expect(read.getValue({ key: 'us', id })).toEqual({ a: { score: Number(id) } });
   });
 
-  it('primes the partition even while a scope value is missing, so the row is there when the id arrives', () => {
+  it('fetches nothing while an arg it was passed has no value, and fetches once the value arrives', () => {
     const harness = makeHarness();
-    const read = scopedRead(harness, (args) => [args.id]);
+    const read = scopedRead(harness);
+    let id: string | undefined;
 
-    const probe = renderHook(() => read.useValue({ key: 'us', id: undefined }));
-
-    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: 'us', enabled: true });
+    const probe = renderHook(() => read.useValue({ key: 'us', id }));
+    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: undefined, enabled: false });
     expect(probe.current.data).toBe(harness.EMPTY);
+
+    id = '3';
+    probe.rerender();
+    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: 'us', enabled: true });
+    probe.unmount();
+  });
+
+  it('runs select again when an arg changes, compared by content, and not when a caller rebuilds the same args', () => {
+    const harness = makeHarness();
+    const select = jest.fn((args: { key: string; opts: { n: number } }) => ({ a: { score: args.opts.n } }));
+    const read = harness.surface.read<{ key: string; opts: { n: number } }, Slice>({ partition: (args) => args.key, select, empty: harness.EMPTY });
+    harness.land('us', {});
+    let n = 1;
+
+    const probe = renderHook(() => read.useValue({ key: 'us', opts: { n } }));
+    const calls = select.mock.calls.length;
+    probe.rerender();
+    expect(select.mock.calls.length).toBe(calls);
+
+    n = 2;
+    probe.rerender();
+    expect(probe.current.data).toEqual({ a: { score: 2 } });
     probe.unmount();
   });
 
@@ -421,9 +462,8 @@ describe('createReadSurface — get (imperative)', () => {
   it('discriminates args that share a partition, so a per-entity read never serves another entity', () => {
     const harness = makeHarness();
     const rows: Record<string, Row> = { p1: { score: 1 }, p2: { score: 2 } };
-    const rowRead = harness.surface.read<{ key: string; id: string }, Row | undefined>()({
+    const rowRead = harness.surface.read<{ key: string; id: string }, Row | undefined>({
       partition: (args) => args.key,
-      varyBy: (args: { key: string; id: string }) => [args.id],
       select: (args) => rows[args.id],
       empty: undefined,
     });
@@ -603,9 +643,8 @@ describe('createReadSurface — absent args (nothing to read yet)', () => {
   it('yields empty + success without touching the definition, so a caller needs no stand-in partition', () => {
     const harness = makeHarness();
     const partition = jest.fn((args: { key: string }) => args.key);
-    const varyBy = jest.fn((args: { key: string }) => [args.key]);
     const select = jest.fn(harness.sliceDef.select);
-    const read = harness.surface.read<{ key: string }, Slice>()({ ...harness.sliceDef, partition, varyBy, select });
+    const read = harness.surface.read<{ key: string }, Slice>({ ...harness.sliceDef, partition, select });
 
     const probe = renderHook(() => read.useValue(undefined));
 
@@ -613,7 +652,6 @@ describe('createReadSurface — absent args (nothing to read yet)', () => {
     expect(probe.current.status).toBe('success');
     expect(probe.current.isLoading).toBe(false);
     expect(partition).not.toHaveBeenCalled();
-    expect(varyBy).not.toHaveBeenCalled();
     expect(select).not.toHaveBeenCalled();
     probe.unmount();
   });
@@ -681,7 +719,7 @@ describe('createReadSurface — absent args (nothing to read yet)', () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
     const partitions = jest.fn((args: { keys: string[] }) => args.keys);
-    const list = harness.surface.readMany<{ keys: string[] }, Slice[]>()({
+    const list = harness.surface.readMany<{ keys: string[] }, Slice[]>({
       partitions,
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
       empty: EMPTY_LIST,
@@ -701,9 +739,8 @@ describe('createReadSurface — readMany (a read spanning a variable partition s
   const manyHarness = () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
-    const list = createReadSurface(harness.kernel).readMany<{ keys: string[] }, Slice[]>()({
+    const list = createReadSurface(harness.kernel).readMany<{ keys: string[] }, Slice[]>({
       partitions: (args) => args.keys,
-      varyBy: (args: { keys: string[] }) => [args.keys],
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
       empty: EMPTY_LIST,
     });
@@ -795,27 +832,12 @@ describe('createReadSurface — readMany (a read spanning a variable partition s
     oneFailed.unmount();
   });
 
-  it('publishes the fields it declares it requires, since its partitions come from a function with none to read', () => {
-    const harness = manyHarness();
-    const EMPTY_LIST: Slice[] = [];
-    const gated = harness.surface.readMany<{ keys: string[] }, Slice[]>()({
-      requires: ['keys'],
-      partitions: (args) => args.keys,
-      select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
-      empty: EMPTY_LIST,
-    });
-
-    expect(gated.requires).toEqual(['keys']);
-    expect(harness.list.requires).toBeUndefined();
-  });
-
   it('primes a set it is not yet reading, since a disabled read still wants its data on the way', () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
-    const list = harness.surface.readMany<{ keys: string[]; reading: boolean }, Slice[]>()({
+    const list = harness.surface.readMany<{ keys: string[]; reading: boolean }, Slice[]>({
       partitions: (args) => args.keys,
       enabled: (args) => args.reading,
-      varyBy: (args: { keys: string[] }) => [args.keys],
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
       empty: EMPTY_LIST,
     });
@@ -861,7 +883,7 @@ describe('createReadSurface — a push-fed store, which has no fetch to own', ()
     const slices = new Map<string, Slice>();
     const EMPTY: Slice = {};
     const surface = createReadSurface<{ key: string }>({ version: atom, toParts: (key) => [key.key], has: (key) => slices.has(key.key) });
-    const slice = surface.read<{ key: string }, Slice>()({
+    const slice = surface.read<{ key: string }, Slice>({
       partition: ['key'],
       select: (_args, key) => slices.get(key.key) ?? EMPTY,
       empty: EMPTY,
@@ -940,5 +962,64 @@ describe('createReadSurface — the presence probe is shared across a surface re
 
     expect(harness.spies.has).toEqual(['p1']);
     expect(second.getValue({ key: 'p1' })).toEqual({ a: { score: 1 } });
+  });
+});
+
+describe('createReadSurface — dev warnings about one read', () => {
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    resetOnceGuards();
+    warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  itDev('names the arg a select read that its caller left out, and the read by its name in the store', () => {
+    const harness = makeHarness();
+    const read = harness.surface.read<{ key: string; id?: string }, Slice>({
+      partition: (args) => args.key,
+      select: (args) => ({ [args.id]: { score: 1 } }),
+      empty: harness.EMPTY,
+    });
+    labelReads({ ById: read });
+    harness.land('us', {});
+
+    expect(read.getValue({ key: 'us' })).toBe(harness.EMPTY);
+    expect(warn.mock.calls[0][0]).toMatch(/`ById` read the arg `id`, which its caller didn't pass/);
+  });
+
+  itDev('warns when a select keeps building the same value from rows no cache holds, for the same args and rows', () => {
+    const harness = makeHarness();
+    const read = harness.surface.read<{ key: string }, Slice>({
+      partition: (args) => args.key,
+      select: (_args, key) => {
+        noteTableRead();
+        return harness.slices.get(key) ?? harness.EMPTY;
+      },
+      empty: harness.EMPTY,
+    });
+    labelReads({ Uncached: read });
+    harness.land('us', { a: { score: 1 } });
+
+    read.getValue({ key: 'us' });
+    read.getValue({ key: 'us' });
+    expect(warn).not.toHaveBeenCalled();
+    read.getValue({ key: 'us' });
+    expect(warn.mock.calls[0][0]).toMatch(/`Uncached` built its value from rows no cache holds 3 times/);
+  });
+
+  itDev('stays quiet for a select whose rows come through a cache, however often it runs', () => {
+    const harness = makeHarness();
+    const read = harness.surface.read<{ key: string }, Slice>({
+      partition: (args) => args.key,
+      select: (_args, key) => covered(() => {
+        noteTableRead();
+        return harness.slices.get(key) ?? harness.EMPTY;
+      }),
+      empty: harness.EMPTY,
+    });
+    harness.land('us', { a: { score: 1 } });
+
+    for (let call = 0; call < 5; call += 1) read.getValue({ key: 'us' });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
