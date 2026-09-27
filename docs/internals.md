@@ -214,14 +214,16 @@ store is reaching past its entry point; import it from its own module only if yo
   key. A module that declares its own caches, such as a ranker, takes the store's `defineCaches` function as a
   `CacheFactory`, and a suite testing that module alone builds one with `testCache` from `./testing`, which takes
   `byPartition` caches only.
-- **`byEntity`** — one value per entity, built from that entity's rows by `fromRows` and kept until a write changes
-  them. A lookup (`at`, `atEach`, `pick`) depends on the entities it names, so a write to other entities neither
+- **`byEntity`** — one value per entity, built from that entity's rows by `fromRows`, which is also handed the
+  partition's description so a value carrying its partition's fields needs no column for them, and kept until a write
+  changes them. A lookup (`at`, `atEach`, `pick`) depends on the entities it names, so a write to other entities neither
   rebuilds their values nor re-runs the read; `where` and `all` depend on the partition. Every miss in one `atEach` or
-  `pick` is built from one query. Underneath, the values sit in an entity memo (`entityMemo` in `caches.ts`), keyed by
-  entity and, where a filter can cut an entity's rows, by the filter. Its lists are cached too, in a bounded map of the
-  last 64 it answered: each method hands back the list it gave last time for the same ids or filter when that list
-  holds the same values, and `where` and `all` keep which entities matched until the partition's version moves, so a
-  repeat runs no query.
+  `pick` is built from one query, and a read asking for more entities than `max` builds its values without keeping them,
+  so it evicts nothing a smaller read holds, and depends on the whole partition instead. Underneath, the values sit in
+  an entity memo (`entityMemo` in `caches.ts`), keyed by entity and, where a filter can cut an entity's rows, by the
+  filter. Its lists are cached too, in a bounded map of the last 64 it answered: each method hands back the list it gave
+  last time for the same ids or filter when that list holds the same values, and `where` and `all` keep which entities
+  matched until the partition's version moves, so a repeat runs no query.
 - **`byPartition`** — a cache dropped by every write to its partition, with optional content-stable reference reuse: on
   a bump that didn't change an entry, hand back the _same reference_ so downstream shallow-equal bails.
   `read(…parts, compute)` is the whole cache in one call; `peek`/`set` are its batched half, for a caller that

@@ -333,6 +333,16 @@ describe('derived values — an entity of several rows', () => {
 });
 
 describe('derived values — the memo bound is a bound, not a promise', () => {
+  it('builds a read larger than the bound without keeping it, so it evicts nothing a smaller read holds', () => {
+    const { derived, seed } = harness({ max: 2 });
+    const rows = [player('p1', 'A'), player('p2', 'B'), player('p3', 'C')];
+    seed(rows);
+    const held = derived.at(NFL, 'p1');
+
+    expect(derived.atEach(NFL, ['p1', 'p2', 'p3']).map((vm) => vm.label)).toEqual(['A', 'B', 'C']);
+    expect(derived.at(NFL, 'p1')).toBe(held);
+  });
+
   it('stays correct when the ask exceeds what it holds, even though the references cannot survive', () => {
     const { derived, seed } = harness({ max: 2 });
     const rows = [player('p1', 'A'), player('p2', 'B'), player('p3', 'C'), player('p4', 'D')];

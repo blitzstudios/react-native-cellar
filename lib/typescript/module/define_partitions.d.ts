@@ -304,7 +304,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
      * partitions before their {@linkcode ReadDef.select | select} runs. The store's name and the entry's key name each
      * cache in warnings.
      */
-    defineCaches: CacheFactory<Key, Row>;
+    defineCaches: CacheFactory<Key, Row, Descriptor>;
     /**
      * The column values that pick out a partition's rows in the table, such as `{ league: 'nfl' }`: the store's
      * {@linkcode PartitionKeySpec.where | key.where}.

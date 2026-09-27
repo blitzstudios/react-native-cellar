@@ -1,6 +1,7 @@
 import { installTestRuntime } from '../testing/runtime';
 import { createSqlJsConnection } from '../testing/sqljs_connection';
 import { defineSqliteStore } from '../define_sqlite_store';
+import { byEntity } from '../read/derived_values';
 import { createSqliteRowTable } from '../table/sqlite';
 import { partitionedSchema, StoreTableSchema } from '../table/partitioned';
 import { readRows } from '../table/connection';
@@ -131,6 +132,35 @@ describe('defineSqliteStore — partitions', () => {
 
     expect(forget).toHaveBeenCalledTimes(1);
     expect(typeof surface.lifecycle.usePrime).toBe('function');
+  });
+});
+
+describe('defineSqliteStore — caches', () => {
+  it('hands a byEntity cache the description of the partition its rows are in', async () => {
+    const store = defineSqliteStore({
+      name: 'described_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'] },
+      fetch: {
+        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]' }) }),
+        parse: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      },
+      build: (cellar) => {
+        const { teams } = cellar.defineCaches({ teams: byEntity({ max: 8, fromRows: ([row], season) => `${row.team}@${season.season}` }) });
+        return {
+          reads: {
+            One: cellar.defineRead<Season & { team: string }, string | undefined>({ select: (args, key) => teams.at(key, args.team), empty: undefined }),
+            Each: cellar.defineRead<Season & { ids: string[] }, string[]>({ select: (args, key) => teams.atEach(key, args.ids), empty: [] }),
+          },
+        };
+      },
+    });
+    const { surface } = store.testing.over(createSqlJsConnection());
+
+    await surface.lifecycle.fetch(NFL_2025);
+
+    expect(surface.reads.One.getValue({ ...NFL_2025, team: 'a' })).toBe('a@2025');
+    expect(surface.reads.Each.getValue({ ...NFL_2025, ids: ['a', 'b'] })).toEqual(['a@2025', 'b@2025']);
   });
 });
 

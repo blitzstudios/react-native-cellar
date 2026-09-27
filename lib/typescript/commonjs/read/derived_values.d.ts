@@ -26,21 +26,23 @@ import type { byPartition } from '../caches';
  * `entityId` column. The cache's name, shown in warnings, is its key in the
  * {@linkcode Partitions.defineCaches | defineCaches} block.
  */
-export interface DerivedValuesDef<Row extends RowShape, V> {
+export interface DerivedValuesDef<Row extends RowShape, V, Partition = unknown> {
     /**
      * How many built values to keep, across all partitions; beyond that, the least recently used are discarded and
      * rebuilt when asked for again. Set it above the most entities one screen reads at once: a read asking for more than
-     * {@linkcode DerivedValuesDef.max | max} entities discards what it just built, rebuilding every one after every
-     * write, and warns in dev.
+     * {@linkcode DerivedValuesDef.max | max} entities builds its values without keeping them, so it evicts nothing other
+     * reads hold, but rebuilds every one each time it runs, depends on the whole partition, and warns in dev.
      */
     max: number;
     /**
      * Builds one entity's value from its rows (all rows in the partition with that entity id, in storage order), usually
      * a view model, or returns `undefined` for an entity that shouldn't have one. It runs once per entity, and again only
      * after a write changes that entity's rows. In a table with one row per entity, it gets a one-row list:
-     * `fromRows: ([row]) => …`.
+     * `fromRows: ([row]) => …`. It is also handed the description of the partition the rows are in, so a value that
+     * carries its partition's fields, such as a game's season, reads them from there rather than from a column on every
+     * row.
      */
-    fromRows: (rows: readonly Row[]) => V | undefined;
+    fromRows: (rows: readonly Row[], partition: Partition) => V | undefined;
     /**
      * Text added to the dev warning shown when a read asks for more entities than {@linkcode DerivedValuesDef.max | max},
      * where raising {@linkcode DerivedValuesDef.max | max} is the wrong fix, such as a detailed shape meant for one
@@ -97,9 +99,9 @@ export interface DerivedValues<Key, Row extends RowShape, V> {
  * A {@linkcode byEntity} cache's definition, as {@linkcode byEntity} returns it, before a store's
  * {@linkcode Partitions.defineCaches | defineCaches} block attaches it to the store's partitions.
  */
-export interface EntityCacheDeclaration<Row extends RowShape, V> {
+export interface EntityCacheDeclaration<Row extends RowShape, V, Partition = unknown> {
     readonly kind: 'byEntity';
-    readonly def: DerivedValuesDef<Row, V>;
+    readonly def: DerivedValuesDef<Row, V, Partition>;
 }
 /**
  * Declares a cache of values derived from each entity's rows, usually view models, for a store's
@@ -111,7 +113,7 @@ export interface EntityCacheDeclaration<Row extends RowShape, V> {
  * `byEntity({ max: 2048, fromRows: rowsToTeamGames })`: the row type comes from the store and the value type is what
  * `fromRows` returns, so neither is written.
  */
-export declare function byEntity<Row extends RowShape, V>(def: DerivedValuesDef<Row, V>): EntityCacheDeclaration<Row, V>;
+export declare function byEntity<Row extends RowShape, V, Partition = unknown>(def: DerivedValuesDef<Row, V, Partition>): EntityCacheDeclaration<Row, V, Partition>;
 /** Whether a {@linkcode Partitions.defineCaches | defineCaches} block entry is a {@linkcode byEntity} cache. */
 export declare function isEntityCacheDeclaration(decl: unknown): decl is EntityCacheDeclaration<RowShape, unknown>;
 /**
@@ -129,18 +131,20 @@ export declare function derivedValueMemo<V>(max: number): MemoDeclaration;
  * What a {@linkcode byEntity} cache needs from the store around it: its name, the rows, how a key addresses them, the
  * memo its values live in, and the partition's version, which a lookup over the whole partition depends on.
  */
-export interface DerivedValuesContext<Row extends RowShape, Key, V> {
+export interface DerivedValuesContext<Row extends RowShape, Key, V, Partition = unknown> {
     store: string;
     /** The cache's key in the store's {@linkcode Partitions.defineCaches | defineCaches} block, shown in warnings. */
     name: string;
     table: RowTable<Row>;
     filter: (key: Key) => Partial<Row>;
+    /** The description of the partition a key names, which `fromRows` is handed. */
+    partitionOf: (key: Key) => Partition;
     memo: DerivedValueMemo<Key, V>;
     /** A partition key's parts, which identify the partition in the lists the cache keeps. */
     parts: (key: Key) => readonly string[];
     /** The partition's version. Tracked: the calling read comes to depend on the whole partition. */
     version: (key: Key) => number;
 }
-export declare function createDerivedValues<Row extends RowShape, Key, V>(ctx: DerivedValuesContext<Row, Key, V>, def: DerivedValuesDef<Row, V>): DerivedValues<Key, Row, V>;
+export declare function createDerivedValues<Row extends RowShape, Key, V, Partition = unknown>(ctx: DerivedValuesContext<Row, Key, V, Partition>, def: DerivedValuesDef<Row, V, Partition>): DerivedValues<Key, Row, V>;
 export type { Partitions, ReadDef, byPartition };
 //# sourceMappingURL=derived_values.d.ts.map

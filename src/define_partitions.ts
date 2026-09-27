@@ -323,7 +323,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    * partitions before their {@linkcode ReadDef.select | select} runs. The store's name and the entry's key name each
    * cache in warnings.
    */
-  defineCaches: CacheFactory<Key, Row>;
+  defineCaches: CacheFactory<Key, Row, Descriptor>;
   /**
    * The column values that pick out a partition's rows in the table, such as `{ league: 'nfl' }`: the store's
    * {@linkcode PartitionKeySpec.where | key.where}.
@@ -570,7 +570,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   return {
     defineRead: surface.read,
     defineReadAcross: readAcrossOf as Partitions<Row, Key, Args, Descriptor>['defineReadAcross'],
-    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where }),
+    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where, partitionOf: describe }),
     where,
     keyOf,
     partitionOf: describe,

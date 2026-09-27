@@ -17,7 +17,9 @@ import type { Partitions } from './define_partitions';
  * One entry of a store's {@linkcode Partitions.defineCaches | defineCaches} block: a {@linkcode byPartition} cache, or,
  * where the rows are known, a {@linkcode byEntity} cache.
  */
-export type CacheDeclaration<Row extends RowShape = never> = MemoDecl<unknown> | ([Row] extends [never] ? never : EntityCacheDeclaration<Row, any>);
+export type CacheDeclaration<Row extends RowShape = never, Partition = unknown> =
+  | MemoDecl<unknown>
+  | ([Row] extends [never] ? never : EntityCacheDeclaration<Row, any, Partition>);
 
 /**
  * What a {@linkcode Partitions.defineCaches | defineCaches} block returns: one cache per entry, under the entry's key.
@@ -25,7 +27,7 @@ export type CacheDeclaration<Row extends RowShape = never> = MemoDecl<unknown> |
  * through `.for(key)`.
  */
 export type BoundCaches<Key, Row extends RowShape, D> = {
-  [K in keyof D]: D[K] extends EntityCacheDeclaration<any, infer V> ? DerivedValues<Key, Row, V> : D[K] extends MemoDecl<infer Bound> ? Memo<Key, Bound> : never;
+  [K in keyof D]: D[K] extends EntityCacheDeclaration<any, infer V, any> ? DerivedValues<Key, Row, V> : D[K] extends MemoDecl<infer Bound> ? Memo<Key, Bound> : never;
 };
 
 /**
@@ -34,13 +36,17 @@ export type BoundCaches<Key, Row extends RowShape, D> = {
  * cache the store holds is attached the same way. Without the store's row type, it takes only {@linkcode byPartition}
  * caches.
  */
-export type CacheFactory<Key, Row extends RowShape = never> = <D extends Record<string, CacheDeclaration<Row>>>(decls: D) => BoundCaches<Key, Row, D>;
+export type CacheFactory<Key, Row extends RowShape = never, Partition = unknown> = <D extends Record<string, CacheDeclaration<Row, Partition>>>(
+  decls: D,
+) => BoundCaches<Key, Row, D>;
 
 /** What a {@linkcode byEntity} cache reads its rows through: the store's table, and how a partition key addresses it. */
-export interface EntityCacheSource<Row extends RowShape, Key> {
+export interface EntityCacheSource<Row extends RowShape, Key, Partition = unknown> {
   table: RowTable<Row>;
   /** The column values that pick out a partition's rows. */
   filter: (key: Key) => Partial<Row>;
+  /** The description of the partition a key names, which a {@linkcode byEntity} cache's `fromRows` is handed. */
+  partitionOf: (key: Key) => Partition;
 }
 
 /**
@@ -48,11 +54,11 @@ export interface EntityCacheSource<Row extends RowShape, Key> {
  * {@linkcode byEntity} entry to the rows `source` reads as well. Without a `source`, a {@linkcode byEntity} entry
  * throws.
  */
-export function bindCaches<Key, Row extends RowShape, D extends Record<string, CacheDeclaration<Row>>>(
+export function bindCaches<Key, Row extends RowShape, D extends Record<string, CacheDeclaration<Row, Partition>>, Partition = unknown>(
   store: string,
   binding: PartitionBinding<Key>,
   decls: D,
-  source?: EntityCacheSource<Row, Key>,
+  source?: EntityCacheSource<Row, Key, Partition>,
 ): BoundCaches<Key, Row, D> {
   const out = {} as Record<string, unknown>;
   for (const name of Object.keys(decls)) {
@@ -60,9 +66,9 @@ export function bindCaches<Key, Row extends RowShape, D extends Record<string, C
     if (isEntityCacheDeclaration(decl)) {
       if (!source) throw new Error(`[${store}] '${name}' is a byEntity cache, which reads a store's rows; declare it in the store's partitions.defineCaches block`);
       const memo = createMemos(store, binding, { [name]: derivedValueMemo(decl.def.max) })[name] as DerivedValueMemo<Key, unknown>;
-      out[name] = createDerivedValues<Row, Key, unknown>(
-        { store, name, table: source.table, filter: source.filter, memo, parts: binding.parts, version: binding.version },
-        decl.def as EntityCacheDeclaration<Row, unknown>['def'],
+      out[name] = createDerivedValues<Row, Key, unknown, Partition>(
+        { store, name, table: source.table, filter: source.filter, partitionOf: source.partitionOf, memo, parts: binding.parts, version: binding.version },
+        decl.def as EntityCacheDeclaration<Row, unknown, Partition>['def'],
       );
     } else {
       out[name] = createMemos(store, binding, { [name]: decl as MemoDecl<unknown> })[name];
