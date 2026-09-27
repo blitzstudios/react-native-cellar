@@ -104,9 +104,10 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
      */
     enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
     /**
-     * The args the read may be handed without a value, such as a player id its partition takes for some locators and
-     * not others. The read is ready without them, and its functions see them as possibly `undefined`. Name the same
-     * fields as the definition's third type argument, which is what types them: `defineRead<Args, Value, 'playerId'>`.
+     * The args the read may be handed without a value, such as a filter its `select` applies only when there is one.
+     * The read is ready without them, and its functions see them as possibly `undefined`. Name the same fields as the
+     * definition's third type argument, which is what types them: `defineRead<Args, Value, 'position'>`. An arg only the
+     * store's key reads needs neither, since the key reads the args as passed.
      */
     optionalArgs?: readonly Optional[];
     /**

@@ -169,11 +169,13 @@ store is reaching past its entry point; import it from its own module only if yo
   A read declares none of its args. It is ready once every arg its caller passed has a value — `undefined`, `null`,
   `''` and an empty list count as none, `0` and `false` are values — and until then it fetches nothing and runs
   nothing: one gate, for the fetch and the read alike. `optionalArgs` names the few a read may be handed without a
-  value, such as a player id its partition takes for some locators and not others; they are its third type
-  argument too, `read<Args, Value, 'playerId'>`, which is what types them. The read's functions — `select`, its
-  `partition`, `enabled` — see the args through a view (`args_view.ts`), one per read and reused across calls:
-  every arg arrives non-null, and reading one the caller left out entirely stops the function and returns `empty`,
-  with a dev warning naming the arg. The view costs a trap per arg read, a fraction of a microsecond a call.
+  value, such as a filter its `select` applies only when there is one; they are its third type argument too,
+  `read<Args, Value, 'position'>`, which is what types them. The read's own functions — `select`, a `partition`
+  function, `enabled` — see the args through a view (`args_view.ts`), one per read and reused across calls: every
+  arg arrives non-null, and reading one the caller left out entirely stops the function and returns `empty`, with a
+  dev warning naming the arg. The store's key reads them as passed, since it is shared by reads that take different
+  args and answers a missing value with no partition. The view costs a trap per arg read, a fraction of a
+  microsecond a call.
 
   A read caches nothing itself. A hook runs `select` again when its args change, compared field by field and by
   content, or when what it read changes, and keeps its last object while the new value is equal; `getValue` runs

@@ -310,7 +310,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    *
    * `defineRead<Args, Value>({ … })`. A read that may be handed an arg without a value names it twice, as the third type
    * argument, which types it, and in {@linkcode CommonDef.optionalArgs | optionalArgs}, which the read checks:
-   * `defineRead<Args, Value, 'playerId'>({ optionalArgs: ['playerId'], … })`.
+   * `defineRead<Args, Value, 'position'>({ optionalArgs: ['position'], … })`.
    */
   defineRead: <A extends Args, T, Optional extends keyof A = never>(def: ReadDef<A, Key, T, Optional>) => Read<A, T>;
   /**

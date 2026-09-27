@@ -1023,3 +1023,30 @@ describe('createReadSurface — dev warnings about one read', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe('createReadSurface — the store key reads the args as passed', () => {
+  type ScopeArgs = { key: string; scope?: string };
+  const scopedKey = (args: ScopeArgs): string => (args.scope ? `${args.key}:${args.scope}` : args.key);
+
+  it('lets the store key read an arg its caller left out, since the key answers a missing value itself', () => {
+    const harness = makeHarness();
+    const surface = createReadSurface<string>({ ...harness.kernel, defaultPartition: scopedKey as (args: never) => string });
+    const read = surface.read<ScopeArgs, Slice>({ select: (_args, key) => harness.slices.get(key) ?? harness.EMPTY, empty: harness.EMPTY });
+    harness.land('p1', { a: { score: 1 } });
+
+    expect(read.getValue({ key: 'p1' })).toEqual({ a: { score: 1 } });
+  });
+
+  it("still stops a read's own partition function on an arg its caller left out", () => {
+    const harness = makeHarness();
+    const read = harness.surface.read<ScopeArgs, Slice>({
+      partition: (args) => `${args.key}:${args.scope}`,
+      select: (_args, key) => harness.slices.get(key) ?? harness.EMPTY,
+      empty: harness.EMPTY,
+    });
+    harness.land('p1:x', { a: { score: 1 } });
+
+    expect(read.getValue({ key: 'p1' })).toBe(harness.EMPTY);
+    expect(read.getValue({ key: 'p1', scope: 'x' })).toEqual({ a: { score: 1 } });
+  });
+});

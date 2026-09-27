@@ -3,10 +3,11 @@
  *
  * A read is ready once every arg its caller passed has a value (`undefined`, `null`, `''` and an empty list count as
  * none; `0` and `false` are values), apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}. Until
- * then it neither fetches nor runs {@linkcode ReadDef.select | select}. The view covers the rest: a read's functions
- * ({@linkcode ReadDef.select | select}, its partition, {@linkcode CommonDef.enabled | enabled}) read the args through
- * it, and reading one the caller left out entirely stops the function the same way, so a function is never handed a
- * missing arg it didn't declare optional.
+ * then it neither fetches nor runs {@linkcode ReadDef.select | select}. The view covers the rest: a read's own functions
+ * ({@linkcode ReadDef.select | select}, a `partition` function, {@linkcode CommonDef.enabled | enabled}) read the args
+ * through it, and reading one the caller left out entirely stops the function the same way, so a function is never
+ * handed a missing arg it didn't declare optional. The store's key reads them as passed, since it is shared by reads
+ * that take different args and answers a missing value itself.
  */
 
 import { isArgPresent } from '../args_key';
@@ -32,8 +33,11 @@ export interface ArgsView {
   ready(args: object): boolean;
   /** Runs `fn` over `args` seen through the view, and returns what it returned; throws {@linkcode ArgNotPassed}. */
   run<R>(args: object, fn: (view: never) => R): R;
-  /** {@linkcode ArgsView.run | run}, also returning every arg `fn` read. */
-  record<R>(args: object, fn: (view: never) => R): { value: R; read: ReadonlySet<string> };
+  /**
+   * {@linkcode ArgsView.run | run}, also returning every arg `fn` read. A `lenient` run hands `fn` a missing arg as
+   * it is rather than stopping it, for a function that answers a missing value itself, such as the store's key.
+   */
+  record<R>(args: object, fn: (view: never) => R, lenient?: boolean): { value: R; read: ReadonlySet<string> };
 }
 
 /** Creates the view one read sees its args through; `optional` names the args it may be handed without a value. */
@@ -41,13 +45,14 @@ export function createArgsView(optional: readonly PropertyKey[] | undefined): Ar
   const optionalArgs = new Set(optional ?? []);
   let current: Record<PropertyKey, unknown> = {};
   let reading: Set<string> | undefined;
+  let strict = true;
 
   const view = new Proxy({} as Record<PropertyKey, unknown>, {
     get: (_target, field) => {
       const value = current[field];
       if (typeof field === 'symbol' || PROBES.has(field)) return value;
       reading?.add(field);
-      if (optionalArgs.has(field) || isArgPresent(value)) return value;
+      if (!strict || optionalArgs.has(field) || isArgPresent(value)) return value;
       throw new ArgNotPassed(field);
     },
     has: (_target, field) => field in current,
@@ -59,17 +64,20 @@ export function createArgsView(optional: readonly PropertyKey[] | undefined): Ar
     },
   });
 
-  const over = <R>(args: object, fn: (view: never) => R, read: Set<string> | undefined): R => {
+  const over = <R>(args: object, fn: (view: never) => R, read: Set<string> | undefined, lenient = false): R => {
     // Saved and restored, so a function that calls this read again from inside itself sees its own args afterwards.
     const outer = current;
     const outerReading = reading;
+    const outerStrict = strict;
     current = args as Record<PropertyKey, unknown>;
     reading = read;
+    strict = !lenient;
     try {
       return fn(view as never);
     } finally {
       current = outer;
       reading = outerReading;
+      strict = outerStrict;
     }
   };
 
@@ -81,9 +89,9 @@ export function createArgsView(optional: readonly PropertyKey[] | undefined): Ar
       return true;
     },
     run: (args, fn) => over(args, fn, undefined),
-    record(args, fn) {
+    record(args, fn, lenient) {
       const read = new Set<string>();
-      return { value: over(args, fn, read), read };
+      return { value: over(args, fn, read, lenient), read };
     },
   };
 }

@@ -116,9 +116,10 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
    */
   enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
   /**
-   * The args the read may be handed without a value, such as a player id its partition takes for some locators and
-   * not others. The read is ready without them, and its functions see them as possibly `undefined`. Name the same
-   * fields as the definition's third type argument, which is what types them: `defineRead<Args, Value, 'playerId'>`.
+   * The args the read may be handed without a value, such as a filter its `select` applies only when there is one.
+   * The read is ready without them, and its functions see them as possibly `undefined`. Name the same fields as the
+   * definition's third type argument, which is what types them: `defineRead<Args, Value, 'position'>`. An arg only the
+   * store's key reads needs neither, since the key reads the args as passed.
    */
   optionalArgs?: readonly Optional[];
   /**
@@ -501,12 +502,15 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     const keyOf = partitionKeyOf<ReadyArgs<Args, Optional>, Key>(spec as readonly PartitionField<ReadyArgs<Args, Optional>>[] | ((args: ReadyArgs<Args, Optional>) => Key));
     const runner = readRunner(def.optionalArgs);
     const { view } = runner;
+    // The store's key and a field list read the args as passed: the key is shared by reads that take different args,
+    // and a missing value names no partition. A read's own `partition` function sees the view, like its `select`.
+    const keyIsLenient = typeof def.partition !== 'function';
 
     /** Where a call stands: waiting, or ready with its partition and what it wants of it. */
     const resolve = (args: Args | undefined) => {
       if (args === undefined || !view.ready(args as object)) return undefined;
       try {
-        const { value: key, read } = view.record(args as object, keyOf as (view: never) => Key);
+        const { value: key, read } = view.record(args as object, keyOf as (view: never) => Key, keyIsLenient);
         return { key, parts: toParts(key), intent: intentOf(args as object, read) };
       } catch (error) {
         if (error instanceof ArgNotPassed) return undefined;
