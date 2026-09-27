@@ -80,9 +80,9 @@ export interface FetchIngestConfig<Key> {
     /**
      * Called when the partition's request starts, returning a function called when its write has finished: holds the
      * partition's socket pushes in between, since the write replaces the whole partition and would overwrite a push
-     * written mid-request with the older response.
+     * written mid-request with the older response. Returns nothing for a partition with no writes to hold.
      */
-    holdWrites?: (key: Key) => () => void;
+    holdWrites?: (key: Key) => (() => void) | undefined;
 }
 /**
  * An axios `transformResponse` that returns the response body unchanged, so it stays the unparsed JSON text. Pass it

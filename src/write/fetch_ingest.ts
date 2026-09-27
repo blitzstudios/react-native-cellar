@@ -105,9 +105,9 @@ export interface FetchIngestConfig<Key> {
   /**
    * Called when the partition's request starts, returning a function called when its write has finished: holds the
    * partition's socket pushes in between, since the write replaces the whole partition and would overwrite a push
-   * written mid-request with the older response.
+   * written mid-request with the older response. Returns nothing for a partition with no writes to hold.
    */
-  holdWrites?: (key: Key) => () => void;
+  holdWrites?: (key: Key) => (() => void) | undefined;
 }
 
 /**
@@ -299,13 +299,6 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
    * so the question is only ever whether such a caller has existed, and a refcount would cost an effect per read.
    */
   const wantedWhole = new Set<string>();
-  /**
-   * Whether an identical body has to be *detected* rather than simply shredded again, which is what decides if every
-   * body is worth hashing. Only a store taking concurrent socket writes can be harmed by re-shredding one: the body
-   * is older than any delta that landed since, so replacing the rows with it undoes them. Without that write path the
-   * cost of missing the case is a repaint, which does not pay for a pass over every character of every body.
-   */
-  const detectsUnchangedBodies = !!cfg.holdWrites;
   const queryKey = (parts: readonly string[]): (string | undefined)[] => [cfg.ingestKeyRoot, ...parts];
   const bump = (key: Key, parts: readonly string[], changes: ChangeSet): number =>
     cfg.bump ? cfg.bump(key, changes) : cfg.version.bump(parts, changes);
@@ -313,13 +306,20 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
   const runIngest = async (key: Key): Promise<{ version: number; count: number }> => {
     const release = cfg.holdWrites?.(key);
     try {
-      return await fetchAndIngest(key);
+      return await fetchAndIngest(key, !!release);
     } finally {
       release?.();
     }
   };
 
-  const fetchAndIngest = async (key: Key): Promise<{ version: number; count: number }> => {
+  /**
+   * `detectsUnchangedBodies` is whether an identical body has to be *detected* rather than simply shredded again,
+   * which is what decides if the body is worth hashing. Only a partition whose socket writes were held can be harmed by
+   * re-shredding one: the body is older than any delta that landed since, so replacing the rows with it undoes them.
+   * Without that write path the cost of missing the case is a repaint, which does not pay for a pass over every
+   * character of every body.
+   */
+  const fetchAndIngest = async (key: Key, detectsUnchangedBodies: boolean): Promise<{ version: number; count: number }> => {
     const parts = cfg.toParts(key);
     const etag = cfg.getEtag(key);
     const startedAt = Date.now();

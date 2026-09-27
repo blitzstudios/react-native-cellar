@@ -118,9 +118,10 @@ export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
    * Called when a fetch of the partition starts, and returns a function Cellar calls when the fetch has finished.
    * For a store that also receives socket pushes: hold the partition's pushes until the release is called. A fetch
    * replaces the whole partition, so a push written while the request was in flight would otherwise be overwritten by
-   * the older response.
+   * the older response. Returns nothing when there are no pushes to hold, and the fetch then skips checking whether its
+   * body is the one it last wrote, which only a partition taking pushes needs.
    */
-  holdWrites?: (key: Key) => () => void;
+  holdWrites?: (key: Key) => (() => void) | undefined;
 }
 
 /**

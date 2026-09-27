@@ -258,6 +258,18 @@ describe('createFetchIngest — unchanged body short-circuit', () => {
     expect(harness.cfg.ingestRaw).toHaveBeenCalledTimes(2);
     expect(out.count).toBe(5);
   });
+
+  it('does not hash bodies when a store has a hold but no pushes to hold', async () => {
+    const harness = makeCfg({ holdWrites: () => undefined });
+    harness.setResponse({ data: '[{"id":"a","pts":1}]' });
+    const ingest = createFetchIngest(harness.cfg);
+    await ingest.prefetch('week');
+
+    const out = await ingest.prefetch('week');
+
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledTimes(2);
+    expect(out.count).toBe(5);
+  });
 });
 
 describe('createFetchIngest — a 200 carrying no body', () => {

@@ -386,7 +386,8 @@ export function defineSqliteStore<
   const buildOn = (table: RowTable<StoredRow>, atom: VersionAtom, caps: Caps): Functions => {
     table.init();
     const holds: Array<(key: string) => () => void> = [];
-    const holdWrites = (key: string): (() => void) => {
+    const holdWrites = (key: string): (() => void) | undefined => {
+      if (!holds.length) return undefined;
       const releases = holds.map((hold) => hold(key));
       return () => releases.forEach((release) => release());
     };
