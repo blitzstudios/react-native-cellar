@@ -8,7 +8,7 @@
  * args, and reading a partition that has never been fetched fetches it.
  */
 import { RawQuery } from './write/fetch_ingest';
-import { Read, ReadDef, ReadGroupedDef, ReadManyDef, ReadyArgs } from './read/surface';
+import { Read, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -150,6 +150,11 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
      * default. A forgotten fetch time makes the partition read as never fetched.
      */
     internMax?: number;
+    /**
+     * Called when a partition's version is bumped, with its key and its record if Cellar still holds it, so the store
+     * can keep the record somewhere {@linkcode PartitionKeySpec.from | from} can find it again.
+     */
+    remember?: (key: Key, descriptor: Descriptor) => void;
 }
 /**
  * Options for a store's {@linkcode PartitionLifecycle.usePrime | usePrime} and
@@ -245,35 +250,19 @@ export interface PartitionLifecycle<Args> {
      */
     forget: () => void;
 }
-/**
- * Args that carry the read's partitions in the field of that name, where
- * {@linkcode Partitions.defineReadMany | defineReadMany} looks by default.
- */
-interface NamesPartitions<Descriptor> {
-    partitions: readonly MaybePartition<Descriptor>[];
-}
-/** Where a read's partitions come from; `null` and `undefined` both stand for an empty set. */
+/** Where a read's partitions come from, as records; `null` and `undefined` both stand for none. */
 type PartitionsFrom<Args, Descriptor> = (args: Args) => readonly MaybePartition<Descriptor>[] | null | undefined;
 /**
- * {@linkcode Partitions.defineReadMany | defineReadMany}, naming its partitions as the records a caller holds. Optional
- * when the args already carry them.
+ * A {@linkcode ReadAcrossDef} as a store declares it: its partitions named as the records a caller holds, which Cellar
+ * turns into keys.
  */
-type PartitionReadManyDef<Args, Key, T, Descriptor, Optional extends keyof Args> = Omit<ReadManyDef<Args, Key, T, Optional>, 'partitions'> & (Args extends NamesPartitions<Descriptor> ? {
-    partitions?: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
-} : {
-    partitions: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
-});
-/**
- * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}, likewise: one group of candidate records per thing the
- * caller is asking about.
- */
-interface PartitionReadGroupedDef<Args, Key, T, Descriptor, Optional extends keyof Args> extends Omit<ReadGroupedDef<Args, Key, T, Optional>, 'groups'> {
+interface PartitionReadAcrossDef<Args, Key, T, Descriptor, Optional extends keyof Args> extends Omit<ReadAcrossDef<Args, Key, T, Optional>, 'partitions'> {
     /**
-     * The candidate partitions for each lookup the read answers, one group per lookup, such as the partitions each of
-     * several stat keys could live in. Every partition in every group is fetched and subscribed to, and
-     * {@linkcode ReadGroupedDef.select | select} gets the groups back in the same order.
+     * The partitions the args name, as records, such as one per week a player's stats are read across. Every one is
+     * fetched if it has never been fetched, and the read re-renders when any of them changes. A record that names no
+     * partition keeps its place, so positions line up with the caller's list.
      */
-    groups: (args: ReadyArgs<Args, Optional>) => readonly (readonly MaybePartition<Descriptor>[])[];
+    partitions: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
 }
 /**
  * What {@linkcode definePartitions} returns to a store's {@linkcode SqliteStoreConfig.build | build}: the functions
@@ -294,19 +283,12 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
      */
     defineRead: <A extends Args, T, Optional extends keyof A = never>(def: ReadDef<A, Key, T, Optional>) => Read<A, T>;
     /**
-     * Declares a read across several partitions, such as one player's stats across several weeks: the args name a list of
-     * partitions (by default their {@linkcode ReadManyDef.partitions | partitions} field), all of them are fetched and
-     * subscribed to, and {@linkcode ReadDef.select | select} computes one value from all of them. Declared like
-     * {@linkcode Partitions.defineRead | defineRead}.
+     * Declares a read across several partitions, such as one player's stats across several weeks, or a row for each of
+     * several stat keys: its {@linkcode PartitionReadAcrossDef.partitions | partitions} names them, all of them are
+     * fetched and subscribed to, and its {@linkcode ReadAcrossDef.select | select} gets their keys, in order. Declared
+     * like {@linkcode Partitions.defineRead | defineRead}.
      */
-    defineReadMany: <A, T, Optional extends keyof A = never>(def: PartitionReadManyDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
-    /**
-     * Declares a read that answers several lookups at once, where each lookup's rows could be in any of several candidate
-     * partitions: the args give one group of candidate partitions per lookup, every candidate is fetched and subscribed
-     * to, and {@linkcode ReadDef.select | select} gets the groups back in order to answer each lookup. Declared like
-     * {@linkcode Partitions.defineRead | defineRead}.
-     */
-    defineReadGrouped: <A, T, Optional extends keyof A = never>(def: PartitionReadGroupedDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
+    defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
     /**
      * Declares the store's caches: every value it keeps on the heap beyond its rows, in one object, each under a name,
      * with entries kept per partition. Each entry is one of two kinds, named for what a write discards:
@@ -334,6 +316,8 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
      * key, so the partition's fetch can get the record back.
      */
     keyOf: (partition: Descriptor) => Key;
+    /** The record of the partition `key` names; the reverse of {@linkcode Partitions.keyOf | keyOf}. */
+    partitionOf: (key: Key) => Descriptor;
     /** Every partition key whose record is still remembered, from least to most recently used. */
     internedKeys: () => IterableIterator<Key>;
     /**
@@ -379,5 +363,5 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
  * {@linkcode SqliteStoreConfig.build | build}, after {@linkcode RowTable.init | table.init()}.
  */
 export declare function definePartitions<Row extends RowShape, Key, Args = Key, Descriptor = Args>(config: PartitionsConfig<Row, Key, Args, Descriptor>): Partitions<Row, Key, Args, Descriptor>;
-export type { CommonDef, DataResult, DerivedValues, RawQuery, Read, ReadDef, ReadGroupedDef, ReadManyDef, RowTable, SqliteStoreConfig, addressesPartition, byEntity, byPartition };
+export type { CommonDef, DataResult, DerivedValues, RawQuery, Read, ReadAcrossDef, ReadDef, RowTable, SqliteStoreConfig, addressesPartition, byEntity, byPartition };
 //# sourceMappingURL=define_partitions.d.ts.map

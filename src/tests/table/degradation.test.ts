@@ -164,7 +164,8 @@ describe('defineSqliteStore — the wiring', () => {
     const store = defineSqliteStore({
       name: 'things',
       schema,
-      build: (rowTable) => ({ reads: { all: () => rowTable.find({}) }, lifecycle: { forget } }),
+      partition: { fields: ['region'] },
+      build: (cellar) => ({ reads: { all: () => cellar.table.find({}) }, lifecycle: { forget } }),
     });
     store.bindSqlite(brokenConn(/SELECT/));
 
@@ -177,9 +178,10 @@ describe('defineSqliteStore — the wiring', () => {
 
   itProd('gives the capabilities the guarded handle too, so a failing ranker hands the store to recovery rather than throwing', () => {
     let capsConn: SqliteConnection | undefined;
-    const store = defineSqliteStore<Thing, { reads: object }, { probe: SqliteConnection }>({
+    const store = defineSqliteStore({
       name: 'things',
       schema,
+      partition: { fields: ['region'] },
       build: () => ({ reads: {} }),
       capabilities: (conn: SqliteConnection) => {
         capsConn = conn;

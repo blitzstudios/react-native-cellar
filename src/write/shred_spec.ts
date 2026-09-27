@@ -216,9 +216,9 @@ export interface ShredSpec {
   /**
    * The conditions of the `DELETE` run before inserting, which remove the partition's old rows: each matches rows whose
    * column equals one of the write's {@linkcode NativeShredSpec.binds | binds}. They must name exactly the columns of
-   * the partition's {@linkcode PartitionKeySpec.where | where}.
+   * the write's `where`. A store's spec leaves them out: {@linkcode defineSqliteStore} deletes by `partition_key`.
    */
-  deleteWhere: ShredDeleteClause[];
+  deleteWhere?: ShredDeleteClause[];
   /**
    * Skips elements that shouldn't become rows. It reads `paths` in order, as `coalesceText` does, and skips the
    * element when none of them has a value, or the first value found is an empty string. For a body that can include
@@ -243,23 +243,22 @@ export interface ShredSpec {
  * returns a name that isn't in {@linkcode NativeShredSpec.specs | specs}, or the native shred fails, that partition is
  * written through the JS path instead.
  */
-export interface NativeShredSpec {
+export interface NativeShredSpec<Partition extends object = Readonly<Record<string, unknown>>> {
   /** The programs, by variant name, such as `{ all: {...} }` for a store with a single program. */
   specs: Readonly<Record<string, ShredSpec>>;
   /**
-   * Picks the program for the partition being written: returns a key of {@linkcode NativeShredSpec.specs | specs}. It
-   * gets the partition's `where` (the column values that pick out its rows, such as `{ league: 'nfl' }`). A name not in
-   * {@linkcode NativeShredSpec.specs | specs} sends that partition through the JS path.
+   * Picks the program for the partition being written, given its description (such as `{ sport: 'nfl' }`): returns a
+   * key of {@linkcode NativeShredSpec.specs | specs}. A name not in {@linkcode NativeShredSpec.specs | specs} sends
+   * that partition through the JS path.
    */
-  variant: (where: Readonly<Record<string, SqlValue>>) => string;
+  variant: (partition: Partition) => string;
   /**
-   * The values for the partition being written that the program's `bind` ops and
-   * {@linkcode ShredSpec.deleteWhere | deleteWhere} conditions refer to by index, given the partition's `where`. For a
-   * partition `{ league: 'nfl' }` this is typically `['nfl']`, so a `bind` op with index 0 fills a row's `league`
-   * column, and a {@linkcode ShredSpec.deleteWhere | deleteWhere} of `{ column: 'league', bindIndex: 0 }` deletes the
-   * league's old rows.
+   * The values the program's `bind` ops refer to by index, given the partition's description. In a store, bind 0 is
+   * the partition's key, which Cellar supplies, and these fill bind 1 onward: for `{ sport: 'nfl' }` this is typically
+   * `['nfl']`, so a `bind` op with index 1 fills a row's `league` column. A spec with no `bind` ops of its own returns
+   * `[]`.
    */
-  binds: (where: Readonly<Record<string, SqlValue>>) => SqlValue[];
+  binds: (partition: Partition) => SqlValue[];
 }
 
 function getPath(element: unknown, path: string): unknown {

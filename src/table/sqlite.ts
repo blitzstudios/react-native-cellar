@@ -4,7 +4,7 @@ import { cacheKeyOf } from '../args_key';
 import { chunkList } from '../collections';
 import { createPresence, whereMapKey } from './presence';
 import { noteTableRead } from './read_coverage';
-import { columnNames, FindOpts, IndexDef, RowShape, RowTable, RowTableSchema, SqlValue } from './types';
+import { columnNames, FindOpts, IndexDef, ReplaceRow, RowShape, RowTable, RowTableSchema, SqlValue } from './types';
 import { assertRowsMatchWhere, assertEntityIdColumn, comparator, whereClause } from './query';
 import { ALL_ENTITIES, NO_CHANGES, unionChanges, WriteResult } from './change_set';
 import { stageNames, entityDiffSql, EntityDiffSql, WriteMode } from './entity_diff_sql';
@@ -21,6 +21,7 @@ import {
   schemaFingerprint,
   schemaStructureStamp,
 } from './schema';
+import { partitionedShredSpec, PARTITION_KEY_COLUMN } from './partitioned';
 import { NativeShredSpec, ShredSpec } from '../write/shred_spec';
 import { BatchCommand, readRows, runBatch, runBatchAsync, SqliteConnection } from './connection';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
@@ -64,8 +65,8 @@ function createDiffLostReporter(table: string): () => void {
  * Dev-only: {@linkcode ShredSpec.deleteWhere | deleteWhere} must name exactly the filter's columns, so the native and
  * JS paths replace the same rows.
  */
-function assertDeleteWhereMatches(table: string, variant: string, spec: { deleteWhere: ReadonlyArray<{ column: string }> }, where: Partial<RowShape>): void {
-  const deleteColumns = new Set(spec.deleteWhere.map((clause) => clause.column));
+function assertDeleteWhereMatches(table: string, variant: string, spec: ShredSpec, where: Partial<RowShape>): void {
+  const deleteColumns = new Set((spec.deleteWhere ?? []).map((clause) => clause.column));
   const whereColumns = Object.keys(where);
   const missing = whereColumns.filter((column) => !deleteColumns.has(column));
   const extra = [...deleteColumns].filter((column) => !whereColumns.includes(column));
@@ -110,11 +111,21 @@ export interface SqliteRowTableOptions {
 export function createSqliteRowTable<Row extends RowShape>(
   schema: RowTableSchema<Row>,
   conn: SqliteConnection,
-  nativeShredSpec?: NativeShredSpec,
+  storeShredSpec?: NativeShredSpec,
   options: SqliteRowTableOptions = {},
 ): RowTable<Row> {
   if (__DEV__) assertEntityIdColumn(schema);
   const cols = columnNames(schema);
+  const nativeShredSpec = schema.partitioned && storeShredSpec ? partitionedShredSpec(storeShredSpec) : storeShredSpec;
+
+  /** Fills in each row's `partition_key` from the replace's `where`: the rows are the caller's to hand over. */
+  const stampPartition = (where: Partial<Row>, rows: readonly ReplaceRow<Row>[]): readonly Row[] => {
+    if (!schema.partitioned) return rows as readonly Row[];
+    const key = where[PARTITION_KEY_COLUMN as keyof Row];
+    if (key == null) return rows as readonly Row[];
+    for (const row of rows) (row as RowShape)[PARTITION_KEY_COLUMN] = key as SqlValue;
+    return rows as readonly Row[];
+  };
 
   const stageFingerprint = schemaFingerprint(schema);
   const asyncStage = stageNames(schema.table, stageFingerprint, 'async');
@@ -166,17 +177,30 @@ export function createSqliteRowTable<Row extends RowShape>(
 
   const presence = createPresence();
 
-  // `setMeta` is the only writer, so once loaded this cache answers every etag read on its own.
+  // `setMeta` is the only writer, so once loaded these caches answer every etag and description read on their own.
   const metaCache = new Map<string, string | undefined>();
+  const recordCache = new Map<string, string>();
   let metaLoaded = false;
   const metaKey = (where: Partial<Row>): string =>
     schema.meta ? cacheKeyOf(schema.meta.keyColumns.map((column) => String(where[column as keyof Row] ?? ''))) : '';
   function ensureMetaLoaded(meta: NonNullable<typeof schema.meta>): void {
     if (metaLoaded) return;
-    const cols = [...meta.keyColumns, meta.column];
+    const cols = [...meta.keyColumns, meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])];
     const rows = readRows<Record<string, string | undefined>>(conn, `SELECT ${cols.join(', ')} FROM ${meta.table};`);
-    for (const row of rows) metaCache.set(metaKey(row as Partial<Row>), row[meta.column] ?? undefined);
+    for (const row of rows) {
+      const key = metaKey(row as Partial<Row>);
+      metaCache.set(key, row[meta.column] ?? undefined);
+      const record = meta.recordColumn ? row[meta.recordColumn] : undefined;
+      if (record != null) recordCache.set(key, record);
+    }
     metaLoaded = true;
+  }
+
+  /** Adds the description column to an ETag table built before it existed; a new one is created with it. */
+  function ensureRecordColumn(meta: NonNullable<typeof schema.meta>): void {
+    if (!meta.recordColumn) return;
+    const present = readRows<{ name: string }>(conn, `PRAGMA table_info(${meta.table});`).some((column) => column.name === meta.recordColumn);
+    if (!present) conn.execute(`ALTER TABLE ${meta.table} ADD COLUMN ${meta.recordColumn} TEXT;`);
   }
 
   const secondaryIndexes = schema.indexes ?? [];
@@ -264,16 +288,17 @@ export function createSqliteRowTable<Row extends RowShape>(
     return [[`DELETE FROM ${schema.table}${sql};`, params], ...syncDiff.insertInto(schema.table, rows)];
   };
 
-  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => Row[]): Promise<WriteResult> {
+  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition: object): Promise<WriteResult> {
     const direct = partitionIsEmpty(where);
     if (conn.shredJsonArrayAsync && nativeShredSpec) {
       try {
-        const variant = nativeShredSpec.variant(where as Record<string, SqlValue>);
+        const variant = nativeShredSpec.variant(partition as Readonly<Record<string, unknown>>);
         const spec = nativeShredSpec.specs[variant];
         // A partition with no spec entry is one this store shreds in JS; the catch below is that fallback.
         if (!spec) throw new Error(`row_table: shred variant '${variant}' is not in the spec table`);
         if (__DEV__) assertDeleteWhereMatches(schema.table, variant, spec, where);
-        const binds = nativeShredSpec.binds(where as Record<string, SqlValue>);
+        const storeBinds = nativeShredSpec.binds(partition as Readonly<Record<string, unknown>>);
+        const binds = schema.partitioned ? [where[PARTITION_KEY_COLUMN as keyof Row] as SqlValue, ...storeBinds] : storeBinds;
         let result: WriteResult;
         if (direct) {
           const landed = await conn.shredJsonArrayAsync(spec, rawJson, binds);
@@ -297,7 +322,7 @@ export function createSqliteRowTable<Row extends RowShape>(
         });
       }
     }
-    const rows = parseRows(rawJson);
+    const rows = stampPartition(where, parseRows(rawJson));
     if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
     let result: WriteResult;
     if (direct) {
@@ -339,10 +364,17 @@ export function createSqliteRowTable<Row extends RowShape>(
       if (plan === 'extend') for (const column of addedColumns(schema, live.columns) ?? []) conn.execute(addColumnSql(schema, column));
       conn.execute(createTableSql(schema));
       for (const idx of secondaryIndexes) conn.execute(createIndexSql(schema.table, idx));
-      if (schema.meta) conn.execute(createMetaTableSql(schema.meta));
+      if (schema.meta) {
+        conn.execute(createMetaTableSql(schema.meta));
+        ensureRecordColumn(schema.meta);
+      }
       // The columns a widening just added are NULL in every row that predates them, and a kept etag would answer the
-      // fetch that fills them with a 304. Dropped rather than dropping the table, so the rows stay.
-      if (plan === 'extend' && schema.meta) conn.execute(`DELETE FROM ${schema.meta.table};`);
+      // fetch that fills them with a 304. Cleared rather than dropping the table, so the rows stay.
+      if (plan === 'extend' && schema.meta) {
+        conn.execute(
+          schema.meta.recordColumn ? `UPDATE ${schema.meta.table} SET ${schema.meta.column} = NULL;` : `DELETE FROM ${schema.meta.table};`,
+        );
+      }
       // Stamped even where the plan is `none`, so a database built before this stamp existed acquires one on the next
       // launch, and its next widening is an `ALTER TABLE` rather than a rebuild. `PRAGMA` takes no bind parameter.
       const structure = schemaStructureStamp(schema, nativeShredSpec);
@@ -367,7 +399,8 @@ export function createSqliteRowTable<Row extends RowShape>(
       return { changes, rows: rows.length };
     },
 
-    overwrite(where: Partial<Row>, rows: readonly Row[]): WriteResult {
+    overwrite(where: Partial<Row>, replacing: readonly ReplaceRow<Row>[]): WriteResult {
+      const rows = stampPartition(where, replacing);
       if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
       if (partitionIsEmpty(where)) {
         runBatch(conn, replaceDirectly(where, rows));
@@ -381,10 +414,10 @@ export function createSqliteRowTable<Row extends RowShape>(
       return result;
     },
 
-    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => Row[]): Promise<WriteResult> {
+    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows)));
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where)));
     },
 
     getOne(where: Partial<Row>): Row | undefined {
@@ -437,27 +470,38 @@ export function createSqliteRowTable<Row extends RowShape>(
       return metaCache.get(metaKey(where));
     },
 
-    setMeta(where: Partial<Row>, value: string | undefined): void {
+    getMetaRecord(where: Partial<Row>): string | undefined {
+      const meta = schema.meta;
+      if (!meta?.recordColumn) return undefined;
+      ensureMetaLoaded(meta);
+      return recordCache.get(metaKey(where));
+    },
+
+    setMeta(where: Partial<Row>, value: string | undefined, record?: string): void {
       const meta = schema.meta;
       if (!meta) return;
-      if (value === undefined) {
-        ensureMetaLoaded(meta);
-        if (metaCache.get(metaKey(where)) === undefined) return;
-      }
+      const key = metaKey(where);
+      ensureMetaLoaded(meta);
+      const kept = meta.recordColumn ? (record ?? recordCache.get(key)) : undefined;
+      if (value === undefined && metaCache.get(key) === undefined && kept === recordCache.get(key)) return;
       const keyCols = meta.keyColumns;
       const keyParams: SqlValue[] = keyCols.map((column) => where[column as keyof Row] as SqlValue);
-      const allCols = [...keyCols, meta.column];
-      const placeholders = bindList(allCols.length);
-      const params: SqlValue[] = value === undefined ? keyParams : [...keyParams, value];
       // Fire-and-forget: a synchronous write would block the JS thread on SQLite's writer lock.
-      metaCache.set(metaKey(where), value);
-      const sql =
-        value === undefined
-          ? `DELETE FROM ${meta.table} WHERE ${keyCols.map((column) => `${column} = ?`).join(' AND ')};`
-          : `INSERT OR REPLACE INTO ${meta.table} (${allCols.join(', ')}) VALUES (${placeholders});`;
+      metaCache.set(key, value);
+      if (kept !== undefined) recordCache.set(key, kept);
+      let sql: string;
+      let params: SqlValue[];
+      if (value === undefined && kept === undefined) {
+        sql = `DELETE FROM ${meta.table} WHERE ${keyCols.map((column) => `${column} = ?`).join(' AND ')};`;
+        params = keyParams;
+      } else {
+        const allCols = [...keyCols, meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])];
+        sql = `INSERT OR REPLACE INTO ${meta.table} (${allCols.join(', ')}) VALUES (${bindList(allCols.length)});`;
+        params = [...keyParams, value ?? null, ...(meta.recordColumn ? [kept ?? null] : [])];
+      }
       if (conn.executeAsync) {
         conn.executeAsync(sql, params).catch(() => {
-          /* the in-session cache already holds the value */
+          /* the in-session caches already hold the values */
         });
       } else {
         conn.execute(sql, params);

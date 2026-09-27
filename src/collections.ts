@@ -1,4 +1,4 @@
-/** The array and map helpers the off-heap store leans on: fixed-size chunking, and get-or-insert over a `Map`. */
+/** The array and map helpers Cellar leans on: fixed-size chunking, and get-or-insert over a `Map`. */
 
 export function chunkList<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];

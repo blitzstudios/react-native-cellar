@@ -77,9 +77,10 @@ function sanitize(params?: ReadonlyArray<string | number | null>): Array<string 
 
 function shredSql(spec: ShredSpec, rows: ReadonlyArray<Record<string, string | number | null>>, binds: ReadonlyArray<string | number | null>) {
   const cmds: Array<[string, Array<string | number | null>]> = [];
-  if (spec.deleteWhere.length) {
-    const where = spec.deleteWhere.map((column) => `${column.column} = ?`).join(' AND ');
-    cmds.push([`DELETE FROM ${spec.table} WHERE ${where};`, spec.deleteWhere.map((column) => binds[column.bindIndex] ?? null)]);
+  const deleteWhere = spec.deleteWhere ?? [];
+  if (deleteWhere.length) {
+    const where = deleteWhere.map((column) => `${column.column} = ?`).join(' AND ');
+    cmds.push([`DELETE FROM ${spec.table} WHERE ${where};`, deleteWhere.map((column) => binds[column.bindIndex] ?? null)]);
   }
   const placeholders = spec.columns.map(() => '?').join(', ');
   const insert = `${spec.insertVerb} INTO ${spec.table} (${spec.columns.join(', ')}) VALUES (${placeholders});`;

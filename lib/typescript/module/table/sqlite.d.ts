@@ -16,6 +16,6 @@ export interface SqliteRowTableOptions {
  * JS objects. {@linkcode defineSqliteStore} creates one when a store is bound. Call its
  * {@linkcode RowTable.init | init} before anything else, which creates the table or rebuilds an outdated one.
  */
-export declare function createSqliteRowTable<Row extends RowShape>(schema: RowTableSchema<Row>, conn: SqliteConnection, nativeShredSpec?: NativeShredSpec, options?: SqliteRowTableOptions): RowTable<Row>;
+export declare function createSqliteRowTable<Row extends RowShape>(schema: RowTableSchema<Row>, conn: SqliteConnection, storeShredSpec?: NativeShredSpec, options?: SqliteRowTableOptions): RowTable<Row>;
 export type { RowTable, ShredSpec, defineSqliteStore };
 //# sourceMappingURL=sqlite.d.ts.map

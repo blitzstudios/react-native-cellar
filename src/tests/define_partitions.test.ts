@@ -420,7 +420,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
   it('interns the records a read names, so the read names partitions rather than keys', async () => {
     const harness = makeMetrics();
     const event: Spec = { request: 'event', region: 'us' };
-    const ids = harness.metrics.defineReadMany<{ specs: Spec[] }, string[]>({
+    const ids = harness.metrics.defineReadAcross<{ specs: Spec[] }, string[]>({
       partitions: (args) => args.specs,
       select: (_args, keys) => keys.flatMap((key) => harness.table.find({ partition_key: key }).map((row) => row.id)),
       empty: [],
@@ -431,21 +431,9 @@ describe('definePartitions — a store whose partition is a record, interned to 
     expect(harness.queried).toEqual([WEEK1, event]);
   });
 
-  it('takes the partitions off args named `partitions`, so a read that spans the ones it was handed says nothing', async () => {
-    const harness = makeMetrics();
-    const ids = harness.metrics.defineReadMany<{ partitions: Spec[] }, string[]>({
-      select: (_args, keys) => keys.flatMap((key) => harness.table.find({ partition_key: key }).map((row) => row.id)),
-      empty: [],
-    });
-
-    await harness.metrics.lifecycle.fetch({ partition: WEEK1 });
-
-    expect(ids.getValue({ partitions: [WEEK1] })).toEqual(['a', 'b']);
-  });
-
   it('keeps an absent partition as a gap, so a result stays parallel to the list the caller named', async () => {
     const harness = makeMetrics();
-    const seen = harness.metrics.defineReadMany<{ specs: (Spec | null)[] }, boolean[]>({
+    const seen = harness.metrics.defineReadAcross<{ specs: (Spec | null)[] }, boolean[]>({
       partitions: (args) => args.specs,
       select: (_args, keys) => keys.map(Boolean),
       empty: [],
@@ -458,12 +446,13 @@ describe('definePartitions — a store whose partition is a record, interned to 
     expect(harness.queried).toEqual([]);
   });
 
-  it('groups partitions parallel to what the caller asked about, so `select` does no index arithmetic', async () => {
+  it('reads several lookups at once, each finding its own candidates among the partitions they name together', async () => {
     const harness = makeMetrics();
     const event: Spec = { request: 'event', region: 'us' };
-    const perItem = harness.metrics.defineReadGrouped<{ items: { candidates: Spec[] }[] }, number[]>({
-      groups: (args) => args.items.map((item) => item.candidates),
-      select: (_args, groups) => groups.map((keys) => keys.reduce((total, key) => total + harness.table.find({ partition_key: key }).length, 0)),
+    const count = (spec: Spec): number => harness.table.find({ partition_key: harness.metrics.keyOf(spec) }).length;
+    const perItem = harness.metrics.defineReadAcross<{ items: { candidates: Spec[] }[] }, number[]>({
+      partitions: (args) => args.items.flatMap((item) => item.candidates),
+      select: (args) => args.items.map((item) => item.candidates.reduce((total, spec) => total + count(spec), 0)),
       empty: [],
     });
 

@@ -82,6 +82,6 @@ export declare function makeResult<T>(data: T, status: DataStatus, opts?: {
  * `error` if the fetch failed, `loading` if the first fetch is in flight, and `success` if there is no fetch (a store
  * fed only by pushes).
  */
-export declare function offHeapStatus(enabled: boolean, hasData: boolean, prime: PrimeState): DataStatus;
+export declare function readStatus(enabled: boolean, hasData: boolean, prime: PrimeState): DataStatus;
 export type { CommonDef, QueryRuntime, Read, ReadDef };
 //# sourceMappingURL=store_result.d.ts.map

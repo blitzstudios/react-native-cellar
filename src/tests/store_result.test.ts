@@ -1,31 +1,31 @@
 import { PRIME_IDLE, type PrimeState } from '../prime_state';
-import { DATA_RESULT_KEYS, makeResult, offHeapStatus } from '../store_result';
+import { DATA_RESULT_KEYS, makeResult, readStatus } from '../store_result';
 
 const LOADING: PrimeState = { isInitialLoading: true, isFetching: true, isError: false };
 const FAILED: PrimeState = { isInitialLoading: false, isFetching: false, isError: true };
 
-describe('offHeapStatus', () => {
+describe('readStatus', () => {
   it('is success when disabled, regardless of the fetch state', () => {
-    expect(offHeapStatus(false, false, LOADING)).toBe('success');
-    expect(offHeapStatus(false, false, PRIME_IDLE)).toBe('success');
-    expect(offHeapStatus(false, false, FAILED)).toBe('success');
+    expect(readStatus(false, false, LOADING)).toBe('success');
+    expect(readStatus(false, false, PRIME_IDLE)).toBe('success');
+    expect(readStatus(false, false, FAILED)).toBe('success');
   });
 
   it('is success once data is present, even mid-fetch or after a failed refetch', () => {
-    expect(offHeapStatus(true, true, LOADING)).toBe('success');
-    expect(offHeapStatus(true, true, FAILED)).toBe('success');
+    expect(readStatus(true, true, LOADING)).toBe('success');
+    expect(readStatus(true, true, FAILED)).toBe('success');
   });
 
   it('is loading only while enabled, empty, and the fetch is in flight', () => {
-    expect(offHeapStatus(true, false, LOADING)).toBe('loading');
+    expect(readStatus(true, false, LOADING)).toBe('loading');
   });
 
   it('is error when the fetch failed with nothing to show', () => {
-    expect(offHeapStatus(true, false, FAILED)).toBe('error');
+    expect(readStatus(true, false, FAILED)).toBe('error');
   });
 
   it('is success when empty with no fetch owning the partition (push-fed)', () => {
-    expect(offHeapStatus(true, false, PRIME_IDLE)).toBe('success');
+    expect(readStatus(true, false, PRIME_IDLE)).toBe('success');
   });
 });
 

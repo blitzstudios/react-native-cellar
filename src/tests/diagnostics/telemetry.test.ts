@@ -32,8 +32,8 @@ describe('reportStoreDegradation', () => {
     expect(captureException).toHaveBeenCalledTimes(1);
     const [reported, ctx] = captureException.mock.calls[0];
     expect(reported).toBe(error);
-    expect(ctx.tags).toEqual({ off_heap_degradation: 'row_table.native_shred.leaderboard' });
-    expect(ctx.fingerprint).toEqual(['off-heap-degradation', 'row_table.native_shred.leaderboard']);
+    expect(ctx.tags).toEqual({ cellar_degradation: 'row_table.native_shred.leaderboard' });
+    expect(ctx.fingerprint).toEqual(['cellar-degradation', 'row_table.native_shred.leaderboard']);
     expect(ctx.extra).toEqual({ context: 'shred fell back to JS', table: 'leaderboard' });
   });
 
@@ -95,14 +95,14 @@ describe('reportStoreDegradation', () => {
 
   describe('severity', () => {
     it("sends a chosen degradation as a message, not an exception on somebody's error budget", () => {
-      reportStoreDegradation({ scope: 'off_heap_kill_switch.item', context: 'the kill switch disabled this store', severity: 'info', sampleRate: 1 });
+      reportStoreDegradation({ scope: 'cellar_kill_switch.item', context: 'the kill switch disabled this store', severity: 'info', sampleRate: 1 });
 
       expect(captureException).not.toHaveBeenCalled();
       expect(captureMessage).toHaveBeenCalledTimes(1);
       const [message, ctx] = captureMessage.mock.calls[0];
-      expect(message).toBe('off_heap_kill_switch.item: the kill switch disabled this store');
+      expect(message).toBe('cellar_kill_switch.item: the kill switch disabled this store');
       expect(ctx.level).toBe('info');
-      expect(ctx.fingerprint).toEqual(['off-heap-degradation', 'off_heap_kill_switch.item']);
+      expect(ctx.fingerprint).toEqual(['cellar-degradation', 'cellar_kill_switch.item']);
     });
 
     it('defaults to an exception, so an unexpected fallback keeps its stack', () => {

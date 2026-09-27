@@ -16,7 +16,7 @@ export type ArgValue = string | number | boolean | null | undefined | readonly u
 export declare const GROUP_SEP = "\u0001";
 /**
  * The identity of a whole set of partitions, for something keyed by the set rather than by one member — a
- * {@linkcode Partitions.defineReadMany | defineReadMany}'s cache entry, a fetch over several partitions at once. Order
+ * {@linkcode Partitions.defineReadAcross | defineReadAcross}'s cache entry, a fetch over several partitions at once. Order
  * and grouping are both part of the key, so the same partitions named differently are a different set.
  */
 export declare function partitionsKey(partitions: readonly (readonly string[])[]): string;

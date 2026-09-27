@@ -6,85 +6,202 @@
 
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { createVersionAtom, VersionAtom } from './reactivity/version_atom';
-import { RowShape, RowTable, RowTableSchema } from './table/types';
+import { FindOpts, RowShape, RowTable } from './table/types';
 import { NativeShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
 import { createSqliteRowTable } from './table/sqlite';
-import type { PartitionFetchSpec, Partitions, definePartitions } from './define_partitions';
+import { PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
+import { definePartitions } from './define_partitions';
+import type { PartitionFetchSpec, PartitionLifecycle, Partitions } from './define_partitions';
+import { isArgPresent } from './args_key';
 import { labelReads } from './read/surface';
 import type { CommonDef, Read } from './read/surface';
-import type { pairRead } from './read/facade';
+import type { Loose, pairRead } from './read/facade';
+import { rowsOf, RowSet } from './read/row_shaping';
+import type { ChangeSet } from './table/change_set';
+import { createPushIngest } from './write/push_ingest';
+import type { PushIngest, PushIngestConfig } from './write/push_ingest';
 import type { bindSqliteStore } from './nitro/nitro_connection';
 
 /**
  * Objects a store builds from its database connection besides its row table, such as a ranker that runs its own SQL
  * queries. They are rebuilt with the rest of the store whenever it moves to another connection, and passed to
- * {@linkcode SqliteStoreConfig.build | build} as `caps`.
+ * {@linkcode SqliteStoreConfig.build | build} as {@linkcode CellarContext.caps | caps}.
  */
 export type StoreCapabilities = object;
 
 /**
- * What a store's {@linkcode SqliteStoreConfig.build | build} returns: the store's public functions, in three groups.
- * Callers reach them through the store (`store.reads.x`), which always points at the surface built over the database
- * the store currently runs on.
+ * What a store's {@linkcode SqliteStoreConfig.build | build} returns: its reads, and optionally its pushes and any
+ * lifecycle functions of its own. Callers reach them through the store (`store.reads.x`), which always points at the
+ * ones built over the database the store currently runs on.
  */
 export interface StoreSurface {
   /**
-   * The store's reads, by name: each a declared read (from {@linkcode Partitions.defineRead | defineRead},
-   * {@linkcode Partitions.defineReadMany | defineReadMany} or
-   * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}) with a {@linkcode Read.useValue | useValue} hook and
-   * a {@linkcode Read.getValue | getValue} getter. A service publishes each one as a `use*` hook and a `get*` getter
-   * with {@linkcode pairRead}.
+   * The store's reads, by name: each a declared read (from {@linkcode CellarContext.defineRead | defineRead} or
+   * {@linkcode CellarContext.defineReadAcross | defineReadAcross}) with a {@linkcode Read.useValue | useValue} hook and a
+   * {@linkcode Read.getValue | getValue} getter. A service publishes each one as a `use*` hook and a `get*` getter with
+   * {@linkcode pairRead}.
    */
   reads: object;
   /** Functions that write rows that arrive outside a fetch, such as socket pushes, and tell their readers. */
   push?: object;
-  /** Functions that act on the store's partitions as a whole, such as fetching, refetching or discarding them. */
-  lifecycle?: {
-    /**
-     * Discards the fetch state of every partition, so each is fetched again by its next reader. Called on the old
-     * surface whenever the store moves to another database, since the old fetches wrote rows into the old one.
-     */
-    forget?: () => void;
-  };
+  /**
+   * Functions of the store's own that act on its partitions as a whole, added to the
+   * {@linkcode PartitionLifecycle | lifecycle} Cellar gives every store.
+   */
+  lifecycle?: object;
 }
 
 /**
- * Everything {@linkcode defineSqliteStore} needs to declare a store: its name, its table, and how to build its
- * functions.
+ * How a read's args name a partition, and the partition's key. A partition is the set of rows one fetch returns and
+ * replaces, and its description (the `Partition`) is what the fetch is made from, such as `{ sport: 'nfl' }`. Its key
+ * is the string Cellar identifies it by everywhere: in the `partition_key` column of its rows, its ETag, its version,
+ * and its request.
+ *
+ * Most stores name {@linkcode PartitionSpec.fields | fields}: the args fields that are the description, such as
+ * `['sport', 'season', 'seasonType']`, and the key is their values joined with `:`, such as `nfl:2025:regular`. A store
+ * whose args need translating into a description names {@linkcode PartitionSpec.toPartition | toPartition}, and one
+ * whose descriptions don't fit in a few small fields names {@linkcode PartitionSpec.toKey | toKey}.
  */
-export interface SqliteStoreConfig<Row extends RowShape, Surface extends StoreSurface, Caps extends StoreCapabilities = Record<string, never>> {
+export type PartitionSpec<Args, Partition> =
+  | {
+      /**
+       * The description's fields, in key order. A read's args carry them unless
+       * {@linkcode PartitionSpec.toPartition | toPartition} builds the description instead, and a read whose args are
+       * missing one of them (undefined, null or `''`) reads nothing and fetches nothing until it has a value.
+       */
+      fields: readonly (keyof Partition & string)[];
+      /**
+       * Turns a read's args into the description of the partition to read, where the args are not the description
+       * itself, such as a sport that shares another sport's partition. It gets the args as loosely as a screen holds
+       * them: return `null` or `undefined` until they are complete, and the read reads nothing and fetches nothing
+       * until then. Returning the same object for the same args lets Cellar derive its key once.
+       */
+      toPartition?: (args: Loose<Args>) => Partition | null | undefined;
+      /**
+       * Turns a description into its key, where {@linkcode PartitionSpec.fields | fields} joined with `:` would not do.
+       * It must give equal keys for equal descriptions and different keys for different ones.
+       */
+      toKey?: (partition: Partition) => string;
+    }
+  | {
+      fields?: undefined;
+      toPartition: (args: Loose<Args>) => Partition | null | undefined;
+      toKey: (partition: Partition) => string;
+    };
+
+/**
+ * How a store fetches one partition: the request to make, and how the response becomes the partition's rows. A fetch
+ * replaces the partition: afterwards its rows are exactly the response's rows, each with its `partition_key` filled in
+ * by Cellar. While it is in flight, the partition's pushes wait. Omit it for a store fed only by pushes.
+ */
+export type StoreFetchSpec<Row extends RowShape, Partition> = Omit<PartitionFetchSpec<Row, string, Partition>, 'holdWrites'>;
+
+/**
+ * How a store's pushed items become rows: {@linkcode PushIngestConfig}, less what Cellar supplies (the table, the
+ * partition's rows, and the version bumps). Each row must carry its partition's `partition_key`.
+ */
+export type StorePushSpec<Item, Row extends RowShape> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'toRows' | 'chunk' | 'retryDelayMs'> & {
+  /** {@linkcode PushIngestConfig.onWrite}: called for each partition a write changed, such as to clear its ETag. */
+  onWrite?: (key: string) => void;
+};
+
+/**
+ * What a store's {@linkcode SqliteStoreConfig.build | build} gets, by convention named `cellar`: the functions to declare
+ * its reads, caches and pushes with, and what they read, over the connection the store is being built on. Every
+ * partition is named by its key, a string (see {@linkcode PartitionSpec}).
+ */
+export interface CellarContext<Row extends RowShape, Args, Partition, Caps> {
+  /** Declares a read of one partition: {@linkcode Partitions.defineRead}. */
+  defineRead: Partitions<Row, string, Args, Partition>['defineRead'];
+  /** Declares a read across several partitions: {@linkcode Partitions.defineReadAcross}. */
+  defineReadAcross: Partitions<Row, string, Args, Partition>['defineReadAcross'];
+  /** Declares the store's caches: {@linkcode Partitions.defineCaches}. */
+  defineCaches: Partitions<Row, string, Args, Partition>['defineCaches'];
+  /**
+   * The rows of the partition `key`, optionally only those whose columns equal the values in `filter`, such as a
+   * team's.
+   */
+  rows: (key: string, filter?: Partial<Row>, opts?: FindOpts<Row>) => RowSet<Row>;
+  /** The key of the partition a description names. */
+  keyOf: (partition: Partition) => string;
+  /** The description of the partition `key` names. */
+  partitionOf: (key: string) => Partition;
+  /** The keys of the partitions this session has named, most recently used last. */
+  keys: () => IterableIterator<string>;
+  /** Whether the partition holds rows. */
+  has: (key: string) => boolean;
+  /** The partition's version, which a write that changes it bumps. */
+  versionOf: (key: string) => number;
+  /**
+   * Bumps the partition's version after a write outside a fetch, such as a push, with the entities it changed, so
+   * their readers re-render. Returns the new version.
+   */
+  bump: (key: string, changes?: ChangeSet) => number;
+  /** Discards the partition's ETag, so its next fetch brings a whole body. */
+  clearEtag: (key: string) => void;
+  /**
+   * Creates the store's buffer for rows that arrive by socket push rather than by fetch: its `queue` takes an item and
+   * the key of the partition it belongs to. A partition's pushes wait while it is being fetched, since the fetch
+   * replaces the partition and would overwrite them with the older response.
+   */
+  createPushIngest: <Item>(spec: StorePushSpec<Item, Row>) => PushIngest<Item, string>;
+  /** The column values that pick out the partition's rows: `{ partition_key: key }`. */
+  where: (key: string) => Partial<Row>;
+  /** The store's row table, for a read that runs its own query. */
+  table: RowTable<Row>;
+  /** What {@linkcode SqliteStoreConfig.capabilities | capabilities} built over the current connection. */
+  caps: Caps;
+}
+
+/**
+ * Everything {@linkcode defineSqliteStore} needs to declare a store: its name, its table, its partitions, how a
+ * partition is fetched, and how to build its reads.
+ */
+export interface SqliteStoreConfig<Row extends RowShape, Args, Partition extends object, Surface extends StoreSurface, Caps extends StoreCapabilities> {
   /** The store's name, such as `player`. It names the store's version atom and appears in logs and error reports. */
   name: string;
   /**
-   * The declaration of the store's SQLite table: its columns, primary key, `entityId` column, indexes and ETag table.
-   * The table is created, or brought up to date, whenever the store is bound to a database.
+   * The declaration of the store's SQLite table: its columns, primary key, `entityId` column and indexes. Cellar adds
+   * a `partition_key` column (see {@linkcode PartitionSpec}), leads the primary key with it, indexes it with the
+   * entity id, and keeps each partition's ETag in a side table named after the table (`players_meta`). The table is
+   * created, or brought up to date, whenever the store is bound to a database.
    */
-  schema: RowTableSchema<Row>;
+  schema: StoreTableSchema<Row>;
+  /** How a read's args name a partition, and its key. */
+  partition: PartitionSpec<Args, Partition>;
+  /** How a partition is fetched. Omit it for a store fed only by pushes. */
+  fetch?: StoreFetchSpec<Row, Partition>;
   /**
-   * Builds the store's public functions (reads, push and lifecycle) over its row table, usually by calling
-   * {@linkcode definePartitions} and declaring reads on the result. `version` is the store's version atom, which is the
-   * same one for the life of the store; `caps` are what {@linkcode SqliteStoreConfig.capabilities | capabilities}
-   * built.
+   * The store's native shred programs, which let the C++ shredder write a fetched response's rows without building JS
+   * objects for them. Omit it to always build rows in JS with the fetch's {@linkcode PartitionFetchSpec.parse | parse}.
+   */
+  nativeShredSpec?: NativeShredSpec<Partition>;
+  /**
+   * Builds the store's {@linkcode StoreCapabilities} (objects that need the database connection, such as a ranker that
+   * runs its own SQL) each time the store is built over a connection.
+   */
+  capabilities?: (conn: SqliteConnection) => Caps;
+  /**
+   * How many partitions to remember the description and last fetch time of; 512 by default. A partition past it is
+   * described again from its side table row, and reads as never fetched.
+   */
+  internMax?: number;
+  /**
+   * Declares the store's reads, and its pushes and lifecycle functions if it has any, with what `cellar` hands it:
+   * `build: (cellar) => ({ reads: { X: cellar.defineRead(…) } })`.
    *
    * It runs again every time the store moves to another database: at startup, after a failure reopens the database, and
    * when the store moves to an in-memory database. So it must keep all its state in what it returns, never in variables
    * outside it, or that state would outlive the database it describes.
    */
-  build: (table: RowTable<Row>, version: VersionAtom, caps: Caps) => Surface;
-  /**
-   * The store's native shred programs, which let the C++ shredder write a fetched response's rows without building JS
-   * objects for them. Omit it to always build rows in JS with the partition's
-   * {@linkcode PartitionFetchSpec.parse | parse}.
-   */
-  nativeShredSpec?: NativeShredSpec;
-  /**
-   * Builds the store's {@linkcode StoreCapabilities} (objects that need the database connection, such as a ranker that
-   * runs its own SQL) each time the store is built over a connection; {@linkcode SqliteStoreConfig.build | build}
-   * receives them as `caps`.
-   */
-  capabilities?: (conn: SqliteConnection) => Caps;
+  build: (cellar: CellarContext<Row & PartitionKeyColumn, Args, Partition, Caps>) => Surface;
 }
+
+/** A store's functions: what its {@linkcode SqliteStoreConfig.build | build} returned, with Cellar's lifecycle. */
+export type StoreFunctions<Args, Surface extends StoreSurface> = Omit<Surface, 'lifecycle'> & {
+  lifecycle: PartitionLifecycle<Args> & (Surface['lifecycle'] extends object ? Surface['lifecycle'] : unknown);
+};
 
 /**
  * How a store gets a working database back when a SQLite statement fails during the session. The store first reopens
@@ -141,7 +258,7 @@ export interface BindOptions {
  * ones, looked up on each access, so code that keeps the store (or {@linkcode SqliteStore.reads | store.reads}) keeps
  * working across moves.
  */
-export interface SqliteStore<Row extends RowShape, Surface extends StoreSurface> {
+export interface SqliteStore<Row extends RowShape, Args, Surface extends StoreSurface> {
   /**
    * The store's reads, by name, from the database the store currently runs on: each a declared read with
    * {@linkcode Read.useValue | useValue} and {@linkcode Read.getValue | getValue}.
@@ -152,10 +269,10 @@ export interface SqliteStore<Row extends RowShape, Surface extends StoreSurface>
    */
   readonly push: NonNullable<Surface['push']>;
   /**
-   * The store's functions that act on its partitions as a whole (fetching, refetching, discarding), from the current
-   * database.
+   * The store's functions that act on its partitions as a whole (priming, fetching, refetching, discarding), from the
+   * current database: the {@linkcode PartitionLifecycle | lifecycle} every store has, and any of its own.
    */
-  readonly lifecycle: NonNullable<Surface['lifecycle']>;
+  readonly lifecycle: StoreFunctions<Args, Surface>['lifecycle'];
   /**
    * Moves the store onto the database behind `conn`: creates or updates its table there, builds its functions over it,
    * discards the fetch state of the database it ran on before, and re-renders every reader so each reads from the new
@@ -180,16 +297,16 @@ export interface SqliteStore<Row extends RowShape, Surface extends StoreSurface>
       },
     ) => {
       /** The store's reads, push and lifecycle functions, built over `conn`. */
-      surface: Surface;
+      surface: StoreFunctions<Args, Surface>;
       /** The row table built over `conn`, to write test rows into. */
-      table: RowTable<Row>;
+      table: RowTable<Row & PartitionKeyColumn>;
     };
     /**
      * Makes the store's {@linkcode SqliteStore.reads | reads}, {@linkcode SqliteStore.push | push} and
      * {@linkcode SqliteStore.lifecycle | lifecycle} point at `surface` (from `over`) until the next `swap` or `reset`,
      * so code under test that reads through the store sees the test's rows.
      */
-    swap: (surface: Surface) => void;
+    swap: (surface: StoreFunctions<Args, Surface>) => void;
     /**
      * Returns the store to its initial state, bound to nothing, so one test's rows and fetches don't leak into the
      * next.
@@ -247,27 +364,96 @@ function delegate<T extends object>(group: () => T | undefined, label: string): 
  * moves to an in-memory database, and only then runs on nothing. Each move rebuilds the store and re-renders its
  * readers, which fetch again.
  */
-export function defineSqliteStore<Row extends RowShape, Surface extends StoreSurface, Caps extends StoreCapabilities = Record<string, never>>(
-  config: SqliteStoreConfig<Row, Surface, Caps>,
-): SqliteStore<Row, Surface> {
+export function defineSqliteStore<
+  Row extends RowShape,
+  Partition extends object,
+  Surface extends StoreSurface,
+  Args = Partition,
+  Caps extends StoreCapabilities = Record<string, never>,
+>(config: SqliteStoreConfig<Row, Args, Partition, Surface, Caps>): SqliteStore<Row, Args, Surface> {
+  type StoredRow = Row & PartitionKeyColumn;
+  type Functions = StoreFunctions<Args, Surface>;
+  const schema = partitionedSchema(config.schema);
   const version = createVersionAtom(`${config.name}_version`);
-  const extra = (more?: Record<string, unknown>) => ({ store: config.name, table: config.schema.table, ...more });
+  const extra = (more?: Record<string, unknown>) => ({ store: config.name, table: schema.table, ...more });
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
+  const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
+  const { fields, toPartition, toKey } = config.partition;
+  const partitionOfArgs = toPartition ?? partitionFromFields<Args, Partition>(fields!);
+  const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
 
-  let running: Surface | undefined;
+  /** Declares the partitions over `table` and hands the store its context. */
+  const buildOn = (table: RowTable<StoredRow>, atom: VersionAtom, caps: Caps): Functions => {
+    table.init();
+    const holds: Array<(key: string) => () => void> = [];
+    const holdWrites = (key: string): (() => void) => {
+      const releases = holds.map((hold) => hold(key));
+      return () => releases.forEach((release) => release());
+    };
+    const partitions = definePartitions<StoredRow, string, Args, Partition>({
+      name: config.name.replace(/_store$/, ''),
+      table,
+      version: atom,
+      key: {
+        of: partitionOfArgs,
+        id: keyOfPartition,
+        from: (key) => {
+          const record = table.getMetaRecord(where(key));
+          return record === undefined ? undefined : (JSON.parse(record) as Partition);
+        },
+        where,
+      },
+      fetch: config.fetch && { ...(config.fetch as StoreFetchSpec<StoredRow, Partition>), holdWrites },
+      internMax: config.internMax,
+      remember: (key, partition) => {
+        const rowsWhere = where(key);
+        if (table.getMetaRecord(rowsWhere) === undefined) table.setMeta(rowsWhere, table.getMeta(rowsWhere), JSON.stringify(partition));
+      },
+    });
+    const surface = config.build({
+      defineRead: partitions.defineRead,
+      defineReadAcross: partitions.defineReadAcross,
+      defineCaches: partitions.defineCaches,
+      rows: (key, filter, opts) => rowsOf(table).where(filter ? { ...filter, ...where(key) } : where(key), opts),
+      keyOf: partitions.keyOf,
+      partitionOf: partitions.partitionOf,
+      keys: partitions.internedKeys,
+      has: partitions.has,
+      versionOf: partitions.versionOf,
+      bump: partitions.bump,
+      clearEtag: partitions.clearEtag,
+      createPushIngest: (spec) => {
+        const push = createPushIngest({ ...spec, name: config.name, table, where, bump: partitions.bump, onWrite: spec.onWrite ?? NO_WRITE_HOOK });
+        holds.push(push.hold);
+        return push;
+      },
+      where,
+      table,
+      caps,
+    });
+    labelReads(surface.reads);
+    const own = surface.lifecycle as { forget?: () => void } | undefined;
+    const forget = own?.forget
+      ? () => {
+          partitions.lifecycle.forget();
+          own.forget!();
+        }
+      : partitions.lifecycle.forget;
+    return { ...surface, lifecycle: { ...partitions.lifecycle, ...own, forget } } as Functions;
+  };
+
+  let running: Functions | undefined;
   let hasBeenRead = false;
   let reopens = 0;
   // What each surface the store has run on primed, so leaving it can have the next one fetch for itself.
   let resets: Array<() => void> = [];
 
-  const buildOver = (conn: SqliteConnection, temporary: boolean, atom: VersionAtom = version): { surface: Surface; table: RowTable<Row> } => {
-    const table = createSqliteRowTable(config.schema, conn, config.nativeShredSpec, { temporary });
-    const surface = config.build(table, atom, capabilitiesOf(conn));
-    labelReads(surface.reads);
-    return { surface, table };
+  const buildOver = (conn: SqliteConnection, temporary: boolean, atom: VersionAtom = version): { surface: Functions; table: RowTable<StoredRow> } => {
+    const table = createSqliteRowTable(schema, conn, config.nativeShredSpec as NativeShredSpec | undefined, { temporary });
+    return { surface: buildOn(table, atom, capabilitiesOf(conn)), table };
   };
 
-  const install = (surface: Surface): Surface => {
+  const install = (surface: Functions): Functions => {
     const forget = surface.lifecycle?.forget;
     if (forget) resets.push(forget);
     running = surface;
@@ -275,7 +461,7 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
   };
 
   /** Forgets what the running surface fetched, runs the store on `surface`, and has every reader read from it. */
-  const replaceRunning = (surface: Surface): void => {
+  const replaceRunning = (surface: Functions): void => {
     const previous = resets;
     resets = [];
     previous.forEach((reset) => reset());
@@ -284,7 +470,7 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
   };
 
   // Built on first read, so a platform that binds first never builds it.
-  const current = (): Surface => {
+  const current = (): Functions => {
     hasBeenRead = true;
     return running ?? install(buildOver(NULL_CONNECTION, false).surface);
   };
@@ -292,7 +478,7 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
   /**
    * The store over SQLite on `conn`, guarded so that a failure on it reopens the database or moves the store off it.
    */
-  const buildGuarded = (conn: SqliteConnection, options: BindOptions): Surface => {
+  const buildGuarded = (conn: SqliteConnection, options: BindOptions): Functions => {
     const guarded = guardedConnection(
       conn,
       (error, op) => onSqliteFailure(error, op, options),
@@ -361,10 +547,10 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
       try {
         const conn = recovery.reopen({ discard });
         // A write that failed may have left rows short of what their ETag vouches for, so each partition's next fetch
-        // brings a whole body rather than a 304.
-        if (!discard && config.schema.meta) {
+        // brings a whole body rather than a 304. The descriptions stay.
+        if (!discard && schema.meta) {
           try {
-            conn.execute(`DELETE FROM ${config.schema.meta.table};`);
+            conn.execute(`UPDATE ${schema.meta.table} SET ${schema.meta.column} = NULL;`);
           } catch {
             /* a database with no meta table yet has no ETags to clear */
           }
@@ -391,8 +577,8 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
       reportStoreDegradation({
         scope: 'store.late_bind',
         context:
-          'a store was bound at startup after something had already read from it, so that read painted empty first. Move the ' +
-          '`bindOffHeapStore` call earlier in startup.',
+          'a store was bound at startup after something had already read from it, so that read painted empty first. Bind the ' +
+          'store earlier in startup.',
       });
     }
     if (!options.temporary) reopens = 0;
@@ -402,7 +588,7 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
   return {
     reads: delegate(() => current().reads, `${config.name}.reads`),
     push: delegate(() => current().push, `${config.name}.push`) as NonNullable<Surface['push']>,
-    lifecycle: delegate(() => current().lifecycle, `${config.name}.lifecycle`) as NonNullable<Surface['lifecycle']>,
+    lifecycle: delegate(() => current().lifecycle, `${config.name}.lifecycle`),
     bindSqlite,
     testing: {
       over: (conn, options = {}) => buildOver(conn, false, options.version),
@@ -419,6 +605,35 @@ export function defineSqliteStore<Row extends RowShape, Surface extends StoreSur
   };
 }
 
+const NO_WRITE_HOOK = (): void => undefined;
+
+/** The default {@linkcode PartitionSpec.toPartition | toPartition}: the args' own values of the fields, once all have one. */
+function partitionFromFields<Args, Partition>(fields: readonly string[]): (args: Loose<Args>) => Partition | null {
+  return (args) => {
+    const partition: Record<string, unknown> = {};
+    for (const field of fields) {
+      const value = (args as Record<string, unknown>)[field];
+      if (!isArgPresent(value)) return null;
+      partition[field] = value;
+    }
+    return partition as Partition;
+  };
+}
+
+/**
+ * The default {@linkcode PartitionSpec.toKey | toKey}: one field's value as it is, or several fields' values joined with
+ * `:`, each escaped only where it holds a `:` or `%` of its own.
+ */
+function keyFromFields<Partition>(fields: readonly string[]): (partition: Partition) => string {
+  const part = (value: unknown): string => {
+    const text = String(value);
+    return /[:%]/.test(text) ? encodeURIComponent(text) : text;
+  };
+  return fields.length === 1
+    ? (partition) => String((partition as Record<string, unknown>)[fields[0]])
+    : (partition) => fields.map((field) => part((partition as Record<string, unknown>)[field])).join(':');
+}
+
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, PartitionFetchSpec, Partitions, Read, bindSqliteStore, definePartitions, pairRead };
+export type { CommonDef, PartitionFetchSpec, Partitions, Read, bindSqliteStore, pairRead };

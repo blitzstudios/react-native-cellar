@@ -451,7 +451,7 @@ describe('row_table — sqlite backend (generated SQL)', () => {
         expect(sentry.captureException).not.toHaveBeenCalled();
         expect(sentry.captureMessage).toHaveBeenCalledTimes(1);
         expect(sentry.captureMessage.mock.calls[0][1].level).toBe('info');
-        expect(sentry.captureMessage.mock.calls[0][1].tags).toEqual({ off_heap_degradation: 'pushy.schema_rebuild' });
+        expect(sentry.captureMessage.mock.calls[0][1].tags).toEqual({ cellar_degradation: 'pushy.schema_rebuild' });
       });
     });
 
@@ -862,7 +862,7 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     await db.shred({ region: 'us' }, '[]', () => [row('a', 'us', 'NE', 1)]);
 
     expect(captureException).toHaveBeenCalledTimes(1);
-    expect(captureException.mock.calls[0][1].tags).toEqual({ off_heap_degradation: 'row_table.native_shred.things' });
+    expect(captureException.mock.calls[0][1].tags).toEqual({ cellar_degradation: 'row_table.native_shred.things' });
 
     configureCellar({ errors: INERT_ERRORS });
     warn.mockRestore();

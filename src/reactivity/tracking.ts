@@ -85,7 +85,7 @@ function warnIfUnsubscribedRenderRead(dep: Dep): void {
   if (warnedSites.seen(`${partitionId}${ownerStack}`)) return;
   // eslint-disable-next-line no-console
   console.warn(
-    `[off-heap] read ${partitionLabel(partitionId.split(KEY_SEP))} during render without subscribing to it, so this ` +
+    `[cellar] read ${partitionLabel(partitionId.split(KEY_SEP))} during render without subscribing to it, so this ` +
       `component will show the value it read now and never update it. Read through the store's \`useValue\` hook ` +
       `(it subscribes itself), or run the derivation inside \`useTrackedStores\` / wrap a \`connect\` component ` +
       `in \`withTrackedStores\`, which subscribe to whatever partitions the read touched. If you subscribed this ` +

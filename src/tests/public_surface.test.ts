@@ -28,17 +28,19 @@ function exportedFrom(entry: string): string[] {
 describe('the core entry point', () => {
   it('exports what a store, a service or a screen writes against, and nothing else', () => {
     expect(exportedFrom('index.ts')).toEqual([
-      'ALL_ENTITIES', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'ChangeSet', 'ColumnDef', 'DATA_RESULT_KEYS',
-      'DataResult', 'DataStatus', 'Dep', 'DerivedValues', 'DerivedValuesDef', 'EntityCacheDeclaration', 'Loose',
-      'MaybeId', 'NO_CHANGES', 'NativeShredColumns', 'NativeShredSpec', 'PartitionLifecycle', 'PinnedConnection',
-      'PrimeState', 'QueryClient', 'QuerySpec', 'QueryStatus', 'RAW_TEXT_RESPONSE_TRANSFORM', 'RawQuery', 'ReadGate',
+      'ALL_ENTITIES', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'CellarContext', 'ChangeSet', 'ColumnDef',
+      'DATA_RESULT_KEYS', 'DataResult', 'DataStatus', 'Dep', 'DerivedValues', 'DerivedValuesDef',
+      'EntityCacheDeclaration', 'Loose', 'MaybeId', 'NO_CHANGES', 'NativeShredColumns', 'NativeShredSpec',
+      'PartitionKeyColumn', 'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'PushIngest',
+      'QueryClient', 'QuerySpec', 'QueryStatus', 'RAW_TEXT_RESPONSE_TRANSFORM', 'RawQuery', 'ReadGate',
       'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
-      'ShredColumnsBase', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'TrackedValueOptions', 'VersionAtom',
+      'ShredColumnsBase', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'SqliteStore', 'StoreFetchSpec',
+      'StoreFunctions', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema', 'TrackedValueOptions', 'VersionAtom',
       'WindowedBlock', 'WriteResult', 'byEntity', 'byPartition', 'configureCellar', 'createOnceGuard',
-      'createPushIngest', 'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'definePartitions',
-      'defineShredColumns', 'defineSqliteStore', 'makeResult', 'pairRead', 'pinnedReader', 'readRows',
-      'reportStoreDegradation', 'rowsOf', 'runSubscribed', 'runTracked', 'shallowEqualArray', 'shallowEqualRecord',
-      'shallowEqualStruct', 'shallowEqualValue', 'useTrackedValue',
+      'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
+      'makeResult', 'pairRead', 'pinnedReader', 'readRows', 'reportStoreDegradation', 'rowsOf', 'runSubscribed',
+      'runTracked', 'shallowEqualArray', 'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue',
+      'useTrackedValue',
     ]);
   });
 
@@ -75,9 +77,9 @@ describe('the diagnostics entry point', () => {
 describe('the testing entry point', () => {
   it('exports the fixtures a store suite needs, including the internals no shipping code calls', () => {
     expect(exportedFrom('testing/index.ts')).toEqual([
-      'SqlJsCapabilities', 'SqlJsConnection', 'createSqlJsConnection', 'createTestRowTable',
-      'createTestRowTableWithConnection', 'createTestVersionAtom', 'createVersionAtom', 'evalShredElement', 'initSqlJs',
-      'installTestRuntime', 'itDev', 'resetOnceGuards', 'testCache',
+      'SqlJsCapabilities', 'SqlJsConnection', 'createSqlJsConnection', 'createStoreTable', 'createTestRowTable',
+      'createTestRowTableWithConnection', 'createTestStoreTable', 'createTestStoreTableWithConnection',
+      'createTestVersionAtom', 'createVersionAtom', 'evalShredElement', 'initSqlJs', 'installTestRuntime', 'itDev', 'resetOnceGuards', 'storeShredProgram', 'testCache',
     ]);
   });
 });

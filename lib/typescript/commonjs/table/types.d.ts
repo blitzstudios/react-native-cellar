@@ -7,6 +7,7 @@ import type { WriteResult } from './change_set';
 import type { PartitionKeySpec } from '../define_partitions';
 import type { DerivedValues } from '../read/derived_values';
 import type { byEntity } from '../read/derived_values';
+import type { defineSqliteStore } from '../define_sqlite_store';
 /** A value one SQLite column can hold in a row table: a string, a number, or null. Booleans are stored as 0 or 1. */
 export type SqlValue = string | number | null;
 /**
@@ -66,6 +67,12 @@ export interface MetaDef<Row extends RowShape> {
     keyColumns: ReadonlyArray<keyof Row & string>;
     /** The side table's column that holds the ETag string. */
     column: string;
+    /**
+     * A side table column holding each partition's description as JSON, such as `{"sport":"nfl"}`. It lets a store
+     * recover which partition a key names after the in-memory copy was dropped. It is added in place to an older side
+     * table, and it is not part of the schema stamp, so adding it never rebuilds the table.
+     */
+    recordColumn?: string;
 }
 /**
  * The declaration of a row table: the SQLite table a store keeps its rows in, its columns, its primary key, the column
@@ -144,7 +151,21 @@ export interface RowTableSchema<Row extends RowShape> {
      * values.
      */
     rebuildVersion?: number;
+    /**
+     * Marks a table whose first column is `partition_key`, naming the partition each row belongs to. It is set by
+     * {@linkcode defineSqliteStore}, which declares the column. A partition replace ({@linkcode RowTable.overwrite} and
+     * {@linkcode RowTable.shred}) fills in each row's `partition_key` from its `where`. The native shredder gets it as
+     * bind 0, so a native shred spec's own binds start at 1.
+     */
+    partitioned?: boolean;
 }
+/**
+ * A row a partition replace ({@linkcode RowTable.overwrite}, {@linkcode RowTable.shred}) takes: its `partition_key`
+ * may be left out, since the replace fills it in.
+ */
+export type ReplaceRow<Row extends RowShape> = 'partition_key' extends keyof Row ? Omit<Row, 'partition_key'> & {
+    partition_key?: Row['partition_key'];
+} : Row;
 /** Options for {@linkcode RowTable.find} beyond which rows to read. */
 export interface FindOpts<Row extends RowShape> {
     /**
@@ -198,15 +219,16 @@ export interface RowTable<Row extends RowShape> {
      *
      * Returns the entity ids that were added, removed or changed, and the number of rows given.
      */
-    overwrite(where: Partial<Row>, rows: readonly Row[]): WriteResult;
+    overwrite(where: Partial<Row>, rows: readonly ReplaceRow<Row>[]): WriteResult;
     /**
      * Replaces the rows matching `where` with the rows in a JSON response body, the same way
      * {@linkcode RowTable.overwrite} does. When the connection and the store support it, the native shredder parses the
      * body and writes the rows in C++, so no JS objects are built for them; otherwise `parseRows` builds them in JS.
      *
-     * Returns the entity ids that were added, removed or changed, and the number of rows written.
+     * Returns the entity ids that were added, removed or changed, and the number of rows written. `partition` is the
+     * description the native shred spec picks its variant and binds from; without it, they get `where`.
      */
-    shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => Row[]): Promise<WriteResult>;
+    shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object): Promise<WriteResult>;
     /** The first stored row whose columns equal the values in `where`, or `undefined` if none does. */
     getOne(where: Partial<Row>): Row | undefined;
     /**
@@ -241,12 +263,18 @@ export interface RowTable<Row extends RowShape> {
     getMeta(where: Partial<Row>): string | undefined;
     /**
      * Stores the ETag for the partition that `where` names (by the schema's
-     * {@linkcode MetaDef.keyColumns | meta.keyColumns}), or clears it when `value` is `undefined`. Does nothing if the
-     * schema declares no {@linkcode RowTableSchema.meta | meta}.
+     * {@linkcode MetaDef.keyColumns | meta.keyColumns}), or clears it when `value` is `undefined`. `record` also stores
+     * the partition's description, when the side table has a {@linkcode MetaDef.recordColumn | recordColumn}; clearing
+     * the ETag keeps it. Does nothing if the schema declares no {@linkcode RowTableSchema.meta | meta}.
      */
-    setMeta(where: Partial<Row>, value: string | undefined): void;
+    setMeta(where: Partial<Row>, value: string | undefined, record?: string): void;
+    /**
+     * The description stored for the partition that `where` names, by {@linkcode RowTable.setMeta | setMeta}, or
+     * `undefined` if none is stored.
+     */
+    getMetaRecord(where: Partial<Row>): string | undefined;
 }
 /** A schema's column names in the order they are declared, which is the column order of every `INSERT`. */
 export declare function columnNames<Row extends RowShape>(schema: RowTableSchema<Row>): Array<keyof Row & string>;
-export type { PartitionKeySpec, DerivedValues, byEntity };
+export type { PartitionKeySpec, DerivedValues, byEntity, defineSqliteStore };
 //# sourceMappingURL=types.d.ts.map

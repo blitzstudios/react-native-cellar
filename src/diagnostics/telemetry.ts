@@ -34,15 +34,15 @@ export function reportStoreDegradation(args: {
     // An `info` report is something that was always going to happen, not a path that lost the win it exists for, and
     // reading it as the latter sends people looking for a fault.
     // eslint-disable-next-line no-console
-    console.warn(`[off-heap ${severity === 'info' ? 'notice' : 'degraded'}] ${scope}: ${context}`, error ?? '', extra ?? '');
+    console.warn(`[cellar ${severity === 'info' ? 'notice' : 'degraded'}] ${scope}: ${context}`, error ?? '', extra ?? '');
   }
 
   if (!(sampleRate >= 1) && Math.random() >= sampleRate) return;
 
   const sink = errorSink();
   const captureContext = {
-    tags: { off_heap_degradation: scope },
-    fingerprint: ['off-heap-degradation', scope],
+    tags: { cellar_degradation: scope },
+    fingerprint: ['cellar-degradation', scope],
     extra: { context, ...extra },
   };
 

@@ -22,17 +22,15 @@ const CONSUMER = `
 import {
   byEntity,
   byPartition,
-  createPushIngest,
   createTrackedSelector,
   createWindowedList,
-  definePartitions,
   defineShredColumns,
   defineSqliteStore,
   pairRead,
-  rowsOf,
+  type Loose,
   type RowOf,
-  type RowTableSchema,
   type ShredColumn,
+  type StoreTableSchema,
 } from '@sleeperhq/react-native-cellar';
 
 type Item = { id: string; team?: string; points?: number };
@@ -40,7 +38,7 @@ type Ctx = { league: string };
 
 const COLUMNS = [
   { name: 'id', type: 'TEXT', notNull: true, js: (item: Item): string => item.id, op: { op: 'coalesceText', paths: ['id'], emptyDefault: true } },
-  { name: 'league', type: 'TEXT', notNull: true, js: (_item: Item, ctx: Ctx): string => ctx.league, op: { op: 'bind', index: 0 } },
+  { name: 'league', type: 'TEXT', notNull: true, js: (_item: Item, ctx: Ctx): string => ctx.league, op: { op: 'bind', index: 1 } },
   { name: 'team', type: 'TEXT', js: (item: Item): string | null => item.team ?? null, op: { op: 'text', path: 'team' } },
   { name: 'points', type: 'REAL', js: (item: Item): number | null => item.points ?? null, op: { op: 'real', path: 'points' } },
 ] as const satisfies readonly ShredColumn<Item, Ctx>[];
@@ -54,67 +52,52 @@ export const jsOnlyShred = defineShredColumns<Item>()(JS_ONLY_COLUMNS);
 
 type ItemRow = RowOf<typeof COLUMNS>;
 
-const schema: RowTableSchema<ItemRow> = {
+const schema: StoreTableSchema<ItemRow> = {
   table: 'items',
   columns: itemShred.columnDefs,
-  primaryKey: ['league', 'id'],
+  primaryKey: ['id'],
   entityId: 'id',
 };
 
 type LeagueKey = { league: string };
 type ItemKey = LeagueKey & { id: string };
-type ItemsKey = { partitions: readonly LeagueKey[]; id: string };
+type ItemsKey = { leagues: readonly string[]; id: string };
 
 export const itemStore = defineSqliteStore({
   name: 'item',
   schema,
-  build: (table, version) => {
-    table.init();
-    const items = definePartitions<ItemRow, LeagueKey, LeagueKey>({
-      name: 'item',
-      table,
-      version,
-      key: { fields: ['league'], where: (key) => ({ league: key.league }) },
-    });
-    const { card, byTeam } = items.defineCaches({
+  partition: { fields: ['league'], toPartition: (args: Loose<LeagueKey>) => (args.league ? { league: args.league } : null) },
+  build: (cellar) => {
+    const { card, byTeam } = cellar.defineCaches({
       card: byEntity({ max: 64, fromRows: ([row]) => ({ id: row.id }) }),
       byTeam: byPartition<Map<string, ItemRow[]>>({ max: 4 }),
     });
-    const push = createPushIngest<Item, ItemRow, LeagueKey>({
-      name: 'item',
-      table,
-      where: items.where,
-      idOf: (item) => item.id,
-      toRows: (key, batch) => batch.map((item) => itemShred.row(item, { league: key.league })),
-      bump: (key, changes) => items.bump(key, changes),
-      onWrite: items.clearEtag,
+    const push = cellar.createPushIngest({
+      idOf: (item: Item) => item.id,
+      toRows: (key, batch) => batch.map((item) => ({ ...itemShred.row(item, { league: key }), partition_key: key })),
+      onWrite: cellar.clearEtag,
     });
     return {
       reads: {
-        Item: items.defineRead<ItemKey, { id: string } | undefined>({
+        Item: cellar.defineRead<ItemKey, { id: string } | undefined>({
           select: (args, key) => card.at(key, args.id),
           empty: undefined,
         }),
-        Rows: items.defineRead<LeagueKey, ItemRow[]>({
-          select: (_args, key) => rowsOf(table).where(items.where(key)).map((row) => row, []),
+        Rows: cellar.defineRead<LeagueKey, ItemRow[]>({
+          select: (_args, key) => cellar.rows(key).map((row) => row, []),
           empty: [],
         }),
-        Memoized: items.defineRead<LeagueKey, number>({
+        Memoized: cellar.defineRead<LeagueKey, number>({
           select: (_args, key) => byTeam.for(key).read(() => new Map()).size,
           empty: 0,
         }),
-        Across: items.defineReadMany<ItemsKey, number>({
+        Across: cellar.defineReadAcross<ItemsKey, number>({
+          partitions: (args) => args.leagues.map((league) => ({ league })),
           select: (_args, keys) => keys.length,
-          empty: 0,
-        }),
-        Grouped: items.defineReadGrouped<{ groups: readonly (readonly LeagueKey[])[] }, number>({
-          groups: (args) => args.groups,
-          select: (_args, groups) => groups.length,
           empty: 0,
         }),
       },
       push: { queue: push.queue },
-      lifecycle: items.lifecycle,
     };
   },
 });

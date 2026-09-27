@@ -2,6 +2,8 @@
 
 import { RowShape, RowTable, RowTableSchema } from '../table/types';
 import { createSqliteRowTable } from '../table/sqlite';
+import type { SqliteConnection } from '../table/connection';
+import { PartitionKeyColumn, partitionedSchema, StoreTableSchema } from '../table/partitioned';
 import { NativeShredSpec } from '../write/shred_spec';
 import { createSqlJsConnection, SqlJsConnection } from './sqljs_connection';
 
@@ -11,6 +13,40 @@ import { createSqlJsConnection, SqlJsConnection } from './sqljs_connection';
  */
 export function createTestRowTable<Row extends RowShape>(schema: RowTableSchema<Row>, nativeShredSpec?: NativeShredSpec): RowTable<Row> {
   return createTestRowTableWithConnection(schema, nativeShredSpec).table;
+}
+
+/**
+ * A store's table as {@linkcode defineSqliteStore} builds it from the store's schema, with its `partition_key` column
+ * and ETag table, over `conn`: for a test that picks its own connection. Call its {@linkcode RowTable.init | init}
+ * first.
+ */
+export function createStoreTable<Row extends RowShape>(
+  schema: StoreTableSchema<Row>,
+  conn: SqliteConnection,
+  nativeShredSpec?: NativeShredSpec<never>,
+): RowTable<Row & PartitionKeyColumn> {
+  return createSqliteRowTable(partitionedSchema(schema), conn, nativeShredSpec as NativeShredSpec | undefined);
+}
+
+/**
+ * A store's table as {@linkcode defineSqliteStore} builds it from the store's schema, with its `partition_key` column
+ * and ETag table, on a new sql.js database, built and ready.
+ */
+export function createTestStoreTable<Row extends RowShape>(schema: StoreTableSchema<Row>, nativeShredSpec?: NativeShredSpec<never>): RowTable<Row & PartitionKeyColumn> {
+  return createTestRowTable(partitionedSchema(schema), nativeShredSpec as NativeShredSpec | undefined);
+}
+
+/** Like {@linkcode createTestStoreTable}, also returning the connection, for a test that runs its own SQL over it. */
+export function createTestStoreTableWithConnection<Row extends RowShape>(
+  schema: StoreTableSchema<Row>,
+  nativeShredSpec?: NativeShredSpec<never>,
+): {
+  /** The table. */
+  table: RowTable<Row & PartitionKeyColumn>;
+  /** Its connection. */
+  conn: SqlJsConnection;
+} {
+  return createTestRowTableWithConnection(partitionedSchema(schema), nativeShredSpec as NativeShredSpec | undefined);
 }
 
 /** Like {@linkcode createTestRowTable}, also returning the connection, for a test that inspects the SQL run. */

@@ -22,7 +22,8 @@ A store's table is divided into partitions, and each row belongs to an entity.
 | term | what it is |
 | --- | --- |
 | **store** | one SQLite table and the reads and fetches over it, declared with `defineSqliteStore`. On device the table lives in the device's SQLite; on the web and in tests, in sql.js |
-| **partition** | the set of rows one fetch returns and replaces, picked out by column values (`{ group_id: 'g1' }`). Each has its own fetch, ETag and version |
+| **partition** | the set of rows one fetch returns and replaces, described by the args that name it (`{ groupId: 'g1' }`). Each has its own fetch, ETag and version |
+| **key** | the string a partition is identified by (`'g1'`): Cellar derives it from the description, stamps it on every row in a `partition_key` column, and files the partition's ETag, version and request under it. Keys name partitions; ids name entities |
 | **entity** | the rows in a partition that share one `entityId` value, defined in the table's schema, such as one item's rows. It is how finely Cellar tracks change: a write reports the entities it changed, and a read that looked up particular entities re-runs only when a row of one of them changes. An entity can be read before it has any rows, and wakes its readers when they arrive |
 | **change set** | what a write changed: the entity id of every row it added, changed or removed. The write replaces those entities' rows, then bumps the partition's version and the version of each changed entity |
 | **read** | a query declared on a store, used as a hook or a getter. It fetches its partition if needed, and recomputes when what it depends on changes: a read that asks for particular entities (through a `byEntity` cache) depends on those entities; one that looks at the whole partition depends on the partition. The component re-renders only if the recomputed value differs. A read caches nothing itself: its values come from the store's caches |
@@ -57,7 +58,7 @@ same engine compiled to WebAssembly, through `./sqljs`. Tests use sql.js too, th
 
 ## Quick start
 
-A store is a table, a key that divides it into fetchable slices, and one or more reads. The store below holds
+A store is a table, the partitions that divide it into fetchable slices, and one or more reads. The store below holds
 items belonging to a group, fetched one group at a time.
 
 ### 1. Declare the columns
@@ -66,44 +67,42 @@ One entry per persisted column. The row type and the `CREATE TABLE` are both gen
 field means adding a column here and nothing else.
 
 ```ts
-import { defineShredColumns, RowOf, RowTableSchema, ShredColumn } from '@sleeperhq/react-native-cellar';
+import { defineShredColumns, RowOf, ShredColumn, StoreTableSchema } from '@sleeperhq/react-native-cellar';
 
 type RawItem = { id: string; name?: string; rank?: number };
-/** Values that belong to the slice rather than to the payload. */
-type ItemCtx = { groupId: string };
 
 export const ITEM_COLUMNS = [
-  { name: 'group_id', type: 'TEXT', notNull: true, js: (_item: RawItem, ctx: ItemCtx): string => ctx.groupId },
   { name: 'item_id', type: 'TEXT', notNull: true, js: (item: RawItem): string => item.id },
   { name: 'name', type: 'TEXT', js: (item: RawItem) => item.name ?? null },
   { name: 'rank', type: 'INTEGER', js: (item: RawItem) => item.rank ?? null },
-] as const satisfies readonly ShredColumn<RawItem, ItemCtx>[];
+] as const satisfies readonly ShredColumn<RawItem>[];
 
 export type ItemRow = RowOf<typeof ITEM_COLUMNS>;
-export const itemShred = defineShredColumns<RawItem, ItemCtx>()(ITEM_COLUMNS);
+export const itemShred = defineShredColumns<RawItem>()(ITEM_COLUMNS);
 
-export const itemSchema: RowTableSchema<ItemRow> = {
+export const itemSchema: StoreTableSchema<ItemRow> = {
   table: 'items',
   columns: itemShred.columnDefs,
-  primaryKey: ['group_id', 'item_id'],
+  primaryKey: ['item_id'],
   // Each row belongs to one item: writes report the items they changed, and a read of particular items recomputes only
   // when one of those changes.
   entityId: 'item_id',
-  indexes: [{ name: 'idx_items_group', columns: ['group_id'] }],
-  // Where the per-slice ETag is kept, so a refetch can come back 304.
-  meta: { table: 'items_meta', keyColumns: ['group_id'], column: 'etag' },
 };
 ```
 
-### 2. Declare the store: its slices and its reads
+Cellar adds the rest of the table: a `partition_key` column naming each row's partition, which leads the primary key
+and is indexed with the entity id, and a side table (`items_meta`) holding each partition's ETag and description.
 
-`definePartitions` asks one question — where does one slice's rows live? — and derives the rest from the answer:
-presence, what a fetch replaces, where the ETag goes, what a write bumps. `read` then turns a slice of rows into
-whatever the screen actually wants, and `defineCaches` holds what it builds. All three live in the store's `build`,
-which is the store over one row table.
+### 2. Declare the store: its partitions and its reads
+
+`partition` names the args that describe one partition, here `groupId`, and Cellar derives the rest from them: the
+partition's key (the fields' values joined with `:`, here the group id itself), what a fetch replaces, where the ETag
+goes, what a write bumps. `fetch` gets the description. `build` declares the reads, which turn a partition's rows into
+whatever the screen actually wants, and the caches that hold what they build, with what its one argument, `cellar`,
+hands it.
 
 ```ts
-import { byPartition, definePartitions, defineSqliteStore, rowsOf } from '@sleeperhq/react-native-cellar';
+import { byPartition, defineSqliteStore } from '@sleeperhq/react-native-cellar';
 
 export type ItemKey = { groupId: string };
 export type ItemVM = { id: string; name: string };
@@ -114,50 +113,44 @@ const toVM = (row: ItemRow): ItemVM => ({ id: row.item_id, name: row.name ?? '' 
 export const itemStore = defineSqliteStore({
   name: 'item_store',
   schema: itemSchema,
-  build: (table, version) => {
-    table.init();
-    const rows = rowsOf(table);
-
-    const partitions = definePartitions<ItemRow, ItemKey>({
-      name: 'items',
-      table,
-      version,
-      key: {
-        fields: ['groupId'],
-        where: ({ groupId }) => ({ group_id: groupId }),
+  partition: { fields: ['groupId'] },
+  fetch: {
+    query: ({ groupId }: ItemKey, etag?: string) => ({
+      queryFn: async () => {
+        const response = await fetch(`/groups/${groupId}/items`, { headers: etag ? { 'If-None-Match': etag } : {} });
+        return { data: await response.text(), etag: response.headers.get('etag') ?? undefined };
       },
-      fetch: {
-        query: ({ groupId }, etag) => ({
-          queryFn: async () => {
-            const response = await fetch(`/groups/${groupId}/items`, { headers: etag ? { 'If-None-Match': etag } : {} });
-            return { data: await response.text(), etag: response.headers.get('etag') ?? undefined };
-          },
-        }),
-        parse: ({ groupId }, rawJson) => (JSON.parse(rawJson) as RawItem[]).map((item) => itemShred.row(item, { groupId })),
-      },
-    });
-
-    const { groupItems } = partitions.defineCaches({
+    }),
+    parse: (_group, rawJson) => (JSON.parse(rawJson) as RawItem[]).map((item) => itemShred.row(item)),
+  },
+  build: (cellar) => {
+    const { groupItems } = cellar.defineCaches({
       // One list per group, built on first use and again after a write to that group.
       groupItems: byPartition<ItemVM[]>({ max: 16 }),
     });
 
     return {
       reads: {
-        GroupItems: partitions.defineRead<ItemKey, ItemVM[]>({
-          select: (_args, key) => groupItems.for(key).read(() => rows.where(partitions.where(key), { orderBy: 'rank' }).map(toVM, NO_ITEMS)),
+        GroupItems: cellar.defineRead<ItemKey, ItemVM[]>({
+          select: (_args, key) => groupItems.for(key).read(() => cellar.rows(key, undefined, { orderBy: 'rank' }).map(toVM, NO_ITEMS)),
           empty: NO_ITEMS,
         }),
       },
-      lifecycle: partitions.lifecycle,
     };
   },
 });
 ```
 
-`select` runs only once the slice holds rows, and a hook runs it again only when something it read has changed. A
-read caches nothing itself, so what `select` builds, it builds inside one of the store's caches: here, every caller of
-one group shares one list. `empty` is what callers get before the slice has rows, so it has to be a stable reference.
+`select` gets the read's args and its partition's key, runs only once the partition holds rows, and a hook runs it
+again only when something it read has changed. A read caches nothing itself, so what `select` builds, it builds inside
+one of the store's caches: here, every caller of one group shares one list. `empty` is what callers get before the
+partition has rows, so it has to be a stable reference. The store's `lifecycle` (priming, fetching, refetching,
+forgetting) comes from Cellar; `build` returns only the reads, and any pushes or lifecycle functions of its own.
+
+The partition's type comes from `fetch.query`'s parameter, here `ItemKey`. A store whose args aren't the description
+itself gives `partition.toPartition`, such as a sport that shares another sport's players, and one whose descriptions
+are more than a few small fields gives `partition.toKey` too. A read of several partitions at once, such as one
+player's stats across several weeks, is a `defineReadAcross`, whose `partitions` names them from the args.
 
 Until it is bound, a store runs over a connection that answers nothing, so each read gives back its `empty`. Startup
 binds it (step 4). On device, a SQLite failure mid-session reopens the database, deleting it first when the file is what
@@ -173,8 +166,8 @@ Reading a cold partition fetches it, automatically, and that is meant to be unre
 layer exists. Worth knowing once, though: the fetch is scoped to the **partition**, never to what the read selects.
 
 ```ts
-ItemsByIds: partitions.defineRead<ItemIdsKey, ItemVM[]>({
-  select: (args, key) => rows.byIds(partitions.where(key), args.ids),
+ItemsByIds: cellar.defineRead<ItemIdsKey, ItemVM[]>({
+  select: (args, key) => itemsById.atEach(key, args.ids),
   empty: NO_ITEMS,
 }),
 ```
@@ -279,7 +272,7 @@ avoids. Configure no gate and every read stays live.
 
 ## What you get without writing it
 
-- **Conditional fetch.** Each slice keeps its own ETag, so a refetch that hasn't changed costs a 304 and no
+- **Conditional fetch.** Each partition keeps its own ETag, so a refetch that hasn't changed costs a 304 and no
   write. Fetches are orchestrated through the host's React Query, deduped and shared between readers.
 - **JSON that never becomes objects.** A response body can be shredded from text straight into columns in C++,
   so a large payload is never a JS object graph. Declaring a `NativeShredSpec` is optional; without one the same
@@ -291,16 +284,16 @@ avoids. Configure no gate and every read stays live.
   change set: the entities with a row added, changed or removed. A refetch that brings back what the table already holds
   changes nothing and wakes nobody; a live poll where four players moved wakes the readers of those four.
 - **Reactivity per entity, found by reading.** A read subscribes to exactly what it read, discovered by running it: a
-  read of named entities through a `byEntity` cache depends on those entities, and a read over the whole slice
-  depends on the slice. Nothing is declared, and a read that takes rows straight off the table falls back to its
-  whole slice, so precision is never bought with correctness.
+  read of named entities through a `byEntity` cache depends on those entities, and a read over the whole partition
+  depends on the partition. Nothing is declared, and a read that takes rows straight off the table falls back to its
+  whole partition, so precision is never bought with correctness.
 - **Stable references for free.** Rows come back from SQLite as fresh objects, so a read rebuilding view models would
   repaint every subscriber. Declare the shape as a `byEntity` cache and Cellar keeps each entity's value (usually a
   view model) until that entity changes, handing back the same reference until then.
 - **One query engine.** Every environment runs SQLite — the device's, sql.js on the web, sql.js in tests — so a store
   writes each query once, in SQL, and a test runs the SQL a device runs. A store whose database file keeps failing
   moves to an in-memory database on the same engine, so a disk error costs persistence, not speed.
-- **Dev-only guards.** Reading off-heap during render without subscribing is correct on first paint and frozen
+- **Dev-only guards.** Reading a store during render without subscribing is correct on first paint and frozen
   after, which is invisible on screen — so in `__DEV__` it warns, naming the partition and the component. Other
   guards catch a store bound too late, a memo sized too small, and a read fanning out across a list.
 
@@ -312,8 +305,8 @@ Everything below is exported from the package root.
 
 | export | what it gives you |
 | --- | --- |
-| `defineSqliteStore(config)` | the store: `reads`, `push` and `lifecycle` on whichever connection is running, `capabilities` for what the store builds from that connection (a ranker running its own SQL, say), `bindSqlite` to run it on a connection, and `testing.over(conn)` for a test's own surface and the table to seed it through |
-| `definePartitions(config)` | from `key.where` and an optional `fetch`: the read constructors, `lifecycle`, `cache`, and the row/version primitives (`where`, `keyOf`, `has`, `versionOf`, `bump`, `clearEtag`) |
+| `defineSqliteStore(config)` | the store, from its `schema`, `partition`, an optional `fetch` and `build`: `reads`, `push` and `lifecycle` on whichever connection is running, `capabilities` for what the store builds from that connection (a ranker running its own SQL, say), `bindSqlite` to run it on a connection, and `testing.over(conn)` for a test's own surface and the table to seed it through |
+| `build`'s `cellar` | the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a partition's `rows(key, filter?)`, the partition primitives (`keyOf`, `partitionOf`, `keys`, `has`, `versionOf`, `bump`, `clearEtag`, `where`), `createPushIngest`, and the `table` and `caps` for a store's own SQL |
 | `defineShredColumns<Src, Ctx>()(columns)` | one column table bound to everything derived from it: `names`, `columnDefs`, `row`, and `ops` once every column declares one |
 
 ### Rows
@@ -321,35 +314,36 @@ Everything below is exported from the package root.
 | export | what it gives you |
 | --- | --- |
 | `createSqliteRowTable` | the `RowTable` over any SQLite connection; `{ temporary: true }` builds it in the connection's temp schema |
-| `RowTable` | `init`, three writes (`upsert`, `overwrite`, `shred`) that each return the entities they changed, reads (`getOne`, `find`, `findIn`, `has`, `entityIdsWhere`) and the ETag pair (`getMeta`, `setMeta`) |
+| `RowTable` | `init`, three writes (`upsert`, `overwrite`, `shred`) that each return the entities they changed, reads (`getOne`, `find`, `findIn`, `has`, `entityIdsWhere`), the ETag pair (`getMeta`, `setMeta`) and each partition's stored description (`getMetaRecord`) |
 | `ChangeSet`, `ALL_ENTITIES`, `NO_CHANGES` | what a write reports: the entities it changed, every entity when it cannot say, or none |
 | `readRows`, `pinnedReader` | batch reads over a connection, and the opt-out that pins one to a single handle |
 
 The three writes differ in what they delete. `upsert` merges by primary key and removes nothing, which is what a
-socket delta wants. `overwrite(where, rows)` makes the slice matching `where` be exactly `rows`. `shred` is that
-same replacement from an undecoded response body.
+socket delta wants, so its rows carry their own `partition_key`. `overwrite(where, rows)` makes the partition matching
+`where` be exactly `rows`, filling in each row's `partition_key`. `shred` is that same replacement from an undecoded
+response body.
 
 On SQLite each write lands its rows in a staging table, and one transaction compares them with the table (every
-column, null-safe) and replaces the rows of each changed entity. A slice that holds nothing yet skips the stage:
+column, null-safe) and replaces the rows of each changed entity. A partition that holds nothing yet skips the stage:
 with nothing to compare against, its rows go straight in and every entity counts as new.
 
 ### Getting rows in
 
 | export | what it gives you |
 | --- | --- |
-| a partition's `fetch` | `query` and `parse`, plus `canShredNatively` and `holdWrites`; leave it off for a store fed only by pushes |
-| `createPushIngest(config)` | rows arriving by socket: buffered per partition, deduped, written in bounded chunks off the render path, with per-partition holds for an in-flight fetch |
-| `NativeShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS |
+| a store's `fetch` | `query` and `parse`, plus `canShredNatively`; leave it off for a store fed only by pushes |
+| `cellar.createPushIngest({ idOf, toRows, onWrite? })` | rows arriving by socket: buffered per partition, deduped, written in bounded chunks off the render path, and held while their partition is being fetched |
+| `NativeShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS. A store's programs get the partition's key as bind 0, from Cellar, which also deletes the partition's old rows by it; `binds(partition)` fills bind 1 onward |
 | `RAW_TEXT_RESPONSE_TRANSFORM` | keeps a client from `JSON.parse`-ing a body Cellar wants as text |
 
 ### Reading
 
 | export | what it gives you |
 | --- | --- |
-| `partitions.defineRead()`, `.defineReadMany()`, `.defineReadGrouped()` | a `{ getValue, useValue }` pair per read: one slice, a variable set of them, or one group of candidates per thing asked about. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once — which is why `__DEV__` freezes it: a key remembered for a reference is only sound while the content holds still |
+| `cellar.defineRead()`, `cellar.defineReadAcross()` | a `{ getValue, useValue }` pair per read: one partition, or a set of them its `partitions` names. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once — which is why `__DEV__` freezes it: a key remembered for a reference is only sound while the content holds still |
 | `pairRead(read)` | publishes a read's two halves on a service. A caller passes every arg the read's args type requires, each as a value it may not have yet. They return the same value but do not fetch alike: `useValue` refetches on React Query's staleness, `getValue` fetches a partition that has never been fetched and otherwise leaves it |
 | `rowsOf(table)` | a query, then a shape: `.rows`, `.map`, `.indexed`, `.grouped`, and `.ordered` for results parallel to the ids asked for — each returning the caller's stable empty |
-| `createWindowedList(...)` | windowed list reads: fetch a page, keep the rest off-heap |
+| `createWindowedList(...)` | windowed list reads: fetch a page, keep the rest in SQLite |
 | `DataResult<T>`, `makeResult` | the envelope a read hands back, and the builder for a bespoke read the surface can't express |
 
 ### Reactivity
@@ -357,16 +351,16 @@ with nothing to compare against, its rows go straight in and every entity counts
 | export | what it gives you |
 | --- | --- |
 | `runTracked`, `runSubscribed` | the tracking scopes an imperative read runs inside |
-| `createTrackedSelector` | off-heap-aware reselect, for reads reached from a Redux selector |
+| `createTrackedSelector` | store-aware reselect, for reads reached from a Redux selector |
 | `useTrackedValue` | the hook every reactive read goes through: runs a derivation, subscribes to exactly what it read, and honours the read gate — for a derivation over several stores, or over Redux as well |
 
 ### Caching derived values
 
 | export | what it gives you |
 | --- | --- |
-| `partitions.defineCaches({ … })` | every value a store keeps on the heap beyond its rows, declared in one reviewable block, each entry named by its key and kept per partition for you. Nothing in it fetches: a value is built from rows already in the table, on first use |
-| `byEntity` | one value per entity, built from that entity's rows by `fromRows` (usually a view model) and rebuilt only when a write changes them, handing back the previous reference for every other entity. Read by partition key and entity id: `.at`, `.atEach`, `.pick` depend on the entities they name alone; `.where` and `.all` on the slice, since which entities match can move. Every answer is cached, lists included: asked again, a method hands back the same array or object while what it holds is unchanged, and `.where` and `.all` run their query once per change to the slice. Every miss in one `.atEach` or `.pick` is built from one query. Name it after what it holds and its entity, such as `cardsByPlayer`; reads of the same shape share it, so an entity's value is built once however many ask |
-| `byPartition` | values computed from the whole slice, and from any key parts it declares, dropped by every write that changed the slice; the lookup passes the build: `.for(key).read(() => …)`. It is where a read's expensive result lives, such as a ranking or a query's rows, since a read caches nothing itself |
+| `cellar.defineCaches({ … })` | every value a store keeps on the heap beyond its rows, declared in one reviewable block, each entry named by its key and kept per partition for you. Nothing in it fetches: a value is built from rows already in the table, on first use |
+| `byEntity` | one value per entity, built from that entity's rows by `fromRows` (usually a view model) and rebuilt only when a write changes them, handing back the previous reference for every other entity. Read by partition key and entity id: `.at`, `.atEach`, `.pick` depend on the entities they name alone; `.where` and `.all` on the partition, since which entities match can move. Every answer is cached, lists included: asked again, a method hands back the same array or object while what it holds is unchanged, and `.where` and `.all` run their query once per change to the partition. Every miss in one `.atEach` or `.pick` is built from one query. Name it after what it holds and its entity, such as `cardsByPlayer`; reads of the same shape share it, so an entity's value is built once however many ask |
+| `byPartition` | values computed from the whole partition, and from any key parts it declares, dropped by every write that changed the partition; the lookup passes the build: `.for(key).read(() => …)`. It is where a read's expensive result lives, such as a ranking or a query's rows, since a read caches nothing itself |
 | `shallowEqualValue`, `shallowEqualRecord`, `shallowEqualArray`, `shallowEqualStruct` | the `isEqual` family a read compares its value with |
 
 ### Host services and diagnostics

@@ -4,6 +4,7 @@ import { configureCellar } from '../index';
 import { defineSqliteStore } from '../define_sqlite_store';
 import { RowTableSchema } from '../table/types';
 import { createSqliteRowTable } from '../table/sqlite';
+import { PartitionKeyColumn, partitionedSchema } from '../table/partitioned';
 import { bindSqlJsStore, openSqlJsConnection, SqlJsModule } from './sqljs_connection';
 
 type Item = { id: string; group_id: string; score: number | null };
@@ -29,10 +30,8 @@ function itemStore() {
   return defineSqliteStore({
     name: 'items_store',
     schema,
-    build: (table) => {
-      table.init();
-      return { reads: { group: (groupId: string) => table.find({ group_id: groupId }, { orderBy: 'score' }) }, lifecycle: {} };
-    },
+    partition: { fields: ['group_id'] },
+    build: (cellar) => ({ reads: { group: (groupId: string) => cellar.rows(groupId, undefined, { orderBy: 'score' }).rows } }),
   });
 }
 
@@ -44,9 +43,9 @@ describe('sql.js on the web', () => {
     store.bindSqlite(conn);
     bindSqlJsStore('items_other', SQL, other);
 
-    createSqliteRowTable(schema, conn).overwrite({ group_id: 'g' }, [
-      { id: 'a', group_id: 'g', score: 2 },
-      { id: 'b', group_id: 'g', score: 1 },
+    createSqliteRowTable<Item & PartitionKeyColumn>(partitionedSchema(schema), conn).overwrite({ partition_key: 'g' }, [
+      { partition_key: 'g', id: 'a', group_id: 'g', score: 2 },
+      { partition_key: 'g', id: 'b', group_id: 'g', score: 1 },
     ]);
 
     expect(store.reads.group('g').map((item) => item.id)).toEqual(['b', 'a']);
@@ -71,6 +70,6 @@ describe('sql.js on the web', () => {
 
     expect(() => bindSqlJsStore('items', broken, store)).not.toThrow();
     expect(store.reads.group('g')).toEqual([]);
-    expect(captureException.mock.calls[0][1].tags).toEqual({ off_heap_degradation: 'sqljs.bind.items' });
+    expect(captureException.mock.calls[0][1].tags).toEqual({ cellar_degradation: 'sqljs.bind.items' });
   });
 });

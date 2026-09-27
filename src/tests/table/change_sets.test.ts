@@ -305,7 +305,7 @@ describe('change sets — SQLite rewrites only what changed', () => {
 
     expect(table.overwrite({ partition_key: 'w1' }, week).changes).toBe(ALL_ENTITIES);
     const reports = [...captureMessage.mock.calls, ...captureException.mock.calls];
-    expect(reports.map((call) => call[1].tags)).toContainEqual({ off_heap_degradation: 'row_table.diff_lost.games' });
+    expect(reports.map((call) => call[1].tags)).toContainEqual({ cellar_degradation: 'row_table.diff_lost.games' });
 
     configureCellar({ errors: INERT_ERRORS });
     warn.mockRestore();

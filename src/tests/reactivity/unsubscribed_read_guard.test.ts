@@ -38,7 +38,7 @@ function renderOnce(body: () => void): void {
 }
 
 function guardWarnings(): string[] {
-  return warn.mock.calls.map((args) => String(args[0])).filter((message) => message.startsWith('[off-heap]'));
+  return warn.mock.calls.map((args) => String(args[0])).filter((message) => message.startsWith('[cellar]'));
 }
 
 describe('renderPhaseOwnerStack', () => {

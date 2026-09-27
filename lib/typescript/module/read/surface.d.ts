@@ -84,9 +84,9 @@ export type ReadyArgs<Args, Optional extends keyof Args = never> = {
     readonly [K in Optional]: Args[K] | undefined;
 };
 /**
- * The fields every kind of read definition shares ({@linkcode Partitions.defineRead | defineRead},
- * {@linkcode Partitions.defineReadMany | defineReadMany} and
- * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}).
+ * The fields both kinds of read definition share: a read of one partition ({@linkcode ReadDef}) and a read across
+ * several ({@linkcode ReadAcrossDef}), declared with {@linkcode Partitions.defineRead | defineRead} and
+ * {@linkcode Partitions.defineReadAcross | defineReadAcross}.
  *
  * A read declares none of its args. It is ready once every arg its caller passed has a value (`undefined`, `null`,
  * `''` and an empty list count as none; `0` and `false` are values); until then it returns
@@ -137,9 +137,8 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
 /**
  * The definition of a read of one partition. The args name one partition (through
  * {@linkcode ReadDef.partition | partition}, or the store's key by default); the read fetches it if it has never been
- * fetched, and {@linkcode ReadDef.select | select} computes the value from its rows. Nearly every read is this kind.
- * For a read across several partitions, use {@linkcode ReadManyDef}; for several lookups at once, each with its own
- * candidate partitions, use {@linkcode ReadGroupedDef}.
+ * fetched, and {@linkcode ReadDef.select | select} computes the value from its rows. Nearly every read is this kind;
+ * one that spans several partitions is a {@linkcode ReadAcrossDef}.
  */
 export interface ReadDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
     /**
@@ -161,11 +160,11 @@ export interface ReadDef<Args, Key, T, Optional extends keyof Args = never> exte
 }
 /**
  * The definition of a read across several partitions, fetched and subscribed to together and computed into one value,
- * such as one player's stat rows across several weeks, one partition per week. {@linkcode ReadManyDef.select | select}
- * gets the partition keys as one flat list. For several lookups at once, each with its own candidate partitions, use
- * {@linkcode ReadGroupedDef}.
+ * such as one player's stat rows across several weeks, one partition per week, or a row for each of several stat keys,
+ * each of which could be in more than one partition. {@linkcode ReadAcrossDef.select | select} gets the partitions'
+ * keys in the order {@linkcode ReadAcrossDef.partitions | partitions} named them.
  */
-export interface ReadManyDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
+export interface ReadAcrossDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
     /**
      * The keys of the partitions the args name. Every one is fetched if it has never been fetched, and the read
      * re-renders when any of them changes. A key that names no partition (from a missing value) keeps its place in the
@@ -174,29 +173,10 @@ export interface ReadManyDef<Args, Key, T, Optional extends keyof Args = never> 
     partitions: (args: ReadyArgs<Args, Optional>) => readonly Key[];
     /**
      * Computes the read's value from the partitions' rows, given their keys in the order
-     * {@linkcode ReadManyDef.partitions | partitions} returned them. Runs once the read is ready and at least one of the
-     * partitions has rows.
+     * {@linkcode ReadAcrossDef.partitions | partitions} returned them. Runs once the read is ready and at least one of
+     * the partitions has rows. A read answering several lookups at once finds each one's own partitions from its args.
      */
     select: (args: ReadyArgs<Args, Optional>, keys: readonly Key[]) => T;
-}
-/**
- * The definition of a read that answers several lookups at once, where each lookup's rows could be in any of several
- * candidate partitions, such as a stat row for each of several stat keys, where each key could be in more than one
- * partition. {@linkcode ReadGroupedDef.groups | groups} gives each lookup's candidate partitions; all of them are
- * fetched and subscribed to; {@linkcode ReadGroupedDef.select | select} gets the groups back in the same order, so it
- * can answer each lookup from its own candidates.
- */
-export interface ReadGroupedDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
-    /**
-     * The candidate partitions for each lookup, one group per lookup. Every partition in every group is fetched if it has
-     * never been fetched, and the read re-renders when any of them changes.
-     */
-    groups: (args: ReadyArgs<Args, Optional>) => readonly (readonly Key[])[];
-    /**
-     * Computes the read's value, given the groups of partition keys in the order `groups` returned them. Runs once the
-     * read is ready and at least one of the partitions has rows.
-     */
-    select: (args: ReadyArgs<Args, Optional>, groups: readonly (readonly Key[])[]) => T;
 }
 /**
  * Options one caller passes to a read's {@linkcode Read.useValue | useValue} hook, on top of what the read's definition
@@ -245,20 +225,20 @@ export declare function labelReads(reads: object): void;
 /** Returns a {@linkcode DataResult} whose identity is stable across renders while its parts hold. */
 export declare function useResult<T>(data: T, status: DataStatus, isFetching: boolean, doRefetch: () => void): DataResult<T>;
 /**
- * Builds the read engine over one store's partitions: {@linkcode Partitions.defineRead | defineRead} /
- * {@linkcode Partitions.defineReadMany | defineReadMany} / {@linkcode Partitions.defineReadGrouped | defineReadGrouped}
- * each take a descriptor and hand back its {@linkcode Read.useValue | useValue} / {@linkcode Read.getValue | getValue}
- * pair, with the readiness gate, the priming, the version subscription and the presence gate already wrapped around
- * {@linkcode ReadDef.select | select}. {@linkcode definePartitions} builds one per store, so stores declare reads.
+ * Builds the read engine over one store's partitions: {@linkcode Partitions.defineRead | defineRead} and
+ * {@linkcode Partitions.defineReadAcross | defineReadAcross} take a definition and hand back its
+ * {@linkcode Read.useValue | useValue} / {@linkcode Read.getValue | getValue} pair, with the readiness gate, the
+ * priming, the version subscription and the presence gate already wrapped around {@linkcode ReadDef.select | select}.
+ * {@linkcode definePartitions} builds one per store, so stores declare reads.
  */
 export declare function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>): {
     /**
-     * Declares a read: `read<Args, Value>({ … })`, or `read<Args, Value, 'optionalArg'>({ optionalArgs: ['optionalArg'],
-     * … })` for a read that may be handed an arg without a value.
+     * Declares a read of one partition: `read<Args, Value>({ … })`, or `read<Args, Value, 'optionalArg'>({ optionalArgs:
+     * ['optionalArg'], … })` for a read that may be handed an arg without a value.
      */
     read: <Args, T, Optional extends keyof Args = never>(def: ReadDef<Args, Key, T, Optional>) => Read<Args, T>;
-    readMany: <Args, T, Optional extends keyof Args = never>(def: ReadManyDef<Args, Key, T, Optional>) => Read<Args, T>;
-    readGrouped: <Args, T, Optional extends keyof Args = never>(def: ReadGroupedDef<Args, Key, T, Optional>) => Read<Args, T>;
+    /** Declares a read across several partitions, whose definition names them: `readAcross<Args, Value>({ … })`. */
+    readAcross: <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => Read<Args, T>;
     has: (key: Key) => boolean;
 };
 export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, shallowEqualStruct, shallowEqualValue };

@@ -7,7 +7,13 @@
  */
 
 export { createSqlJsConnection, initSqlJs } from './sqljs_connection';
-export { createTestRowTable, createTestRowTableWithConnection } from './row_table';
+export {
+  createStoreTable,
+  createTestRowTable,
+  createTestRowTableWithConnection,
+  createTestStoreTable,
+  createTestStoreTableWithConnection,
+} from './row_table';
 export type { SqlJsCapabilities, SqlJsConnection } from './sqljs_connection';
 export { createTestVersionAtom } from './version_atom';
 export { testCache } from './caches';
@@ -19,4 +25,5 @@ export { itDev } from './dev_mode';
 // between cases.
 export { createVersionAtom } from '../reactivity/version_atom';
 export { evalShredElement } from '../write/shred_spec';
+export { storeShredProgram } from '../table/partitioned';
 export { resetOnceGuards } from '../diagnostics/once_guard';

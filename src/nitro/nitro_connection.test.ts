@@ -18,7 +18,7 @@ configureCellar({ errors: { captureException, captureMessage } });
 /** What the adapter reported: the scope it filed under, and the context line it filed. */
 function lastReport(): { scope: string; context: string } {
   const [, captureContext] = captureException.mock.calls[captureException.mock.calls.length - 1];
-  return { scope: String(captureContext.tags.off_heap_degradation), context: String(captureContext.extra.context) };
+  return { scope: String(captureContext.tags.cellar_degradation), context: String(captureContext.extra.context) };
 }
 
 interface FakeHandle {

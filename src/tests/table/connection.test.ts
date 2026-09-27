@@ -34,7 +34,7 @@ const nativeShredSpec: NativeShredSpec = {
     },
   },
   variant: () => 'all',
-  binds: (scope) => [scope.scope ?? null],
+  binds: (scope) => [String(scope.scope)],
 };
 
 const rows = (count: number): Thing[] => Array.from({ length: count }, (_, index) => ({ scope: 's', id: `p${index}`, name: `n${index}`, n: index }));

@@ -58,16 +58,16 @@ export const optionalArgsNeedTheirType = () =>
 
 /** The same for set reads, which are handed their keys alongside. */
 export const setReadsToo = () => {
-  rows.defineReadMany<Args, string>({
+  rows.defineReadAcross<Args, string>({
     partitions: (args) => [{ region: args.region }],
     select: (args, keys) => `${args.ids.length}:${keys.length}`,
     empty: '',
   });
-  rows.defineReadGrouped<Args, string, 'ids'>({
+  rows.defineReadAcross<Args, string, 'ids'>({
     optionalArgs: ['ids'],
-    groups: (args) => [[{ region: args.region }]],
+    partitions: (args) => [{ region: args.region }],
     // @ts-expect-error `ids` is optional, so it may be missing
-    select: (args, groups) => `${args.ids.length}:${groups.length}`,
+    select: (args, keys) => `${args.ids.length}:${keys.length}`,
     empty: '',
   });
 };

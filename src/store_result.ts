@@ -105,7 +105,7 @@ export function makeResult<T>(
  * `error` if the fetch failed, `loading` if the first fetch is in flight, and `success` if there is no fetch (a store
  * fed only by pushes).
  */
-export function offHeapStatus(enabled: boolean, hasData: boolean, prime: PrimeState): DataStatus {
+export function readStatus(enabled: boolean, hasData: boolean, prime: PrimeState): DataStatus {
   if (!enabled) return 'success';
   if (hasData) return 'success';
   if (prime.isError) return 'error';

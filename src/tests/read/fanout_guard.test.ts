@@ -233,6 +233,6 @@ describeDev('per-row fan-out tripwire', () => {
     const surface = makeSurface();
     renderRows(surface, 60);
 
-    expect(fanoutWarnings()[0]).toContain('[off_heap_store]');
+    expect(fanoutWarnings()[0]).toContain('[cellar_store]');
   });
 });

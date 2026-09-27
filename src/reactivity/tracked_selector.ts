@@ -202,7 +202,7 @@ export function createTrackedSelector<Args extends readonly unknown[], R>(
     const label = options?.debugLabel ?? `[${deps.map((dep) => dep.id).join(', ')}]`;
     // eslint-disable-next-line no-console
     console.warn(
-      `[tracked-selector] ${label} read off-heap partitions but ran outside a tracking scope, so its consumer ` +
+      `[tracked-selector] ${label} read store partitions but ran outside a tracking scope, so its consumer ` +
         `won't repaint when they change. Wrap the consuming component in withTrackedStores/useTrackedStores ` +
         `(or read via a *.useValue hook). Safe to ignore for one-shot imperative reads.`,
     );

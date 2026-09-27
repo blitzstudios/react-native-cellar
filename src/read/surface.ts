@@ -22,7 +22,7 @@ import { addressesPartition, NO_PARTS, PartitionEntry, partitionEntries, Version
 import { createOnceGuard, onGuardReset } from '../diagnostics/once_guard';
 import { shouldLog } from '../diagnostics/log_level';
 import { NO_PRIMING, type PrimeState } from '../prime_state';
-import { DataResult, DataStatus, makeResult, offHeapStatus } from '../store_result';
+import { DataResult, DataStatus, makeResult, readStatus } from '../store_result';
 import { Dep, runSubscribed, runTracked, trackDependency } from '../reactivity/tracking';
 import { useTrackedValue } from '../reactivity/tracked_value';
 import { covered, uncoveredReads } from '../table/read_coverage';
@@ -96,9 +96,9 @@ export type ReadyArgs<Args, Optional extends keyof Args = never> = {
 };
 
 /**
- * The fields every kind of read definition shares ({@linkcode Partitions.defineRead | defineRead},
- * {@linkcode Partitions.defineReadMany | defineReadMany} and
- * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}).
+ * The fields both kinds of read definition share: a read of one partition ({@linkcode ReadDef}) and a read across
+ * several ({@linkcode ReadAcrossDef}), declared with {@linkcode Partitions.defineRead | defineRead} and
+ * {@linkcode Partitions.defineReadAcross | defineReadAcross}.
  *
  * A read declares none of its args. It is ready once every arg its caller passed has a value (`undefined`, `null`,
  * `''` and an empty list count as none; `0` and `false` are values); until then it returns
@@ -150,9 +150,8 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
 /**
  * The definition of a read of one partition. The args name one partition (through
  * {@linkcode ReadDef.partition | partition}, or the store's key by default); the read fetches it if it has never been
- * fetched, and {@linkcode ReadDef.select | select} computes the value from its rows. Nearly every read is this kind.
- * For a read across several partitions, use {@linkcode ReadManyDef}; for several lookups at once, each with its own
- * candidate partitions, use {@linkcode ReadGroupedDef}.
+ * fetched, and {@linkcode ReadDef.select | select} computes the value from its rows. Nearly every read is this kind;
+ * one that spans several partitions is a {@linkcode ReadAcrossDef}.
  */
 export interface ReadDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
   /**
@@ -175,11 +174,11 @@ export interface ReadDef<Args, Key, T, Optional extends keyof Args = never> exte
 
 /**
  * The definition of a read across several partitions, fetched and subscribed to together and computed into one value,
- * such as one player's stat rows across several weeks, one partition per week. {@linkcode ReadManyDef.select | select}
- * gets the partition keys as one flat list. For several lookups at once, each with its own candidate partitions, use
- * {@linkcode ReadGroupedDef}.
+ * such as one player's stat rows across several weeks, one partition per week, or a row for each of several stat keys,
+ * each of which could be in more than one partition. {@linkcode ReadAcrossDef.select | select} gets the partitions'
+ * keys in the order {@linkcode ReadAcrossDef.partitions | partitions} named them.
  */
-export interface ReadManyDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
+export interface ReadAcrossDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
   /**
    * The keys of the partitions the args name. Every one is fetched if it has never been fetched, and the read
    * re-renders when any of them changes. A key that names no partition (from a missing value) keeps its place in the
@@ -188,30 +187,10 @@ export interface ReadManyDef<Args, Key, T, Optional extends keyof Args = never> 
   partitions: (args: ReadyArgs<Args, Optional>) => readonly Key[];
   /**
    * Computes the read's value from the partitions' rows, given their keys in the order
-   * {@linkcode ReadManyDef.partitions | partitions} returned them. Runs once the read is ready and at least one of the
-   * partitions has rows.
+   * {@linkcode ReadAcrossDef.partitions | partitions} returned them. Runs once the read is ready and at least one of
+   * the partitions has rows. A read answering several lookups at once finds each one's own partitions from its args.
    */
   select: (args: ReadyArgs<Args, Optional>, keys: readonly Key[]) => T;
-}
-
-/**
- * The definition of a read that answers several lookups at once, where each lookup's rows could be in any of several
- * candidate partitions, such as a stat row for each of several stat keys, where each key could be in more than one
- * partition. {@linkcode ReadGroupedDef.groups | groups} gives each lookup's candidate partitions; all of them are
- * fetched and subscribed to; {@linkcode ReadGroupedDef.select | select} gets the groups back in the same order, so it
- * can answer each lookup from its own candidates.
- */
-export interface ReadGroupedDef<Args, Key, T, Optional extends keyof Args = never> extends CommonDef<Args, T, Optional> {
-  /**
-   * The candidate partitions for each lookup, one group per lookup. Every partition in every group is fetched if it has
-   * never been fetched, and the read re-renders when any of them changes.
-   */
-  groups: (args: ReadyArgs<Args, Optional>) => readonly (readonly Key[])[];
-  /**
-   * Computes the read's value, given the groups of partition keys in the order `groups` returned them. Runs once the
-   * read is ready and at least one of the partitions has rows.
-   */
-  select: (args: ReadyArgs<Args, Optional>, groups: readonly (readonly Key[])[]) => T;
 }
 
 /**
@@ -268,7 +247,6 @@ export function labelReads(reads: object): void {
 
 /** Stable identities so a disabled read's hooks keep the same deps across renders. */
 const NO_KEYS: readonly never[] = Object.freeze([]);
-const NO_GROUPS: readonly (readonly never[])[] = Object.freeze([]);
 const NO_PARTITIONS: readonly (readonly string[])[] = Object.freeze([]);
 const NO_ARGS_KEY = `${KEY_SEP}disabled`;
 
@@ -367,7 +345,7 @@ function readGates(prime: boolean | undefined, addressable: boolean, primeWanted
  * enabled.
  */
 function useReadTail<T>(data: T, enabled: boolean, hasData: () => boolean, prime: PrimeState, doRefetch: () => void): DataResult<T> {
-  const status = runSubscribed(() => offHeapStatus(enabled, enabled && hasData(), prime));
+  const status = runSubscribed(() => readStatus(enabled, enabled && hasData(), prime));
   return useResult(data, status, prime.isFetching, doRefetch);
 }
 
@@ -380,15 +358,15 @@ const uncachedWarned = createOnceGuard();
 const notPassedWarned = createOnceGuard();
 
 /**
- * Builds the read engine over one store's partitions: {@linkcode Partitions.defineRead | defineRead} /
- * {@linkcode Partitions.defineReadMany | defineReadMany} / {@linkcode Partitions.defineReadGrouped | defineReadGrouped}
- * each take a descriptor and hand back its {@linkcode Read.useValue | useValue} / {@linkcode Read.getValue | getValue}
- * pair, with the readiness gate, the priming, the version subscription and the presence gate already wrapped around
- * {@linkcode ReadDef.select | select}. {@linkcode definePartitions} builds one per store, so stores declare reads.
+ * Builds the read engine over one store's partitions: {@linkcode Partitions.defineRead | defineRead} and
+ * {@linkcode Partitions.defineReadAcross | defineReadAcross} take a definition and hand back its
+ * {@linkcode Read.useValue | useValue} / {@linkcode Read.getValue | getValue} pair, with the readiness gate, the
+ * priming, the version subscription and the presence gate already wrapped around {@linkcode ReadDef.select | select}.
+ * {@linkcode definePartitions} builds one per store, so stores declare reads.
  */
 export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
   const { ingest, toParts } = kernel;
-  const store = kernel.name ?? 'off_heap';
+  const store = kernel.name ?? 'cellar';
 
   const usePriming = ingest?.usePrime ?? NO_PRIMING;
   const usePrimingAll = ingest?.usePrimeMany ?? NO_PRIMING;
@@ -496,7 +474,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     };
   };
 
-  function defineRead<Args, T, Optional extends keyof Args = never>(def: ReadDef<Args, Key, T, Optional>): Read<Args, T> {
+  function readOne<Args, T, Optional extends keyof Args>(def: ReadDef<Args, Key, T, Optional>): Read<Args, T> {
     const spec = def.partition ?? (kernel.defaultPartition as readonly PartitionField<Args>[] | ((args: ReadyArgs<Args, Optional>) => Key) | undefined);
     if (!spec) throw new Error(`${store}_store: this read needs a \`partition\`, since the store's key declares no \`fields\` to default to`);
     const keyOf = partitionKeyOf<ReadyArgs<Args, Optional>, Key>(spec as readonly PartitionField<ReadyArgs<Args, Optional>>[] | ((args: ReadyArgs<Args, Optional>) => Key));
@@ -567,29 +545,19 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     return read;
   }
 
-  /**
-   * The engine behind {@linkcode Partitions.defineReadMany | defineReadMany} and
-   * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}, which differ only in what `select` is handed back:
-   * the flat keys, or the groups they were named in. `resolve` runs once per call because naming a partition may intern
-   * it.
-   */
-  function manyRead<Args, T, Named, Optional extends keyof Args>(
-    def: CommonDef<Args, T, Optional>,
-    name: (args: ReadyArgs<Args, Optional>) => { keys: readonly Key[]; named: Named },
-    select: (args: ReadyArgs<Args, Optional>, named: Named) => T,
-    noneNamed: Named,
-  ): Read<Args, T> {
+  /** A read across several partitions, whose definition names them. */
+  function readAcross<Args, T, Optional extends keyof Args>(def: ReadAcrossDef<Args, Key, T, Optional>): Read<Args, T> {
     const runner = readRunner(def.optionalArgs);
     const { view } = runner;
     const partitionsArgsKey = (partitions: readonly (readonly string[])[], args: object): string => argsKeyOf([partitionsKey(partitions)], args);
 
-    /** Where a call stands: waiting, or ready with its partitions, what it named them as, and what it wants of them. */
+    /** Where a call stands: waiting, or ready with its partitions and what it wants of them. */
     const resolve = (args: Args | undefined) => {
       if (args === undefined || !view.ready(args as object)) return undefined;
       try {
-        const { value, read } = view.record(args as object, name as (view: never) => { keys: readonly Key[]; named: Named });
-        const entries = partitionEntries(value.keys, toParts);
-        return { ...value, entries, partitions: entries.map((entry) => entry.parts), intent: intentOf(args as object, read) };
+        const { value: keys, read } = view.record(args as object, def.partitions as (view: never) => readonly Key[]);
+        const entries = partitionEntries(keys, toParts);
+        return { keys, entries, partitions: entries.map((entry) => entry.parts), intent: intentOf(args as object, read) };
       } catch (error) {
         if (error instanceof ArgNotPassed) return undefined;
         throw error;
@@ -603,8 +571,8 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     const gatesFor = (args: Args, partitions: readonly (readonly string[])[], wanted: boolean, primeWanted = true) =>
       readGates(def.prime, wanted && partitions.some(addressesPartition), primeWanted, () => runner.enabled(args as object, def.enabled as ((args: never) => boolean) | undefined));
 
-    const run = (args: Args, named: Named, partitions: readonly (readonly string[])[], argsKey: () => string): T => {
-      const value = runner.select(partitions, argsKey, () => view.run(args as object, (ready: ReadyArgs<Args, Optional>) => select(ready, named)));
+    const run = (args: Args, keys: readonly Key[], partitions: readonly (readonly string[])[], argsKey: () => string): T => {
+      const value = runner.select(partitions, argsKey, () => view.run(args as object, (ready: ReadyArgs<Args, Optional>) => def.select(ready, keys)));
       return value === WAITING ? def.empty : value;
     };
 
@@ -616,7 +584,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       // `hasAny` stops at the first partition holding rows, so the rest are reported here for a read that lands later.
       trackPresence(call.partitions);
       if (!gates.read || !hasAny(call.entries)) return def.empty;
-      return run(args as Args, call.named, call.partitions, () => partitionsArgsKey(call.partitions, args as object));
+      return run(args as Args, call.keys, call.partitions, () => partitionsArgsKey(call.partitions, args as object));
     }
 
     function useValue(args: Args | undefined, options?: ReadCallOptions): DataResult<T> {
@@ -630,7 +598,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const data = useTrackedValue<T>(
         () => {
           trackPresence(partitions);
-          return hasAny(entries) ? run(args as Args, call ? call.named : noneNamed, partitions, () => argsKey) : def.empty;
+          return hasAny(entries) ? run(args as Args, keys, partitions, () => argsKey) : def.empty;
         },
         [argsKey],
         { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty },
@@ -646,35 +614,17 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     return read;
   }
 
-  function defineReadMany<Args, T, Optional extends keyof Args = never>(def: ReadManyDef<Args, Key, T, Optional>): Read<Args, T> {
-    const name = (args: ReadyArgs<Args, Optional>) => {
-      const keys = def.partitions(args);
-      return { keys, named: keys };
-    };
-    return manyRead<Args, T, readonly Key[], Optional>(def, name, def.select, NO_KEYS);
-  }
-
-  function defineReadGrouped<Args, T, Optional extends keyof Args = never>(def: ReadGroupedDef<Args, Key, T, Optional>): Read<Args, T> {
-    const name = (args: ReadyArgs<Args, Optional>) => {
-      const named = def.groups(args);
-      const keys: Key[] = [];
-      for (const group of named) for (const key of group) keys.push(key);
-      return { keys, named };
-    };
-    return manyRead<Args, T, readonly (readonly Key[])[], Optional>(def, name, def.select, NO_GROUPS);
-  }
-
   /** The surface's cached presence probe, so a store asks the same question the reads gate on. */
   const has = (key: Key): boolean => hasOne(key, toParts(key));
 
   return {
     /**
-     * Declares a read: `read<Args, Value>({ … })`, or `read<Args, Value, 'optionalArg'>({ optionalArgs: ['optionalArg'],
-     * … })` for a read that may be handed an arg without a value.
+     * Declares a read of one partition: `read<Args, Value>({ … })`, or `read<Args, Value, 'optionalArg'>({ optionalArgs:
+     * ['optionalArg'], … })` for a read that may be handed an arg without a value.
      */
-    read: defineRead,
-    readMany: defineReadMany,
-    readGrouped: defineReadGrouped,
+    read: readOne as <Args, T, Optional extends keyof Args = never>(def: ReadDef<Args, Key, T, Optional>) => Read<Args, T>,
+    /** Declares a read across several partitions, whose definition names them: `readAcross<Args, Value>({ … })`. */
+    readAcross: readAcross as <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => Read<Args, T>,
     has,
   };
 }

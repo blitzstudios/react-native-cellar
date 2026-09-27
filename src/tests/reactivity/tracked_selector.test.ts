@@ -32,7 +32,7 @@ describe('createTrackedSelector', () => {
     expect(resultFn).toHaveBeenCalledTimes(2);
   });
 
-  it('busts the memo when a tracked off-heap partition bumps, even with unchanged inputs (the fix)', () => {
+  it('busts the memo when a tracked store partition bumps, even with unchanged inputs (the fix)', () => {
     const atom = createVersionAtom('cts_c');
     const store = new Map<string, string>([['p', 'v0']]);
     const resultFn = jest.fn((key: string) => {
@@ -121,7 +121,7 @@ describe('createTrackedSelector', () => {
     expect(resultFn).toHaveBeenCalledTimes(3);
   });
 
-  it('rediscovers dependencies each recompute, so conditional off-heap reads stay correct', () => {
+  it('rediscovers dependencies each recompute, so conditional store reads stay correct', () => {
     const us = createVersionAtom('cts_e_us');
     const eu = createVersionAtom('cts_e_eu');
     const resultFn = jest.fn((region: string) => {
@@ -161,14 +161,14 @@ describe('createTrackedSelector', () => {
     expect(resultFn).toHaveBeenCalledTimes(1);
   });
 
-  describeDev('dev guard: off-heap read outside a tracking scope', () => {
+  describeDev('dev guard: store read outside a tracking scope', () => {
     let warn: jest.SpyInstance;
     beforeEach(() => {
       warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     });
     afterEach(() => warn.mockRestore());
 
-    it('warns once when it reads off-heap deps but runs with no outer scope (unwrapped consumer)', () => {
+    it('warns once when it reads store deps but runs with no outer scope (unwrapped consumer)', () => {
       const atom = createVersionAtom('cts_guard_a');
       const select = createTrackedSelector([(value: number) => value], (value) => {
         atom.get(US);
@@ -193,7 +193,7 @@ describe('createTrackedSelector', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
-    it('does not warn for a pure Redux selector that reads no off-heap partition', () => {
+    it('does not warn for a pure Redux selector that reads no store partition', () => {
       const select = createTrackedSelector([(value: number) => value], (value) => value * 2);
       select(1);
       select(2);

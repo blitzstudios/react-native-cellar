@@ -12,14 +12,14 @@ import { useCallback } from 'react';
 
 import { cacheKey, partitionLabel, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
-import { createReadSurface, Read, ReadDef, ReadGroupedDef, ReadManyDef, ReadyArgs, useResult } from './read/surface';
+import { createReadSurface, Read, ReadAcrossDef, ReadDef, ReadyArgs, useResult } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
 import { addressesPartition, NO_PARTS, VersionAtom } from './reactivity/version_atom';
 import { PartitionField, partitionKeyOf } from './read/partition_fields';
 import { NO_PRIMING, PrimeState } from './prime_state';
-import { DataResult, offHeapStatus } from './store_result';
+import { DataResult, readStatus } from './store_result';
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { runSubscribed } from './reactivity/tracking';
 import type { Loose } from './read/facade';
@@ -162,6 +162,11 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    * default. A forgotten fetch time makes the partition read as never fetched.
    */
   internMax?: number;
+  /**
+   * Called when a partition's version is bumped, with its key and its record if Cellar still holds it, so the store
+   * can keep the record somewhere {@linkcode PartitionKeySpec.from | from} can find it again.
+   */
+  remember?: (key: Key, descriptor: Descriptor) => void;
 }
 
 /**
@@ -262,37 +267,20 @@ export interface PartitionLifecycle<Args> {
   forget: () => void;
 }
 
-/**
- * Args that carry the read's partitions in the field of that name, where
- * {@linkcode Partitions.defineReadMany | defineReadMany} looks by default.
- */
-interface NamesPartitions<Descriptor> {
-  partitions: readonly MaybePartition<Descriptor>[];
-}
-
-/** Where a read's partitions come from; `null` and `undefined` both stand for an empty set. */
+/** Where a read's partitions come from, as records; `null` and `undefined` both stand for none. */
 type PartitionsFrom<Args, Descriptor> = (args: Args) => readonly MaybePartition<Descriptor>[] | null | undefined;
 
 /**
- * {@linkcode Partitions.defineReadMany | defineReadMany}, naming its partitions as the records a caller holds. Optional
- * when the args already carry them.
+ * A {@linkcode ReadAcrossDef} as a store declares it: its partitions named as the records a caller holds, which Cellar
+ * turns into keys.
  */
-type PartitionReadManyDef<Args, Key, T, Descriptor, Optional extends keyof Args> = Omit<ReadManyDef<Args, Key, T, Optional>, 'partitions'> &
-  (Args extends NamesPartitions<Descriptor>
-    ? { partitions?: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor> }
-    : { partitions: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor> });
-
-/**
- * {@linkcode Partitions.defineReadGrouped | defineReadGrouped}, likewise: one group of candidate records per thing the
- * caller is asking about.
- */
-interface PartitionReadGroupedDef<Args, Key, T, Descriptor, Optional extends keyof Args> extends Omit<ReadGroupedDef<Args, Key, T, Optional>, 'groups'> {
+interface PartitionReadAcrossDef<Args, Key, T, Descriptor, Optional extends keyof Args> extends Omit<ReadAcrossDef<Args, Key, T, Optional>, 'partitions'> {
   /**
-   * The candidate partitions for each lookup the read answers, one group per lookup, such as the partitions each of
-   * several stat keys could live in. Every partition in every group is fetched and subscribed to, and
-   * {@linkcode ReadGroupedDef.select | select} gets the groups back in the same order.
+   * The partitions the args name, as records, such as one per week a player's stats are read across. Every one is
+   * fetched if it has never been fetched, and the read re-renders when any of them changes. A record that names no
+   * partition keeps its place, so positions line up with the caller's list.
    */
-  groups: (args: ReadyArgs<Args, Optional>) => readonly (readonly MaybePartition<Descriptor>[])[];
+  partitions: PartitionsFrom<ReadyArgs<Args, Optional>, Descriptor>;
 }
 
 /**
@@ -314,19 +302,12 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    */
   defineRead: <A extends Args, T, Optional extends keyof A = never>(def: ReadDef<A, Key, T, Optional>) => Read<A, T>;
   /**
-   * Declares a read across several partitions, such as one player's stats across several weeks: the args name a list of
-   * partitions (by default their {@linkcode ReadManyDef.partitions | partitions} field), all of them are fetched and
-   * subscribed to, and {@linkcode ReadDef.select | select} computes one value from all of them. Declared like
-   * {@linkcode Partitions.defineRead | defineRead}.
+   * Declares a read across several partitions, such as one player's stats across several weeks, or a row for each of
+   * several stat keys: its {@linkcode PartitionReadAcrossDef.partitions | partitions} names them, all of them are
+   * fetched and subscribed to, and its {@linkcode ReadAcrossDef.select | select} gets their keys, in order. Declared
+   * like {@linkcode Partitions.defineRead | defineRead}.
    */
-  defineReadMany: <A, T, Optional extends keyof A = never>(def: PartitionReadManyDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
-  /**
-   * Declares a read that answers several lookups at once, where each lookup's rows could be in any of several candidate
-   * partitions: the args give one group of candidate partitions per lookup, every candidate is fetched and subscribed
-   * to, and {@linkcode ReadDef.select | select} gets the groups back in order to answer each lookup. Declared like
-   * {@linkcode Partitions.defineRead | defineRead}.
-   */
-  defineReadGrouped: <A, T, Optional extends keyof A = never>(def: PartitionReadGroupedDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
+  defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
   /**
    * Declares the store's caches: every value it keeps on the heap beyond its rows, in one object, each under a name,
    * with entries kept per partition. Each entry is one of two kinds, named for what a write discards:
@@ -354,6 +335,8 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    * key, so the partition's fetch can get the record back.
    */
   keyOf: (partition: Descriptor) => Key;
+  /** The record of the partition `key` names; the reverse of {@linkcode Partitions.keyOf | keyOf}. */
+  partitionOf: (key: Key) => Descriptor;
   /** Every partition key whose record is still remembered, from least to most recently used. */
   internedKeys: () => IterableIterator<Key>;
   /**
@@ -389,7 +372,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
 
 const INTERN_MAX = 512;
 const NO_INTERNED: readonly never[] = Object.freeze([]);
-/** The empty descriptor list {@linkcode Partitions.defineReadMany | defineReadMany} falls back on when args name no partitions. */
+/** The empty record list a read across partitions falls back on when its args name none. */
 const NO_DESCRIPTORS: readonly never[] = Object.freeze([]);
 
 /**
@@ -421,9 +404,20 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   /** The record⇄key mapping. Bounded; every path to a key re-registers, so a live partition's entry stays warm. */
   const toId = keySpec.id;
   const interned = toId ? createBoundedLru<Descriptor>(config.internMax ?? INTERN_MAX) : undefined;
+  /** Each record's key, so a store that hands back the same record object for the same args derives its key once. */
+  const keyMemo = new WeakMap<object, Key>();
   const keyOf = (partition: Descriptor): Key => {
     if (!toId || !interned) return partition as unknown as Key;
-    const key = toId(partition);
+    const memoable = typeof partition === 'object' && partition !== null;
+    let key = memoable ? keyMemo.get(partition) : undefined;
+    if (key === undefined) {
+      key = toId(partition);
+      if (memoable) {
+        // A record keyed once must never change, or its memoized key would name another partition.
+        if (__DEV__) Object.freeze(partition);
+        keyMemo.set(partition, key);
+      }
+    }
     interned.set(key as unknown as string, partition);
     return key;
   };
@@ -469,6 +463,10 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
       partitionKeyOf<Args, Key>(fields as unknown as readonly PartitionField<Args>[]);
 
   const bump = (key: Key, changes: ChangeSet = ALL_ENTITIES): number => {
+    if (config.remember && interned) {
+      const descriptor = interned.get(key as unknown as string);
+      if (descriptor) config.remember(key, descriptor);
+    }
     const parts = toParts(key);
     if (isUnchanged(changes)) return version.get(parts);
     const next = version.bump(parts, changes);
@@ -492,7 +490,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
       result = inJs();
     } else {
       try {
-        result = await table.shred(rowsWhere, rawJson, parse);
+        result = await table.shred(rowsWhere, rawJson, parse, partition as object);
       } catch (error) {
         reportStoreDegradation({
           scope: `${name}_store.raw_ingest`,
@@ -556,33 +554,26 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     const prime = usePriming(key, isEnabled && options?.prime !== false);
     const ver = version.useVersion(parts, isEnabled);
     const partsKey = cacheKeyOf(parts);
-    const status = runSubscribed(() => offHeapStatus(isEnabled, isEnabled && surface.has(key as Key), prime));
+    const status = runSubscribed(() => readStatus(isEnabled, isEnabled && surface.has(key as Key), prime));
     const doRefetch = useCallback(() => {
       if (key !== undefined) ingest?.refetch(key);
     }, [partsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `partsKey` covers `key`
     return useResult(ver, status, prime.isFetching, doRefetch);
   }
 
-  /** Both set reads name their partitions as records; the keys they address are this layer's to resolve. */
-  function readManyOf<A, T, Optional extends keyof A = never>(def: PartitionReadManyDef<A, Key, T, Descriptor, Optional>): Read<A, T> {
-    type Ready = ReadyArgs<A, Optional>;
-    const named = (def as { partitions?: PartitionsFrom<Ready, Descriptor> }).partitions ?? ((args: Ready) => (args as unknown as NamesPartitions<Descriptor>).partitions);
-    return surface.readMany<A, T, Optional>({ ...def, partitions: (args: Ready) => (named(args) ?? NO_DESCRIPTORS).map(keyOfMaybe) } as ReadManyDef<A, Key, T, Optional>);
-  }
-
-  function readGroupedOf<A, T, Optional extends keyof A = never>(def: PartitionReadGroupedDef<A, Key, T, Descriptor, Optional>): Read<A, T> {
-    const groups = (args: ReadyArgs<A, Optional>) => def.groups(args).map((group) => group.map(keyOfMaybe));
-    return surface.readGrouped<A, T, Optional>({ ...def, groups } as ReadGroupedDef<A, Key, T, Optional>);
+  /** A read across partitions names them as records; the keys they address are this layer's to resolve. */
+  function readAcrossOf<A, T, Optional extends keyof A>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>): Read<A, T> {
+    const named = def.partitions;
+    return surface.readAcross<A, T, Optional>({ ...def, partitions: (args) => (named(args) ?? NO_DESCRIPTORS).map(keyOfMaybe) } as ReadAcrossDef<A, Key, T, Optional>);
   }
 
   return {
     defineRead: surface.read,
-    // The same signatures, which TypeScript cannot match through the conditional in the definition types.
-    defineReadMany: readManyOf as Partitions<Row, Key, Args, Descriptor>['defineReadMany'],
-    defineReadGrouped: readGroupedOf as Partitions<Row, Key, Args, Descriptor>['defineReadGrouped'],
+    defineReadAcross: readAcrossOf as Partitions<Row, Key, Args, Descriptor>['defineReadAcross'],
     defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where }),
     where,
     keyOf,
+    partitionOf: describe,
     internedKeys: () => (interned ? (interned.keys() as IterableIterator<Key>) : NO_INTERNED[Symbol.iterator]()),
     has,
     versionOf,
@@ -610,4 +601,4 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, DerivedValues, RawQuery, Read, ReadDef, ReadGroupedDef, ReadManyDef, RowTable, SqliteStoreConfig, addressesPartition, byEntity, byPartition };
+export type { CommonDef, DataResult, DerivedValues, RawQuery, Read, ReadAcrossDef, ReadDef, RowTable, SqliteStoreConfig, addressesPartition, byEntity, byPartition };

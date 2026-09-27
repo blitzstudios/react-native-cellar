@@ -2,17 +2,16 @@ import { defineSqliteStore } from '../define_sqlite_store';
 import { resetOnceGuards } from '../diagnostics/once_guard';
 import { itDev, itProd } from '../testing/dev_mode';
 import { SqliteConnection } from '../table/connection';
-import { RowTableSchema } from '../table/types';
+import { StoreTableSchema } from '../table/partitioned';
 import { createSqlJsConnection } from '../testing/sqljs_connection';
 
 type Thing = { id: string };
 
-const schema: RowTableSchema<Thing> = {
+const schema: StoreTableSchema<Thing> = {
   table: 'things',
   columns: { id: { type: 'TEXT' } },
   primaryKey: ['id'],
   entityId: 'id',
-  meta: { table: 'things_meta', keyColumns: ['id'], column: 'etag' },
 };
 
 /**
@@ -33,23 +32,21 @@ function namedConn(label: string, failWith = 'disk I/O error') {
   return { conn, failing, ran };
 }
 
-type LabelledSurface = { reads: { label: string; describe: () => string; rows: () => Thing[] }; lifecycle: { forget: jest.Mock } };
-
 /** A store whose surface says which connection it was built over — `unbound` for the one that answers nothing — and counts its builds. */
 function labelledStore() {
   const forgets: jest.Mock[] = [];
   let builds = 0;
-  const store = defineSqliteStore<Thing, LabelledSurface, { label: string }>({
+  const store = defineSqliteStore({
     name: 'test_store',
     schema,
-    build: (table, _version, caps) => {
-      table.init();
+    partition: { fields: ['id'] },
+    build: (cellar) => {
       builds += 1;
       const forget = jest.fn();
       forgets.push(forget);
-      return { reads: { label: caps.label, describe: () => caps.label, rows: () => table.find({}) }, lifecycle: { forget } };
+      return { reads: { label: cellar.caps.label, describe: () => cellar.caps.label, rows: () => cellar.table.find({}) }, lifecycle: { forget } };
     },
-    capabilities: (conn) => {
+    capabilities: (conn: SqliteConnection): { label: string } => {
       try {
         const [row] = (conn.execute('SELECT label').rows?._array ?? []) as Array<{ label: string }>;
         return { label: row?.label ?? 'unbound' };
@@ -173,8 +170,8 @@ describe('defineSqliteStore — testing', () => {
     const { store } = labelledStore();
     const { surface, table } = store.testing.over(createSqlJsConnection());
 
-    table.overwrite({}, [{ id: 'a' }]);
-    expect(surface.reads.rows()).toEqual([{ id: 'a' }]);
+    table.overwrite({ partition_key: 'k' }, [{ partition_key: 'k', id: 'a' }]);
+    expect(surface.reads.rows()).toEqual([{ partition_key: 'k', id: 'a' }]);
     expect(store.reads.label).toBe('unbound');
   });
 
@@ -209,7 +206,7 @@ describe('defineSqliteStore — a SQLite failure mid-session', () => {
     await flush();
 
     expect(reopen).toHaveBeenCalledWith({ discard: false });
-    expect(second.ran).toContain('DELETE FROM things_meta;');
+    expect(second.ran).toContain('UPDATE things_meta SET etag = NULL;');
     expect(store.reads.label).toBe('reopened');
     expect(forgets[0]).toHaveBeenCalledTimes(1);
   });
@@ -226,7 +223,7 @@ describe('defineSqliteStore — a SQLite failure mid-session', () => {
     await flush();
 
     expect(reopen).toHaveBeenCalledWith({ discard: true });
-    expect(second.ran).not.toContain('DELETE FROM things_meta;');
+    expect(second.ran).not.toContain('UPDATE things_meta SET etag = NULL;');
   });
 
   itProd('moves to the in-memory fallback once reopening has failed twice, building its tables as temp tables', async () => {

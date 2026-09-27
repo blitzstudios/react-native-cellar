@@ -114,6 +114,6 @@ describe('a partition evicted from the key table', () => {
     // A degradation rather than a notice, so it lands on the exception channel with a per-scope fingerprint.
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(String(captureException.mock.calls[0][0])).toContain('left the key table');
-    expect(captureException.mock.calls[0][1]).toMatchObject({ tags: { off_heap_degradation: 'partitions.intern_evicted.games' } });
+    expect(captureException.mock.calls[0][1]).toMatchObject({ tags: { cellar_degradation: 'partitions.intern_evicted.games' } });
   });
 });

@@ -156,9 +156,9 @@ describe('createReadSurface — getValue reports what it depends on to the track
     expect(depsOf(() => read.getValue({ key: '' }))).toEqual([]);
   });
 
-  it('and readMany reports the presence of every live partition while skipping the dead ones', () => {
+  it('and readAcross reports the presence of every live partition while skipping the dead ones', () => {
     const harness = makeHarness();
-    const read = harness.surface.readMany<{ keys: string[] }, Slice>({
+    const read = harness.surface.readAcross<{ keys: string[] }, Slice>({
       partitions: (args: { keys: string[] }) => args.keys,
       select: () => ({}),
       empty: {},
@@ -715,11 +715,11 @@ describe('createReadSurface — absent args (nothing to read yet)', () => {
     expect(harness.spies.ensure).toEqual([]);
   });
 
-  it('applies to readMany as well, spanning no partitions at all', () => {
+  it('applies to readAcross as well, spanning no partitions at all', () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
     const partitions = jest.fn((args: { keys: string[] }) => args.keys);
-    const list = harness.surface.readMany<{ keys: string[] }, Slice[]>({
+    const list = harness.surface.readAcross<{ keys: string[] }, Slice[]>({
       partitions,
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
       empty: EMPTY_LIST,
@@ -735,11 +735,11 @@ describe('createReadSurface — absent args (nothing to read yet)', () => {
   });
 });
 
-describe('createReadSurface — readMany (a read spanning a variable partition set)', () => {
+describe('createReadSurface — readAcross (a read spanning a variable partition set)', () => {
   const manyHarness = () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
-    const list = createReadSurface(harness.kernel).readMany<{ keys: string[] }, Slice[]>({
+    const list = createReadSurface(harness.kernel).readAcross<{ keys: string[] }, Slice[]>({
       partitions: (args) => args.keys,
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
       empty: EMPTY_LIST,
@@ -835,7 +835,7 @@ describe('createReadSurface — readMany (a read spanning a variable partition s
   it('primes a set it is not yet reading, since a disabled read still wants its data on the way', () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
-    const list = harness.surface.readMany<{ keys: string[]; reading: boolean }, Slice[]>({
+    const list = harness.surface.readAcross<{ keys: string[]; reading: boolean }, Slice[]>({
       partitions: (args) => args.keys,
       enabled: (args) => args.reading,
       select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
