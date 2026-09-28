@@ -74,6 +74,7 @@ export const itemStore = defineSqliteStore({
     });
     const push = cellar.createPushIngest({
       idOf: (item: Item) => item.id,
+      partitionsOf: (item: Item) => [{ league: item.team ?? '' }],
       toRows: (key, batch) => batch.map((item) => ({ ...itemShred.row(item, { league: key }), partition_key: key })),
       onWrite: cellar.clearEtag,
     });

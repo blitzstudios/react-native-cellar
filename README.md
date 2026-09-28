@@ -316,7 +316,7 @@ Everything below is exported from the package root.
 | `createSqliteRowTable` | the `RowTable` over any SQLite connection; `{ temporary: true }` builds it in the connection's temp schema |
 | `RowTable` | `init`, three writes (`upsert`, `overwrite`, `shred`) that each return the entities they changed, reads (`getOne`, `find`, `findIn`, `has`, `entityIdsWhere`), the ETag pair (`getMeta`, `setMeta`) and each partition's stored description (`getMetaRecord`) |
 | `ChangeSet`, `ALL_ENTITIES`, `NO_CHANGES` | what a write reports: the entities it changed, every entity when it cannot say, or none |
-| `readRows`, `pinnedReader` | batch reads over a connection, and the opt-out that pins one to a single handle |
+| `readRows`, `readRowsIn`, `pinnedReader` | reads over a connection (`readRowsIn` splits an `IN (…)` over a long list into as many statements as SQLite's bind limit needs), and the opt-out that pins one to a single handle |
 
 The three writes differ in what they delete. `upsert` merges by primary key and removes nothing, which is what a
 socket delta wants, so its rows carry their own `partition_key`. `overwrite(where, rows)` makes the partition matching
@@ -332,7 +332,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 | export | what it gives you |
 | --- | --- |
 | a store's `fetch` | `query` and `toRows`, plus `canShredNatively`; leave it off for a store fed only by pushes |
-| `cellar.createPushIngest({ idOf, toRows, onWrite? })` | rows arriving by socket, queued by the partition's description: buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
+| `cellar.createPushIngest({ idOf, toRows, partitionsOf, onWrite? })` | rows arriving by socket: each item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
 | `NativeShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS. A store's programs get the partition's key as bind 0, from Cellar, which also deletes the partition's old rows by it; `binds(partition)` fills bind 1 onward |
 | `RAW_TEXT_RESPONSE_TRANSFORM` | keeps a client from `JSON.parse`-ing a body Cellar wants as text |
 

@@ -1,5 +1,5 @@
 import { createSqliteRowTable, RowTableSchema } from '../..';
-import { pinnedReader, readRows, runBatch, runBatchAsync, SqliteConnection } from '../../table/connection';
+import { pinnedReader, readRows, readRowsIn, runBatch, runBatchAsync, SqliteConnection } from '../../table/connection';
 import { createSqlJsConnection, initSqlJs, SqlJsConnection } from '../../testing/sqljs_connection';
 import type { NativeShredSpec } from '../../write/shred_spec';
 
@@ -146,6 +146,37 @@ describe('readRows — the dedicated read handle', () => {
 
     expect(readRows<Thing>(conn, 'SELECT id FROM things;')).toEqual([{ id: 'a' }]);
     conn.close();
+  });
+});
+
+describe('readRowsIn', () => {
+  beforeAll(async () => {
+    await initSqlJs();
+  });
+
+  it('reads more values than one statement can bind, in as many statements as it takes', () => {
+    const conn = createSqlJsConnection();
+    conn.execute('CREATE TABLE t (id INTEGER, grp TEXT);');
+    const ids = Array.from({ length: 2500 }, (_, index) => index);
+    runBatch(conn, ids.map((id) => ['INSERT INTO t VALUES (?, ?);', [id, id % 2 ? 'odd' : 'even']]));
+    const execute = jest.spyOn(conn, 'execute');
+
+    const rows = readRowsIn<{ id: number }>(conn, (list) => `SELECT id FROM t WHERE grp = ? AND id IN (${list});`, ids, { before: ['odd'] });
+
+    expect(rows).toHaveLength(1250);
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it('reads in smaller statements when given a chunk', () => {
+    const conn = createSqlJsConnection();
+    conn.execute('CREATE TABLE t (id INTEGER);');
+    runBatch(conn, [0, 1, 2, 3, 4].map((id) => ['INSERT INTO t VALUES (?);', [id]]));
+    const execute = jest.spyOn(conn, 'execute');
+
+    const rows = readRowsIn<{ id: number }>(conn, (list) => `SELECT id FROM t WHERE id IN (${list});`, [0, 1, 2, 3, 4], { chunk: 2 });
+
+    expect(rows.map((row) => row.id)).toEqual([0, 1, 2, 3, 4]);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 });
 

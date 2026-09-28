@@ -26,7 +26,7 @@ export type { ChangeSet, WriteResult } from './table/change_set';
 export { ALL_ENTITIES, NO_CHANGES } from './table/change_set';
 export { createSqliteRowTable } from './table/sqlite';
 export type { SqliteConnection, PinnedConnection } from './table/connection';
-export { readRows, pinnedReader } from './table/connection';
+export { readRows, readRowsIn, pinnedReader } from './table/connection';
 export type { RawQuery } from './write/fetch_ingest';
 export { RAW_TEXT_RESPONSE_TRANSFORM } from './write/fetch_ingest';
 export type { ShredColumn, ShredColumns, ShredColumnsBase, NativeShredColumns, RowOf } from './write/shred_columns';

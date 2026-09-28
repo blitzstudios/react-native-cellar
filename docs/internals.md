@@ -136,10 +136,11 @@ store is reaching past its entry point; import it from its own module only if yo
   partition a fetch is midway through deleting and rewriting — so this buffers per partition, dedupes by
   `idOf`, writes in bounded chunks off the render path, requeues a failed chunk without overwriting anything
   newer, and **holds** a partition for the length of a fetch. A store creates one from its build context, giving it
-  `idOf`, `toRows` and optionally `onWrite`; Cellar supplies the table, the partition's rows and the bumps, holds the
+  `idOf`, `toRows`, `partitionsOf` (the partitions an item may belong to) and optionally `onWrite`; Cellar supplies the table, the partition's rows and the bumps, holds the
   partition's pushes whenever it is fetched, and retires its ETag at most once every two minutes after a push writes
   to it, so a refetch brings a full body without every refetch during a live stream being one. You get `queue`, which
-  takes the partition's description. What it does inside, and why each part of
+  takes an item and writes it to the partitions its `partitionsOf` names that hold rows, or to all of them when none
+  does, since a push can be a partition's only source. What it does inside, and why each part of
   it is load-bearing, is [below](#the-buffered-flush-behind-createpushingest).
 - **`rowsOf(table)`** (`row_shaping.ts`) — a hydration's whole read side: ask it for rows, then say what shape you
   want them in. `rows.where(filter, opts)` and `rows.in(filter, column, values)` are the two queries, `.given(rows)`

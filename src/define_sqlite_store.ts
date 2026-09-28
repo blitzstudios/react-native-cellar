@@ -103,7 +103,12 @@ export type StoreFetchSpec<Row extends RowShape, Partition> = Omit<PartitionFetc
  * How a store's pushed items become rows: {@linkcode PushIngestConfig}, less what Cellar supplies (the table, the
  * partition's rows, and the version bumps). Each row must carry its partition's `partition_key`.
  */
-export type StorePushSpec<Item, Row extends RowShape> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'toRows' | 'chunk' | 'retryDelayMs'> & {
+export type StorePushSpec<Item, Row extends RowShape, Partition> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'toRows' | 'chunk' | 'retryDelayMs'> & {
+  /**
+   * The partitions an item may belong to, as descriptions, such as a stat's week and its game. The item is written to
+   * those that already hold rows, or to all of them when none does, since a push can be a partition's only source.
+   */
+  partitionsOf: (item: Item) => readonly Partition[];
   /** {@linkcode PushIngestConfig.onWrite}: called for each partition a write changed, for anything the store does after one. */
   onWrite?: (key: string) => void;
   /**
@@ -117,10 +122,11 @@ export type StorePushSpec<Item, Row extends RowShape> = Pick<PushIngestConfig<It
 /** A store's buffer for pushed items, as {@linkcode CellarContext.createPushIngest} creates it. */
 export interface StorePushIngest<Item, Partition> {
   /**
-   * Queues one pushed item for the partition the description names. Queued items are written together, soon after and
-   * outside the current render; an item replaces any queued item with the same id.
+   * Queues one pushed item for the partitions its {@linkcode StorePushSpec.partitionsOf | partitionsOf} names that
+   * hold rows, or for all of them when none does. Queued items are written together, soon after and outside the
+   * current render; an item replaces any queued item with the same id.
    */
-  queue: (partition: Partition, item: Item) => void;
+  queue: (item: Item) => void;
 }
 
 /**
@@ -146,7 +152,7 @@ export interface CellarContext<Row extends RowShape, Args, Partition, Caps> {
   partitionOf: (key: string) => Partition;
   /** The keys of the partitions this session has named, most recently used last. */
   keys: () => IterableIterator<string>;
-  /** Whether the partition a description names holds rows, such as to route a push to the partitions already loaded. */
+  /** Whether the partition a description names holds rows. */
   has: (partition: Partition) => boolean;
   /** The partition's version, which a write that changes it bumps. */
   versionOf: (key: string) => number;
@@ -158,11 +164,12 @@ export interface CellarContext<Row extends RowShape, Args, Partition, Caps> {
   /** Discards the partition's ETag, so its next fetch brings a whole body. */
   clearEtag: (key: string) => void;
   /**
-   * Creates the store's buffer for rows that arrive by socket push rather than by fetch: its `queue` takes an item and
-   * the key of the partition it belongs to. A partition's pushes wait while it is being fetched, since the fetch
-   * replaces the partition and would overwrite them with the older response.
+   * Creates the store's buffer for rows that arrive by socket push rather than by fetch: its `queue` takes an item, and
+   * {@linkcode StorePushSpec.partitionsOf | partitionsOf} says which partitions it belongs in. A partition's pushes wait
+   * while it is being fetched, since the fetch replaces the partition and would overwrite them with the older response,
+   * and a push retires the partition's ETag, at most once per interval.
    */
-  createPushIngest: <Item>(spec: StorePushSpec<Item, Row>) => StorePushIngest<Item, Partition>;
+  createPushIngest: <Item>(spec: StorePushSpec<Item, Row, Partition>) => StorePushIngest<Item, Partition>;
   /** The column values that pick out the partition's rows: `{ partition_key: key }`. */
   where: (key: string) => Partial<Row>;
   /** The store's row table, for a read that runs its own query. */
@@ -455,7 +462,13 @@ export function defineSqliteStore<
           },
         });
         holds.push(push.hold);
-        return { queue: (partition, item) => push.queue(partitions.keyOf(partition), item) };
+        return {
+          queue: (item) => {
+            const keys = spec.partitionsOf(item).map(partitions.keyOf);
+            const loaded = keys.filter(partitions.has);
+            for (const key of loaded.length ? loaded : keys) push.queue(key, item);
+          },
+        };
       },
       where,
       table,

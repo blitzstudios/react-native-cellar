@@ -176,7 +176,7 @@ describe('defineSqliteStore — pushes', () => {
         toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
       },
       build: (cellar) => {
-        const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
+        const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, partitionsOf: () => [NFL_2025], toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
         return { reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) }, push: { queue: push.queue } };
       },
     });
@@ -186,7 +186,7 @@ describe('defineSqliteStore — pushes', () => {
 
     const fetching = surface.lifecycle.fetch(NFL_2025);
     await Promise.resolve();
-    surface.push.queue(NFL_2025, { team: 'c', sport: 'nfl' });
+    surface.push.queue({ team: 'c', sport: 'nfl' });
     await settle();
     expect(teams()).toEqual([]);
 
@@ -209,7 +209,7 @@ describe('defineSqliteStore — pushes and ETags', () => {
         toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
       },
       build: (cellar) => {
-        const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
+        const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, partitionsOf: () => [NFL_2025], toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
         return {
           reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) },
           push: { queue: push.queue, loaded: (season: Season) => (loaded = cellar.has(season)) },
@@ -226,14 +226,50 @@ describe('defineSqliteStore — pushes and ETags', () => {
     await surface.lifecycle.fetch(NFL_2025);
     expect(table.getMeta({ partition_key: 'nfl:2025' })).toBe('W/"1"');
 
-    surface.push.queue(NFL_2025, { team: 'b', sport: 'nfl' });
+    surface.push.queue({ team: 'b', sport: 'nfl' });
     await settle();
     expect(table.getMeta({ partition_key: 'nfl:2025' })).toBeUndefined();
 
     table.setMeta({ partition_key: 'nfl:2025' }, 'W/"2"');
-    surface.push.queue(NFL_2025, { team: 'c', sport: 'nfl' });
+    surface.push.queue({ team: 'c', sport: 'nfl' });
     await settle();
     expect(table.getMeta({ partition_key: 'nfl:2025' })).toBe('W/"2"');
+  });
+
+  it('writes a push to the partitions it names that hold rows, or to all of them when none does', async () => {
+    const store = defineSqliteStore({
+      name: 'routed_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'] },
+      fetch: {
+        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"}]' }) }),
+        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      },
+      build: (cellar) => {
+        const push = cellar.createPushIngest({
+          idOf: (game: Game) => game.team,
+          partitionsOf: () => [NFL_2025, NFL_2024],
+          toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })),
+        });
+        return { reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) }, push: { queue: push.queue } };
+      },
+    });
+    const over = () => {
+      const { surface, table } = store.testing.over(createSqlJsConnection());
+      const teams = (key: string) => table.find({ partition_key: key }, { orderBy: 'team' }).map((row) => row.team);
+      return { surface, teams };
+    };
+
+    const loaded = over();
+    await loaded.surface.lifecycle.fetch(NFL_2025);
+    loaded.surface.push.queue({ team: 'y', sport: 'nfl' });
+    await settle();
+    expect([loaded.teams('nfl:2025'), loaded.teams('nfl:2024')]).toEqual([['a', 'y'], []]);
+
+    const unloaded = over();
+    unloaded.surface.push.queue({ team: 'x', sport: 'nfl' });
+    await settle();
+    expect([unloaded.teams('nfl:2025'), unloaded.teams('nfl:2024')]).toEqual([['x'], ['x']]);
   });
 
   it('answers whether a partition holds rows from its description', async () => {

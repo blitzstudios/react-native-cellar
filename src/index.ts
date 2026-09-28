@@ -40,7 +40,7 @@ export type { ChangeSet, WriteResult } from './table/change_set';
 export { ALL_ENTITIES, NO_CHANGES } from './table/change_set';
 export { createSqliteRowTable } from './table/sqlite';
 export type { SqliteConnection, PinnedConnection } from './table/connection';
-export { readRows, pinnedReader } from './table/connection';
+export { readRows, readRowsIn, pinnedReader } from './table/connection';
 
 // Getting rows in: a fetch a partition drives, and a socket feed a store drives itself.
 export type { RawQuery } from './write/fetch_ingest';

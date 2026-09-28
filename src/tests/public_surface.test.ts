@@ -38,9 +38,9 @@ describe('the core entry point', () => {
       'StorePushIngest', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema', 'TrackedValueOptions', 'VersionAtom',
       'WindowedBlock', 'WriteResult', 'byEntity', 'byPartition', 'configureCellar', 'createOnceGuard',
       'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
-      'makeResult', 'pairRead', 'pinnedReader', 'readRows', 'reportStoreDegradation', 'rowsOf', 'runSubscribed',
-      'runTracked', 'shallowEqualArray', 'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue',
-      'useTrackedValue',
+      'makeResult', 'pairRead', 'pinnedReader', 'readRows', 'readRowsIn', 'reportStoreDegradation', 'rowsOf',
+      'runSubscribed', 'runTracked', 'shallowEqualArray', 'shallowEqualRecord', 'shallowEqualStruct',
+      'shallowEqualValue', 'useTrackedValue',
     ]);
   });
 

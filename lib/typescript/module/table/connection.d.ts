@@ -61,4 +61,15 @@ export declare function guardedConnection(conn: SqliteConnection, onFatal: (erro
  * of a `TEMP` table the caller just created must be passed a {@linkcode PinnedConnection}.
  */
 export declare function readRows<T>(conn: SqliteConnection, sql: string, params?: ReadonlyArray<string | number | null>): T[];
+/**
+ * Runs a `SELECT` over `values` in as many statements as it takes, and returns every row, in the order the statements
+ * ran. `sql` is handed the placeholders for one chunk, such as `?, ?, ?`, to put inside its `IN (…)`; `before` binds
+ * ahead of them and `after` behind. A chunk holds `chunk` values, or as many as SQLite's bind limit leaves room for
+ * when that's fewer. A smaller `chunk` keeps each native result small when rows are wide.
+ */
+export declare function readRowsIn<T>(conn: SqliteConnection, sql: (placeholders: string) => string, values: ReadonlyArray<string | number>, opts?: {
+    before?: ReadonlyArray<string | number | null>;
+    after?: ReadonlyArray<string | number | null>;
+    chunk?: number;
+}): T[];
 //# sourceMappingURL=connection.d.ts.map
