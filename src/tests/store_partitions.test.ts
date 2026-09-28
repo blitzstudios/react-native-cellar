@@ -36,19 +36,19 @@ const GAME_SPEC: ShredSpec = {
 const NATIVE: NativeShredSpec<Season> = { specs: { all: GAME_SPEC }, variant: () => 'all', binds: ({ sport }) => [sport] };
 
 function gameStore(
-  over: { native?: boolean; internMax?: number; forget?: () => void; toPartition?: (args: Season) => Season; toKey?: (season: Season) => string } = {},
+  over: { native?: boolean; internMax?: number; forget?: () => void; fromArgs?: (args: Season) => Season; toKey?: (season: Season) => string } = {},
 ) {
   const queried: Season[] = [];
   const store = defineSqliteStore({
     name: 'games_store',
     schema: SCHEMA,
-    partition: { fields: ['sport', 'season'], toPartition: over.toPartition, toKey: over.toKey },
+    partition: { fields: ['sport', 'season'], fromArgs: over.fromArgs, toKey: over.toKey },
     fetch: {
       query: (season: Season, etag?: string) => {
         queried.push(season);
         return { queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]', etag: etag ? undefined : 'W/"1"' }) };
       },
-      parse: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
     },
     nativeShredSpec: over.native ? NATIVE : undefined,
     internMax: over.internMax,
@@ -100,7 +100,7 @@ describe('defineSqliteStore — partitions', () => {
 
   it('derives a description’s key once when the store hands back the same description, however often it is named', () => {
     const toKey = jest.fn((season: Season) => `${season.sport}/${season.season}`);
-    const { surface } = gameStore({ toPartition: () => NFL_2025, toKey });
+    const { surface } = gameStore({ fromArgs: () => NFL_2025, toKey });
 
     surface.lifecycle.has(NFL_2025);
     surface.lifecycle.getVersion(NFL_2025);
@@ -143,7 +143,7 @@ describe('defineSqliteStore — caches', () => {
       partition: { fields: ['sport', 'season'] },
       fetch: {
         query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]' }) }),
-        parse: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
       },
       build: (cellar) => {
         const { teams } = cellar.defineCaches({ teams: byEntity({ max: 8, fromRows: ([row], season) => `${row.team}@${season.season}` }) });
@@ -173,7 +173,7 @@ describe('defineSqliteStore — pushes', () => {
       partition: { fields: ['sport', 'season'] },
       fetch: {
         query: (_season: Season) => ({ queryFn: () => new Promise<{ data: string }>((resolve) => (respond = resolve)) }),
-        parse: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
       },
       build: (cellar) => {
         const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
@@ -186,7 +186,7 @@ describe('defineSqliteStore — pushes', () => {
 
     const fetching = surface.lifecycle.fetch(NFL_2025);
     await Promise.resolve();
-    surface.push.queue('nfl:2025', { team: 'c', sport: 'nfl' });
+    surface.push.queue(NFL_2025, { team: 'c', sport: 'nfl' });
     await settle();
     expect(teams()).toEqual([]);
 
@@ -194,6 +194,56 @@ describe('defineSqliteStore — pushes', () => {
     await fetching;
     await settle();
     expect(teams()).toEqual(['a', 'c']);
+  });
+});
+
+describe('defineSqliteStore — pushes and ETags', () => {
+  function pushedStore() {
+    let loaded = false;
+    const store = defineSqliteStore({
+      name: 'etag_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'] },
+      fetch: {
+        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"}]', etag: 'W/"1"' }) }),
+        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      },
+      build: (cellar) => {
+        const push = cellar.createPushIngest({ idOf: (game: Game) => game.team, toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) });
+        return {
+          reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) },
+          push: { queue: push.queue, loaded: (season: Season) => (loaded = cellar.has(season)) },
+        };
+      },
+    });
+    const { surface, table } = store.testing.over(createSqlJsConnection());
+    return { surface, table, wasLoaded: () => loaded };
+  }
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it('retires a partition’s ETag when a push writes to it, once per interval however many pushes land', async () => {
+    const { surface, table } = pushedStore();
+    await surface.lifecycle.fetch(NFL_2025);
+    expect(table.getMeta({ partition_key: 'nfl:2025' })).toBe('W/"1"');
+
+    surface.push.queue(NFL_2025, { team: 'b', sport: 'nfl' });
+    await settle();
+    expect(table.getMeta({ partition_key: 'nfl:2025' })).toBeUndefined();
+
+    table.setMeta({ partition_key: 'nfl:2025' }, 'W/"2"');
+    surface.push.queue(NFL_2025, { team: 'c', sport: 'nfl' });
+    await settle();
+    expect(table.getMeta({ partition_key: 'nfl:2025' })).toBe('W/"2"');
+  });
+
+  it('answers whether a partition holds rows from its description', async () => {
+    const { surface, wasLoaded } = pushedStore();
+    surface.push.loaded(NFL_2025);
+    expect(wasLoaded()).toBe(false);
+
+    await surface.lifecycle.fetch(NFL_2025);
+    surface.push.loaded(NFL_2025);
+    expect(wasLoaded()).toBe(true);
   });
 });
 

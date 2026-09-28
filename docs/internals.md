@@ -81,7 +81,7 @@ store is reaching past its entry point; import it from its own module only if yo
     partition: { fields: ['groupId', 'itemType'] },
     fetch: {
       query: (group: MyGroup, etag?: string) => buildMyRawQuery(group, etag),
-      parse: (group, rawJson) => buildMyRows(group, JSON.parse(rawJson)),
+      toRows: (group, rawJson) => buildMyRows(group, JSON.parse(rawJson)),
     },
     build: (cellar) => ({ reads: { … } }),
   });
@@ -96,17 +96,17 @@ store is reaching past its entry point; import it from its own module only if yo
   The key locates the partition for every operation Cellar runs on the store's behalf, because every row carries it:
   the table gets a `partition_key` column first, the primary key is led by it (a table with no primary key keeps
   none), and an index covers it with the entity id. A replace (`overwrite`, `shred`) fills in each row's
-  `partition_key` from its `where`, so a store's `parse` never builds it; the native shred gets it as bind 0 and
+  `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0 and
   deletes by it, so a store's programs bind their own values from 1. `upsert` fills nothing in, so a push's rows
   carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
-  `partition.toPartition` turns a read's args into the description where they aren't the description itself — a
+  `partition.fromArgs` turns a read's args into the description where they aren't the description itself — a
   sport that shares another sport's players, a locator a screen is still filling in. It may answer `null` for args
   that name no partition, and such a read is off, primes nothing, and returns its `empty`, the same as a field that
   has not arrived. Cellar keeps each description for the most recent `internMax` keys (512 by default), so a fetch
   gets the description back from the key; one past that is read back from the side table. A store whose
-  `toPartition` hands back the same object for the same args has its key derived once, through a `WeakMap`; in dev
+  `fromArgs` hands back the same object for the same args has its key derived once, through a `WeakMap`; in dev
   that object is frozen, since a memoized key is only sound while the description holds still.
 
   `fetch` is the store's real fetch behaviour and nothing else: the request, and how a body becomes rows.
@@ -136,8 +136,10 @@ store is reaching past its entry point; import it from its own module only if yo
   partition a fetch is midway through deleting and rewriting — so this buffers per partition, dedupes by
   `idOf`, writes in bounded chunks off the render path, requeues a failed chunk without overwriting anything
   newer, and **holds** a partition for the length of a fetch. A store creates one from its build context, giving it
-  `idOf`, `toRows` and optionally `onWrite`; Cellar supplies the table, the partition's rows and the bumps, and holds
-  the partition's pushes whenever it is fetched. You get `queue` and `hold`. What it does inside, and why each part of
+  `idOf`, `toRows` and optionally `onWrite`; Cellar supplies the table, the partition's rows and the bumps, holds the
+  partition's pushes whenever it is fetched, and retires its ETag at most once every two minutes after a push writes
+  to it, so a refetch brings a full body without every refetch during a live stream being one. You get `queue`, which
+  takes the partition's description. What it does inside, and why each part of
   it is load-bearing, is [below](#the-buffered-flush-behind-createpushingest).
 - **`rowsOf(table)`** (`row_shaping.ts`) — a hydration's whole read side: ask it for rows, then say what shape you
   want them in. `rows.where(filter, opts)` and `rows.in(filter, column, values)` are the two queries, `.given(rows)`

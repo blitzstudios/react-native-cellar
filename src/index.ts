@@ -18,7 +18,7 @@ export { configureCellar } from './runtime';
 
 // Declaring a store.
 export { defineSqliteStore } from './define_sqlite_store';
-export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushSpec, StoreSurface } from './define_sqlite_store';
+export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushIngest, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { PartitionLifecycle } from './define_partitions';
 
 // What a read hands back.
@@ -45,7 +45,6 @@ export { readRows, pinnedReader } from './table/connection';
 // Getting rows in: a fetch a partition drives, and a socket feed a store drives itself.
 export type { RawQuery } from './write/fetch_ingest';
 export { RAW_TEXT_RESPONSE_TRANSFORM } from './write/fetch_ingest';
-export type { PushIngest } from './write/push_ingest';
 export type { ShredColumn, ShredColumns, ShredColumnsBase, NativeShredColumns, RowOf } from './write/shred_columns';
 export { defineShredColumns } from './write/shred_columns';
 export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';

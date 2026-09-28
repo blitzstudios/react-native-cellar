@@ -30,7 +30,7 @@ const SCHEMA: RowTableSchema<EventRow> = {
 const US: EventKey = { region: 'us', year: '2025', itemType: 'regular' };
 const OTHER: EventKey = { ...US, year: '2024' };
 
-function makeEvents(over: { table?: RowTable<EventRow>; parse?: (key: EventKey, raw: string) => EventRow[]; body?: string; internMax?: number } = {}) {
+function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey, raw: string) => EventRow[]; body?: string; internMax?: number } = {}) {
   const table = over.table ?? createTestRowTable(SCHEMA);
   table.init();
   const version = createVersionAtom('define_partitions_test');
@@ -50,8 +50,8 @@ function makeEvents(over: { table?: RowTable<EventRow>; parse?: (key: EventKey, 
     },
     fetch: {
       query,
-      parse:
-        over.parse ??
+      toRows:
+        over.toRows ??
         ((key, raw) => (JSON.parse(raw) as string[]).map((id) => ({ region: key.region, year: key.year, item_type: key.itemType, event_id: id }))),
     },
     onChanged: (key, version, changes) => {
@@ -200,7 +200,7 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
       key: { fields: ['region', 'year', 'itemType'], where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }) },
       fetch: {
         query: () => ({ queryFn: async () => ({ data: '{"only":"one"}' }) }),
-        parse: (key) => [{ region: key.region, year: key.year, item_type: key.itemType, event_id: 'one' }],
+        toRows: (key) => [{ region: key.region, year: key.year, item_type: key.itemType, event_id: 'one' }],
         canShredNatively: () => false,
       },
     });
@@ -308,7 +308,7 @@ describe('definePartitions — a store whose key is an opaque string', () => {
       key: { where: (key) => ({ partition_key: key }) },
       fetch: {
         query: () => ({ queryFn: async () => ({ data: '["a"]', etag: 'W/"b"' }) }),
-        parse: (key, raw) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
+        toRows: (key, raw) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
       },
     });
     return { blobs, table };
@@ -377,7 +377,7 @@ describe('definePartitions — a store whose partition is a record, interned to 
           }
           return { queryFn: async () => ({ data: '["a","b"]' }) };
         },
-        parse: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
+        toRows: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
         canShredNatively: (partition) => {
           shredAsked.push(partition);
           return false;
@@ -519,7 +519,7 @@ describe('definePartitions — args that resolve to no partition at all', () => 
           queried.push(partition);
           return { queryFn: async () => ({ data: '["a"]' }) };
         },
-        parse: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
+        toRows: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
         canShredNatively: () => false,
       },
     });

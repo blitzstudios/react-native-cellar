@@ -20,7 +20,8 @@ import type { Loose, pairRead } from './read/facade';
 import { rowsOf, RowSet } from './read/row_shaping';
 import type { ChangeSet } from './table/change_set';
 import { createPushIngest } from './write/push_ingest';
-import type { PushIngest, PushIngestConfig } from './write/push_ingest';
+import type { PushIngestConfig } from './write/push_ingest';
+import { createEtagRetirement } from './write/etag_retirement';
 import type { bindSqliteStore } from './nitro/nitro_connection';
 
 /**
@@ -60,14 +61,14 @@ export interface StoreSurface {
  *
  * Most stores name {@linkcode PartitionSpec.fields | fields}: the args fields that are the description, such as
  * `['sport', 'season', 'seasonType']`, and the key is their values joined with `:`, such as `nfl:2025:regular`. A store
- * whose args need translating into a description names {@linkcode PartitionSpec.toPartition | toPartition}, and one
+ * whose args need translating into a description names {@linkcode PartitionSpec.fromArgs | fromArgs}, and one
  * whose descriptions don't fit in a few small fields names {@linkcode PartitionSpec.toKey | toKey}.
  */
 export type PartitionSpec<Args, Partition> =
   | {
       /**
        * The description's fields, in key order. A read's args carry them unless
-       * {@linkcode PartitionSpec.toPartition | toPartition} builds the description instead, and a read whose args are
+       * {@linkcode PartitionSpec.fromArgs | fromArgs} builds the description instead, and a read whose args are
        * missing one of them (undefined, null or `''`) reads nothing and fetches nothing until it has a value.
        */
       fields: readonly (keyof Partition & string)[];
@@ -77,16 +78,17 @@ export type PartitionSpec<Args, Partition> =
        * them: return `null` or `undefined` until they are complete, and the read reads nothing and fetches nothing
        * until then. Returning the same object for the same args lets Cellar derive its key once.
        */
-      toPartition?: (args: Loose<Args>) => Partition | null | undefined;
+      fromArgs?: (args: Loose<Args>) => Partition | null | undefined;
       /**
        * Turns a description into its key, where {@linkcode PartitionSpec.fields | fields} joined with `:` would not do.
-       * It must give equal keys for equal descriptions and different keys for different ones.
+       * It must give equal keys for equal descriptions and different keys for different ones. Nothing turns a key back
+       * into a description: Cellar keeps each description under its key itself.
        */
       toKey?: (partition: Partition) => string;
     }
   | {
       fields?: undefined;
-      toPartition: (args: Loose<Args>) => Partition | null | undefined;
+      fromArgs: (args: Loose<Args>) => Partition | null | undefined;
       toKey: (partition: Partition) => string;
     };
 
@@ -102,9 +104,24 @@ export type StoreFetchSpec<Row extends RowShape, Partition> = Omit<PartitionFetc
  * partition's rows, and the version bumps). Each row must carry its partition's `partition_key`.
  */
 export type StorePushSpec<Item, Row extends RowShape> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'toRows' | 'chunk' | 'retryDelayMs'> & {
-  /** {@linkcode PushIngestConfig.onWrite}: called for each partition a write changed, such as to clear its ETag. */
+  /** {@linkcode PushIngestConfig.onWrite}: called for each partition a write changed, for anything the store does after one. */
   onWrite?: (key: string) => void;
+  /**
+   * How often a partition's pushes retire its ETag, in ms; two minutes by default. A push changes rows the ETag vouched
+   * for, so it has to go, or the next fetch is answered 304 and whatever the socket missed is never corrected; retiring
+   * it on every push would make every refetch during a live stream a full body.
+   */
+  etagRetireIntervalMs?: number;
 };
+
+/** A store's buffer for pushed items, as {@linkcode CellarContext.createPushIngest} creates it. */
+export interface StorePushIngest<Item, Partition> {
+  /**
+   * Queues one pushed item for the partition the description names. Queued items are written together, soon after and
+   * outside the current render; an item replaces any queued item with the same id.
+   */
+  queue: (partition: Partition, item: Item) => void;
+}
 
 /**
  * What a store's {@linkcode SqliteStoreConfig.build | build} gets, by convention named `cellar`: the functions to declare
@@ -129,8 +146,8 @@ export interface CellarContext<Row extends RowShape, Args, Partition, Caps> {
   partitionOf: (key: string) => Partition;
   /** The keys of the partitions this session has named, most recently used last. */
   keys: () => IterableIterator<string>;
-  /** Whether the partition holds rows. */
-  has: (key: string) => boolean;
+  /** Whether the partition a description names holds rows, such as to route a push to the partitions already loaded. */
+  has: (partition: Partition) => boolean;
   /** The partition's version, which a write that changes it bumps. */
   versionOf: (key: string) => number;
   /**
@@ -145,7 +162,7 @@ export interface CellarContext<Row extends RowShape, Args, Partition, Caps> {
    * the key of the partition it belongs to. A partition's pushes wait while it is being fetched, since the fetch
    * replaces the partition and would overwrite them with the older response.
    */
-  createPushIngest: <Item>(spec: StorePushSpec<Item, Row>) => PushIngest<Item, string>;
+  createPushIngest: <Item>(spec: StorePushSpec<Item, Row>) => StorePushIngest<Item, Partition>;
   /** The column values that pick out the partition's rows: `{ partition_key: key }`. */
   where: (key: string) => Partial<Row>;
   /** The store's row table, for a read that runs its own query. */
@@ -174,7 +191,7 @@ export interface SqliteStoreConfig<Row extends RowShape, Args, Partition extends
   fetch?: StoreFetchSpec<Row, Partition>;
   /**
    * The store's native shred programs, which let the C++ shredder write a fetched response's rows without building JS
-   * objects for them. Omit it to always build rows in JS with the fetch's {@linkcode PartitionFetchSpec.parse | parse}.
+   * objects for them. Omit it to always build rows in JS with the fetch's {@linkcode PartitionFetchSpec.toRows | toRows}.
    */
   nativeShredSpec?: NativeShredSpec<Partition>;
   /**
@@ -378,8 +395,8 @@ export function defineSqliteStore<
   const extra = (more?: Record<string, unknown>) => ({ store: config.name, table: schema.table, ...more });
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
   const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
-  const { fields, toPartition, toKey } = config.partition;
-  const partitionOfArgs = toPartition ?? partitionFromFields<Args, Partition>(fields!);
+  const { fields, fromArgs, toKey } = config.partition;
+  const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
   const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
 
   /** Declares the partitions over `table` and hands the store its context. */
@@ -419,14 +436,26 @@ export function defineSqliteStore<
       keyOf: partitions.keyOf,
       partitionOf: partitions.partitionOf,
       keys: partitions.internedKeys,
-      has: partitions.has,
+      has: (partition) => partitions.has(partitions.keyOf(partition)),
       versionOf: partitions.versionOf,
       bump: partitions.bump,
       clearEtag: partitions.clearEtag,
       createPushIngest: (spec) => {
-        const push = createPushIngest({ ...spec, name: config.name, table, where, bump: partitions.bump, onWrite: spec.onWrite ?? NO_WRITE_HOOK });
+        const retireEtag = createEtagRetirement(partitions.clearEtag, spec.etagRetireIntervalMs);
+        const onWrite = spec.onWrite;
+        const push = createPushIngest({
+          ...spec,
+          name: config.name,
+          table,
+          where,
+          bump: partitions.bump,
+          onWrite: (key) => {
+            retireEtag(key);
+            onWrite?.(key);
+          },
+        });
         holds.push(push.hold);
-        return push;
+        return { queue: (partition, item) => push.queue(partitions.keyOf(partition), item) };
       },
       where,
       table,
@@ -606,9 +635,7 @@ export function defineSqliteStore<
   };
 }
 
-const NO_WRITE_HOOK = (): void => undefined;
-
-/** The default {@linkcode PartitionSpec.toPartition | toPartition}: the args' own values of the fields, once all have one. */
+/** The default {@linkcode PartitionSpec.fromArgs | fromArgs}: the args' own values of the fields, once all have one. */
 function partitionFromFields<Args, Partition>(fields: readonly string[]): (args: Loose<Args>) => Partition | null {
   return (args) => {
     const partition: Record<string, unknown> = {};

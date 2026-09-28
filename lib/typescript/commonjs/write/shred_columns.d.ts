@@ -90,7 +90,7 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
     /**
      * Builds one table row from one element of a response body, in JS: runs every column's
      * {@linkcode ShredColumn.js | js} function on the element and `ctx`, and returns an object with each column's value.
-     * A store's {@linkcode PartitionFetchSpec.parse | parse} uses it for every element, which is how rows are built on
+     * A store's {@linkcode PartitionFetchSpec.toRows | toRows} uses it for every element, which is how rows are built on
      * web, in tests, and on a device when the native shred can't run.
      */
     row: (src: Src, ctx: Ctx) => RowOf<Columns>;

@@ -50,7 +50,7 @@ function harness(over: { table?: RowTable<PlayerRow>; max?: number; fromRows?: (
     table,
     version,
     key: { fields: ['sport'], where: ({ sport }) => ({ sport }) },
-    fetch: { query: () => ({ queryFn: async () => ({ data: '[]' }) }), parse: () => [] },
+    fetch: { query: () => ({ queryFn: async () => ({ data: '[]' }) }), toRows: () => [] },
   });
 
   const fromRows = jest.fn(over.fromRows ?? (([row]: readonly PlayerRow[]): NameVm | undefined => ({ id: row.player_id, label: row.name })));

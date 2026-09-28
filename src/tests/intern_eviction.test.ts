@@ -51,7 +51,7 @@ function makeGames(over: { from?: boolean } = {}) {
     },
     fetch: {
       query,
-      parse: (partition, raw, key) => (JSON.parse(raw) as string[]).map((game_id) => ({ partition_key: key, game_id: `${partition.sport}-${game_id}` })),
+      toRows: (partition, raw, key) => (JSON.parse(raw) as string[]).map((game_id) => ({ partition_key: key, game_id: `${partition.sport}-${game_id}` })),
     },
   });
 

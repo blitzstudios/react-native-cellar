@@ -11,7 +11,7 @@
 export type { QueryClient, QuerySpec, QueryStatus, ReadGate, ReadGateRuntime } from './runtime';
 export { configureCellar } from './runtime';
 export { defineSqliteStore } from './define_sqlite_store';
-export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushSpec, StoreSurface } from './define_sqlite_store';
+export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushIngest, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { PartitionLifecycle } from './define_partitions';
 export type { DataStatus, DataResult } from './store_result';
 export { DATA_RESULT_KEYS, makeResult } from './store_result';
@@ -29,7 +29,6 @@ export type { SqliteConnection, PinnedConnection } from './table/connection';
 export { readRows, pinnedReader } from './table/connection';
 export type { RawQuery } from './write/fetch_ingest';
 export { RAW_TEXT_RESPONSE_TRANSFORM } from './write/fetch_ingest';
-export type { PushIngest } from './write/push_ingest';
 export type { ShredColumn, ShredColumns, ShredColumnsBase, NativeShredColumns, RowOf } from './write/shred_columns';
 export { defineShredColumns } from './write/shred_columns';
 export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';

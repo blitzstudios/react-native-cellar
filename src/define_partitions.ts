@@ -107,10 +107,10 @@ export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
    * (no native program, {@linkcode PartitionFetchSpec.canShredNatively | canShredNatively} returns false, or the native
    * shred failed). Every row must match the partition's {@linkcode PartitionKeySpec.where | where}.
    */
-  parse: (partition: Descriptor, rawJson: string, key: Key) => readonly Row[];
+  toRows: (partition: Descriptor, rawJson: string, key: Key) => readonly Row[];
   /**
    * Whether this partition's response can be written by the native C++ shredder instead of
-   * {@linkcode PartitionFetchSpec.parse | parse}; true by default. Return false for a partition whose body the store's
+   * {@linkcode PartitionFetchSpec.toRows | toRows}; true by default. Return false for a partition whose body the store's
    * native programs can't read, such as one that isn't a JSON array or object of elements.
    */
   canShredNatively?: (partition: Descriptor) => boolean;
@@ -382,7 +382,7 @@ const NO_DESCRIPTORS: readonly never[] = Object.freeze([]);
  * such as every player in one league.
  *
  * From the config it builds one React Query query per partition that fetches the partition (sending its stored ETag,
- * and writing the response with the native shredder or {@linkcode PartitionFetchSpec.parse | parse}), and bumps the
+ * and writing the response with the native shredder or {@linkcode PartitionFetchSpec.toRows | toRows}), and bumps the
  * partition's version with the entities the write changed, which re-renders the readers of those entities. It returns
  * the functions that declare the store's reads and caches on those partitions, and the
  * {@linkcode Partitions.lifecycle | lifecycle} operations to publish. Call it from a store's
@@ -483,7 +483,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     const spec = fetchSpec as PartitionFetchSpec<Row, Key, Descriptor>;
     const partition = describe(key);
     const rowsWhere = where(key);
-    const parse = (raw: string): Row[] => spec.parse(partition, raw, key) as Row[];
+    const parse = (raw: string): Row[] => spec.toRows(partition, raw, key) as Row[];
     const inJs = (): WriteResult => table.overwrite(rowsWhere, parse(rawJson));
 
     let result: WriteResult;

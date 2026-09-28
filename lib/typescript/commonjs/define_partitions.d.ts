@@ -96,10 +96,10 @@ export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
      * (no native program, {@linkcode PartitionFetchSpec.canShredNatively | canShredNatively} returns false, or the native
      * shred failed). Every row must match the partition's {@linkcode PartitionKeySpec.where | where}.
      */
-    parse: (partition: Descriptor, rawJson: string, key: Key) => readonly Row[];
+    toRows: (partition: Descriptor, rawJson: string, key: Key) => readonly Row[];
     /**
      * Whether this partition's response can be written by the native C++ shredder instead of
-     * {@linkcode PartitionFetchSpec.parse | parse}; true by default. Return false for a partition whose body the store's
+     * {@linkcode PartitionFetchSpec.toRows | toRows}; true by default. Return false for a partition whose body the store's
      * native programs can't read, such as one that isn't a JSON array or object of elements.
      */
     canShredNatively?: (partition: Descriptor) => boolean;
@@ -357,7 +357,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
  * such as every player in one league.
  *
  * From the config it builds one React Query query per partition that fetches the partition (sending its stored ETag,
- * and writing the response with the native shredder or {@linkcode PartitionFetchSpec.parse | parse}), and bumps the
+ * and writing the response with the native shredder or {@linkcode PartitionFetchSpec.toRows | toRows}), and bumps the
  * partition's version with the entities the write changed, which re-renders the readers of those entities. It returns
  * the functions that declare the store's reads and caches on those partitions, and the
  * {@linkcode Partitions.lifecycle | lifecycle} operations to publish. Call it from a store's
