@@ -112,7 +112,8 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
    * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty} and
    * doesn't run {@linkcode ReadDef.select | select}. For args that name something that can't exist, such as a
    * placeholder id. It doesn't stop the fetch; use {@linkcode CommonDef.prime | prime} or the caller's
-   * {@linkcode CommonDef.enabled | enabled} option for that.
+   * {@linkcode CommonDef.enabled | enabled} option for that. For args no caller wants fetched, such as a sport the
+   * read has nothing for, declare both with the same predicate.
    */
   enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
   /**
@@ -138,13 +139,15 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
   /**
    * Whether reading a partition that has never been fetched fetches it; true by default. Set false for a read that
    * should only use rows something else fetched, such as one that looks in partitions a value might be in without
-   * wanting to fetch them all.
+   * wanting to fetch them all. Pass a function to decide per call, from the args: a read with nothing to return for
+   * some sport can decline to fetch that sport's partition, while other reads of it still fetch. A function that reads
+   * an arg its caller didn't pass declines.
    *
    * A fetch loads the whole partition, not just what the read selects, so a read of one row in a large partition pays
    * for all of it. A partition fetch large enough to matter is reported once per session (as an info notice) when
    * every read of it wanted only part of it, which a read shows by taking args beyond those that name its partition.
    */
-  prime?: boolean;
+  prime?: boolean | ((args: ReadyArgs<Args, Optional>) => boolean);
 }
 
 /**
@@ -331,11 +334,11 @@ function intentOf(args: object, naming: ReadonlySet<string>): { slice: boolean }
  * strictly less: a read its {@linkcode CommonDef.enabled | enabled} turns off still primes, since that marks an arg
  * naming nothing rather than a partition nobody wants.
  */
-function readGates(prime: boolean | undefined, addressable: boolean, primeWanted: boolean, enabled: () => boolean): { prime: boolean; read: boolean } {
+function readGates(primes: () => boolean, addressable: boolean, primeWanted: boolean, enabled: () => boolean): { prime: boolean; read: boolean } {
   return {
     // Both the declaration and the call site can veto priming, and neither can override the other: a read that
     // declares `prime: false` never fetches, and a caller passing `prime: false` never fetches, whoever else does.
-    prime: addressable && primeWanted && (prime ?? true),
+    prime: addressable && primeWanted && primes(),
     read: addressable && enabled(),
   };
 }
@@ -433,6 +436,17 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       );
     };
 
+    /** A read's `enabled` or `prime` over its args: true when absent, and false when it reads an arg not passed. */
+    const predicate = (args: object, fn: ((args: never) => boolean) | undefined): boolean => {
+      if (!fn) return true;
+      try {
+        return view.run(args, fn);
+      } catch (error) {
+        if (error instanceof ArgNotPassed) return false;
+        throw error;
+      }
+    };
+
     return {
       view,
       bind: (read: object) => {
@@ -462,15 +476,10 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
         return result.value;
       },
       /** Whether `enabled` lets the read run; an `enabled` that reads an arg its caller didn't pass doesn't. */
-      enabled: (args: object, enabled: ((args: never) => boolean) | undefined): boolean => {
-        if (!enabled) return true;
-        try {
-          return view.run(args, enabled);
-        } catch (error) {
-          if (error instanceof ArgNotPassed) return false;
-          throw error;
-        }
-      },
+      enabled: (args: object, enabled: ((args: never) => boolean) | undefined): boolean => predicate(args, enabled),
+      /** Whether `prime` lets the read fetch; a `prime` that reads an arg its caller didn't pass doesn't. */
+      primes: (args: object, prime: boolean | ((args: never) => boolean) | undefined): boolean =>
+        typeof prime === 'function' ? predicate(args, prime) : prime ?? true,
     };
   };
 
@@ -497,7 +506,12 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
     };
 
     const gatesFor = (args: Args, parts: readonly string[], wanted: boolean, primeWanted = true) =>
-      readGates(def.prime, wanted && addressesPartition(parts), primeWanted, () => runner.enabled(args as object, def.enabled as ((args: never) => boolean) | undefined));
+      readGates(
+        () => runner.primes(args as object, def.prime as boolean | ((args: never) => boolean) | undefined),
+        wanted && addressesPartition(parts),
+        primeWanted,
+        () => runner.enabled(args as object, def.enabled as ((args: never) => boolean) | undefined),
+      );
 
     const run = (args: Args, key: Key, parts: readonly string[], argsKey: () => string): T => {
       const value = runner.select([parts], argsKey, () => view.run(args as object, (ready: ReadyArgs<Args, Optional>) => def.select(ready, key)));
@@ -569,7 +583,12 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
      * since the rest are gaps.
      */
     const gatesFor = (args: Args, partitions: readonly (readonly string[])[], wanted: boolean, primeWanted = true) =>
-      readGates(def.prime, wanted && partitions.some(addressesPartition), primeWanted, () => runner.enabled(args as object, def.enabled as ((args: never) => boolean) | undefined));
+      readGates(
+        () => runner.primes(args as object, def.prime as boolean | ((args: never) => boolean) | undefined),
+        wanted && partitions.some(addressesPartition),
+        primeWanted,
+        () => runner.enabled(args as object, def.enabled as ((args: never) => boolean) | undefined),
+      );
 
     const run = (args: Args, keys: readonly Key[], partitions: readonly (readonly string[])[], argsKey: () => string): T => {
       const value = runner.select(partitions, argsKey, () => view.run(args as object, (ready: ReadyArgs<Args, Optional>) => def.select(ready, keys)));

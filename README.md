@@ -50,7 +50,7 @@ same engine compiled to WebAssembly, through `./sqljs`. Tests use sql.js too, th
 
 ```jsonc
 // package.json
-"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.0.0-gitpkg",
+"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.1.0-gitpkg",
 // On device, the SQLite driver `./nitro` opens databases with: 1.1.4 or later, and 1.1.5 or later for an in-memory
 // fallback that needs no file. An app that runs Cellar only on the web or in tests leaves it out.
 "react-native-nitro-sqlite": "blitzstudios/react-native-nitro-sqlite.git#react-native-nitro-sqlite-v1.1.5-gitpkg"
@@ -186,6 +186,11 @@ Where it bites, the fixes are:
 `prime: false` exists but is not that fix. It means *never fetch on this read's behalf*, and it is for a read that
 guesses across candidate partitions, or a selector over rows something else is responsible for fetching. A read
 using it is `empty` until whoever owns the fetch has run.
+
+`prime` also takes a function of the read's args, for a read that has nothing to return for some of them: a bye-week
+summary has nothing for a sport without byes, so `prime: (args) => args.sport === 'nfl'` keeps it from fetching an
+NBA season that other reads of the store may still want. Declare `enabled` with the same predicate, so the read also
+returns `empty` without running `select` over rows something else fetched.
 
 Nothing here has to be declared. An ingest landing more than a few thousand rows files one `info` report per
 partition per session, which is how an over-large partition makes itself known — including one that was a

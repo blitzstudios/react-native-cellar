@@ -100,7 +100,8 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
      * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty} and
      * doesn't run {@linkcode ReadDef.select | select}. For args that name something that can't exist, such as a
      * placeholder id. It doesn't stop the fetch; use {@linkcode CommonDef.prime | prime} or the caller's
-     * {@linkcode CommonDef.enabled | enabled} option for that.
+     * {@linkcode CommonDef.enabled | enabled} option for that. For args no caller wants fetched, such as a sport the
+     * read has nothing for, declare both with the same predicate.
      */
     enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
     /**
@@ -126,13 +127,15 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
     /**
      * Whether reading a partition that has never been fetched fetches it; true by default. Set false for a read that
      * should only use rows something else fetched, such as one that looks in partitions a value might be in without
-     * wanting to fetch them all.
+     * wanting to fetch them all. Pass a function to decide per call, from the args: a read with nothing to return for
+     * some sport can decline to fetch that sport's partition, while other reads of it still fetch. A function that reads
+     * an arg its caller didn't pass declines.
      *
      * A fetch loads the whole partition, not just what the read selects, so a read of one row in a large partition pays
      * for all of it. A partition fetch large enough to matter is reported once per session (as an info notice) when
      * every read of it wanted only part of it, which a read shows by taking args beyond those that name its partition.
      */
-    prime?: boolean;
+    prime?: boolean | ((args: ReadyArgs<Args, Optional>) => boolean);
 }
 /**
  * The definition of a read of one partition. The args name one partition (through

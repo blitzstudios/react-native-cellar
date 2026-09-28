@@ -402,6 +402,36 @@ describe('createReadSurface — args (a read declares none, and waits for every 
     probe.unmount();
   });
 
+  it('primes only the args its declared prime accepts, and still reads the rest', () => {
+    const harness = makeHarness();
+    const read = harness.read({ ...harness.sliceDef, prime: (args) => args.key !== 'p2' });
+    harness.land('p2', { a: { score: 2 } });
+
+    const primed = renderHook(() => read.useValue({ key: 'p1' }));
+    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: 'p1', enabled: true });
+
+    const declined = renderHook(() => read.useValue({ key: 'p2' }));
+    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: 'p2', enabled: false });
+    expect(declined.current.data).toEqual({ a: { score: 2 } });
+    primed.unmount();
+    declined.unmount();
+  });
+
+  it('declines to prime when its declared prime reads an arg the caller did not pass', () => {
+    const harness = makeHarness();
+    const read = harness.surface.read<{ key: string; sport?: string }, Slice>({
+      partition: (args) => args.key,
+      select: () => ({}),
+      empty: harness.EMPTY,
+      prime: (args) => args.sport === 'nfl',
+    });
+
+    const probe = renderHook(() => read.useValue({ key: 'p1' }));
+
+    expect(harness.spies.usePrime[harness.spies.usePrime.length - 1]).toEqual({ key: 'p1', enabled: false });
+    probe.unmount();
+  });
+
   it('leaves priming alone when the option is absent, so existing call sites are untouched', () => {
     const harness = makeHarness();
     const read = harness.read(harness.sliceDef);
@@ -431,6 +461,16 @@ describe('createReadSurface — get (imperative)', () => {
 
     // Rows are present, so a presence check would call this warm and leave it on that one row all session.
     expect(harness.spies.ensure).toContain('p1');
+  });
+
+  it('self-primes only a partition its declared prime accepts', () => {
+    const harness = makeHarness();
+    const read = harness.read({ ...harness.sliceDef, prime: (args) => args.key !== 'p2' });
+
+    read.getValue({ key: 'p1' });
+    read.getValue({ key: 'p2' });
+
+    expect(harness.spies.ensure).toEqual(['p1']);
   });
 
   it('leaves a partition that already holds rows alone, so a read is not a refetch', () => {
@@ -797,6 +837,26 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
     expect(probe.current.status).toBe('success');
     expect(probe.current.isFetching).toBe(true);
     probe.unmount();
+  });
+
+  it('primes a partition set only when its declared prime accepts the args', () => {
+    const harness = makeHarness();
+    const list = createReadSurface(harness.kernel).readAcross<{ keys: string[]; sport: string }, Slice[]>({
+      partitions: (args) => args.keys,
+      select: () => [],
+      empty: [],
+      prime: (args) => args.sport === 'nfl',
+    });
+
+    const nfl = renderHook(() => list.useValue({ keys: ['a', 'b'], sport: 'nfl' }));
+    expect(harness.spies.usePrimeMany[harness.spies.usePrimeMany.length - 1]).toEqual({ keys: ['a', 'b'], enabled: true });
+    const nba = renderHook(() => list.useValue({ keys: ['a', 'b'], sport: 'nba' }));
+    expect(harness.spies.usePrimeMany[harness.spies.usePrimeMany.length - 1]).toEqual({ keys: ['a', 'b'], enabled: false });
+
+    list.getValue({ keys: ['c'], sport: 'nba' });
+    expect(harness.spies.ensure).toEqual([]);
+    nfl.unmount();
+    nba.unmount();
   });
 
   it('serves getValue and useValue from the same select, so the imperative half cannot drift', () => {
