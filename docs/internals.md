@@ -116,7 +116,9 @@ store is reaching past its entry point; import it from its own module only if yo
   body the native pass can't iterate. Leave `fetch` off entirely for a push-fed store.
 
   `push` sits beside it, for rows that arrive by socket: `idOf`, `toRows` and `partitionsOf`, and nothing about how
-  they are written. A store that declares it gets `store.push.ingest(items)`; one that doesn't has no `push`.
+  they are written. `toRows` is handed the partition's description, so an item needn't carry what every row in the
+  partition shares. A store that declares it gets `store.push.ingest(items)`, which drops and reports an item the
+  store's own functions throw on rather than the whole batch; one that doesn't declare it has no `push`.
 
   `build` gets one argument, `cellar`: the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a
   partition's rows (`rows(key, filter?)`), the primitives a store's own SQL needs (`keyOf`, `partitionOf`, `keys`,

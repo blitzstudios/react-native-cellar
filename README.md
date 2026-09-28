@@ -332,7 +332,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 | export | what it gives you |
 | --- | --- |
 | a store's `fetch` | `query` and `toRows`, plus `canShredNatively`; leave it off for a store fed only by pushes |
-| a store's `push` | `idOf`, `toRows` and `partitionsOf`, for rows arriving by socket, which `store.push.ingest(items)` takes: each item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
+| a store's `push` | `idOf`, `toRows(key, items, partition)` and `partitionsOf`, for rows arriving by socket, which `store.push.ingest(items)` takes: an item the store's functions throw on dropped and reported, each other item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
 | `NativeShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS. A store's programs get the partition's key as bind 0, from Cellar, which also deletes the partition's old rows by it; `binds(partition)` fills bind 1 onward |
 | `RAW_TEXT_RESPONSE_TRANSFORM` | keeps a client from `JSON.parse`-ing a body Cellar wants as text |
 

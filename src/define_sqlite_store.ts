@@ -106,7 +106,12 @@ export type StoreFetchSpec<Row extends RowShape, Partition> = Omit<PartitionFetc
  * `partition_key`. A push adds and updates rows and never deletes one. Cellar buffers the items, keeping the latest
  * per {@linkcode PushIngestConfig.idOf | idOf}, and writes them soon after and outside the current render.
  */
-export type StorePushSpec<Item, Row extends RowShape, Partition> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'toRows' | 'chunk' | 'retryDelayMs'> & {
+export type StorePushSpec<Item, Row extends RowShape, Partition> = Pick<PushIngestConfig<Item, Row, string>, 'idOf' | 'chunk' | 'retryDelayMs'> & {
+  /**
+   * Turns a partition's buffered items into its rows, given the partition's key and description: the description
+   * carries what every row in it shares, so an item needn't.
+   */
+  toRows: (key: string, items: readonly Item[], partition: Partition) => Row[];
   /**
    * The partitions an item may belong to, as descriptions, such as a stat's week and its game. The item is written to
    * those that already hold rows, or to all of them when none does, since a push can be a partition's only source.
@@ -125,7 +130,8 @@ export interface StorePush<Item> {
   /**
    * Queues each item for the partitions its {@linkcode StorePushSpec.partitionsOf | partitionsOf} names that hold
    * rows, or for all of them when none does. A partition's items wait while it is being fetched, since the fetch
-   * replaces the partition and would overwrite them with the older response. Nothing to ingest is a no-op.
+   * replaces the partition and would overwrite them with the older response. Nothing to ingest is a no-op. An item
+   * the store's own functions throw on is dropped and reported, and the rest are queued.
    */
   ingest: (items: readonly Item[] | null | undefined) => void;
 }
@@ -465,9 +471,10 @@ export function defineSqliteStore<
     labelReads(surface.reads);
     let push: StorePush<Item> | undefined;
     if (pushSpec) {
-      const { partitionsOf, etagRetireIntervalMs, ...spec } = pushSpec;
+      const { partitionsOf, etagRetireIntervalMs, toRows, ...spec } = pushSpec;
       const buffer = createPushIngest({
         ...spec,
+        toRows: (key, items) => toRows(key, items, partitions.partitionOf(key)),
         name: config.name,
         table,
         where,
@@ -478,10 +485,25 @@ export function defineSqliteStore<
       push = {
         ingest: (items) => {
           if (!items) return;
+          let dropped = 0;
+          let firstError: unknown;
           for (const item of items) {
-            const keys = partitionsOf(item).map(partitions.keyOf);
-            const loaded = keys.filter(partitions.has);
-            for (const key of loaded.length ? loaded : keys) buffer.queue(key, item);
+            try {
+              const keys = partitionsOf(item).map(partitions.keyOf);
+              const loaded = keys.filter(partitions.has);
+              for (const key of loaded.length ? loaded : keys) buffer.queue(key, item);
+            } catch (error) {
+              dropped += 1;
+              firstError ??= error;
+            }
+          }
+          if (dropped) {
+            reportStoreDegradation({
+              scope: `${config.name}.push`,
+              context: 'pushed items threw before they were queued, so they were dropped and their rows stay stale until the next push or fetch',
+              error: firstError,
+              extra: extra({ dropped, total: items.length }),
+            });
           }
         },
       };

@@ -7,6 +7,7 @@ import { partitionedSchema, StoreTableSchema } from '../table/partitioned';
 import { readRows } from '../table/connection';
 import { RowTableSchema } from '../table/types';
 import { NativeShredSpec, ShredSpec } from '../write/shred_spec';
+import { reportStoreDegradation } from '../diagnostics/telemetry';
 
 jest.mock('../diagnostics/telemetry', () => ({ reportStoreDegradation: jest.fn() }));
 
@@ -165,6 +166,58 @@ describe('defineSqliteStore — caches', () => {
 });
 
 describe('defineSqliteStore — pushes', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it('drops and reports an item the store throws on, and queues the rest', async () => {
+    const store = defineSqliteStore({
+      name: 'throwing_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'] },
+      push: {
+        idOf: (game: Game) => game.team,
+        partitionsOf: (game: Game) => {
+          if (game.team === 'bad') throw new Error('no partition for it');
+          return [NFL_2025];
+        },
+        toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })),
+      },
+      build: () => ({ reads: {} }),
+    });
+    const { surface, table } = store.testing.over(createSqlJsConnection());
+
+    surface.push.ingest([
+      { team: 'a', sport: 'nfl' },
+      { team: 'bad', sport: 'nfl' },
+      { team: 'b', sport: 'nfl' },
+    ]);
+    await settle();
+
+    expect(table.find({ partition_key: 'nfl:2025' }, { orderBy: 'team' }).map((row) => row.team)).toEqual(['a', 'b']);
+    expect(reportStoreDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'throwing_store.push', extra: expect.objectContaining({ dropped: 1, total: 3 }) }),
+    );
+  });
+
+  it('hands toRows the description of the partition it writes', async () => {
+    const store = defineSqliteStore({
+      name: 'described_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'] },
+      push: {
+        idOf: (team: string) => team,
+        partitionsOf: () => [NFL_2025],
+        toRows: (key, teams, season) => teams.map((team) => ({ team, sport: season.sport, partition_key: key })),
+      },
+      build: () => ({ reads: {} }),
+    });
+    const { surface, table } = store.testing.over(createSqlJsConnection());
+
+    surface.push.ingest(['a']);
+    await settle();
+
+    expect(table.find({ partition_key: 'nfl:2025' })).toEqual([expect.objectContaining({ team: 'a', sport: 'nfl' })]);
+  });
+
   it('gives a store no push when it declares none', () => {
     const store = defineSqliteStore({ name: 'fetched_store', schema: SCHEMA, partition: { fields: ['sport', 'season'] }, build: () => ({ reads: {} }) });
 
