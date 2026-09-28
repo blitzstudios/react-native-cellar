@@ -18,7 +18,7 @@ export { configureCellar } from './runtime';
 
 // Declaring a store.
 export { defineSqliteStore } from './define_sqlite_store';
-export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushIngest, StorePushSpec, StoreSurface } from './define_sqlite_store';
+export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePush, StorePushOf, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { PartitionLifecycle } from './define_partitions';
 
 // What a read hands back.

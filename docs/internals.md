@@ -115,10 +115,13 @@ store is reaching past its entry point; import it from its own module only if yo
   partition's pushes while it is in flight. One optional member covers the case that varies: `canShredNatively` for a
   body the native pass can't iterate. Leave `fetch` off entirely for a push-fed store.
 
+  `push` sits beside it, for rows that arrive by socket: `idOf`, `toRows` and `partitionsOf`, and nothing about how
+  they are written. A store that declares it gets `store.push.ingest(items)`; one that doesn't has no `push`.
+
   `build` gets one argument, `cellar`: the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a
-  partition's rows (`rows(key, filter?)`), the primitives a push or a store's own SQL needs (`keyOf`, `partitionOf`,
-  `keys`, `has`, `versionOf`, `bump`, `clearEtag`, `where`, `createPushIngest`, `table`) and the connection's `caps`. It returns `reads`,
-  and `push` and lifecycle functions of its own where it has them. Every store's **`lifecycle`** comes from Cellar —
+  partition's rows (`rows(key, filter?)`), the primitives a store's own SQL needs (`keyOf`, `partitionOf`, `keys`,
+  `has`, `versionOf`, `bump`, `clearEtag`, `where`, `table`) and the connection's `caps`. It returns `reads`, and
+  lifecycle functions of its own where it has them. Every store's **`lifecycle`** comes from Cellar —
   `usePrime`, `usePrimeMany`, `usePrimeAndVersion`, `has`, `getVersion`, `getFetchedAt`, `fetch`, `refetch`,
   `invalidate`, `forget` — with the store's own functions added. Every member takes the same **args** a read does, in
   the `(args, options?)` call shape a service publishes. `usePrime` and `usePrimeAndVersion` take those args loosely,
@@ -135,12 +138,12 @@ store is reaching past its entry point; import it from its own module only if yo
   faster than they need to be persisted, one item at a time rather than one partition, and they can land on a
   partition a fetch is midway through deleting and rewriting — so this buffers per partition, dedupes by
   `idOf`, writes in bounded chunks off the render path, requeues a failed chunk without overwriting anything
-  newer, and **holds** a partition for the length of a fetch. A store creates one from its build context, giving it
-  `idOf`, `toRows`, `partitionsOf` (the partitions an item may belong to) and optionally `onWrite`; Cellar supplies the table, the partition's rows and the bumps, holds the
-  partition's pushes whenever it is fetched, and retires its ETag at most once every two minutes after a push writes
-  to it, so a refetch brings a full body without every refetch during a live stream being one. You get `queue`, which
-  takes an item and writes it to the partitions its `partitionsOf` names that hold rows, or to all of them when none
-  does, since a push can be a partition's only source. What it does inside, and why each part of
+  newer, and **holds** a partition for the length of a fetch. Cellar creates one per connection from a store's `push`
+  (`idOf`, `toRows`, and `partitionsOf`, the partitions an item may belong to), supplies the table, the partition's
+  rows and the bumps, holds the partition's pushes whenever it is fetched, and retires its ETag at most once every two
+  minutes after a push writes to it, so a refetch brings a full body without every refetch during a live stream being
+  one. The store gets `push.ingest`, which writes each item to the partitions its `partitionsOf` names that hold rows,
+  or to all of them when none does, since a push can be a partition's only source. What it does inside, and why each part of
   it is load-bearing, is [below](#the-buffered-flush-behind-createpushingest).
 - **`rowsOf(table)`** (`row_shaping.ts`) — a hydration's whole read side: ask it for rows, then say what shape you
   want them in. `rows.where(filter, opts)` and `rows.in(filter, column, values)` are the two queries, `.given(rows)`

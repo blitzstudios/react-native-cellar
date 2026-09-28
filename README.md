@@ -305,8 +305,8 @@ Everything below is exported from the package root.
 
 | export | what it gives you |
 | --- | --- |
-| `defineSqliteStore(config)` | the store, from its `schema`, `partition`, an optional `fetch` and `build`: `reads`, `push` and `lifecycle` on whichever connection is running, `capabilities` for what the store builds from that connection (a ranker running its own SQL, say), `bindSqlite` to run it on a connection, and `testing.over(conn)` for a test's own surface and the table to seed it through |
-| `build`'s `cellar` | the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a partition's `rows(key, filter?)`, the partition primitives (`keyOf`, `partitionOf`, `keys`, `has`, `versionOf`, `bump`, `clearEtag`, `where`), `createPushIngest`, and the `table` and `caps` for a store's own SQL |
+| `defineSqliteStore(config)` | the store, from its `schema`, `partition`, an optional `fetch` and `push`, and `build`: `reads`, `lifecycle`, and `push` for a store that declares one, on whichever connection is running, `capabilities` for what the store builds from that connection (a ranker running its own SQL, say), `bindSqlite` to run it on a connection, and `testing.over(conn)` for a test's own surface and the table to seed it through |
+| `build`'s `cellar` | the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a partition's `rows(key, filter?)`, the partition primitives (`keyOf`, `partitionOf`, `keys`, `has`, `versionOf`, `bump`, `clearEtag`, `where`), and the `table` and `caps` for a store's own SQL |
 | `defineShredColumns<Src, Ctx>()(columns)` | one column table bound to everything derived from it: `names`, `columnDefs`, `row`, and `ops` once every column declares one |
 
 ### Rows
@@ -332,7 +332,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 | export | what it gives you |
 | --- | --- |
 | a store's `fetch` | `query` and `toRows`, plus `canShredNatively`; leave it off for a store fed only by pushes |
-| `cellar.createPushIngest({ idOf, toRows, partitionsOf, onWrite? })` | rows arriving by socket: each item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
+| a store's `push` | `idOf`, `toRows` and `partitionsOf`, for rows arriving by socket, which `store.push.ingest(items)` takes: each item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
 | `NativeShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS. A store's programs get the partition's key as bind 0, from Cellar, which also deletes the partition's old rows by it; `binds(partition)` fills bind 1 onward |
 | `RAW_TEXT_RESPONSE_TRANSFORM` | keeps a client from `JSON.parse`-ing a body Cellar wants as text |
 

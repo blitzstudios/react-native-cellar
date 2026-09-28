@@ -67,16 +67,15 @@ export const itemStore = defineSqliteStore({
   name: 'item',
   schema,
   partition: { fields: ['league'], fromArgs: (args: Loose<LeagueKey>) => (args.league ? { league: args.league } : null) },
+  push: {
+    idOf: (item: Item) => item.id,
+    partitionsOf: (item: Item) => [{ league: item.team ?? '' }],
+    toRows: (key, batch) => batch.map((item) => ({ ...itemShred.row(item, { league: key }), partition_key: key })),
+  },
   build: (cellar) => {
     const { card, byTeam } = cellar.defineCaches({
       card: byEntity({ max: 64, fromRows: ([row]) => ({ id: row.id }) }),
       byTeam: byPartition<Map<string, ItemRow[]>>({ max: 4 }),
-    });
-    const push = cellar.createPushIngest({
-      idOf: (item: Item) => item.id,
-      partitionsOf: (item: Item) => [{ league: item.team ?? '' }],
-      toRows: (key, batch) => batch.map((item) => ({ ...itemShred.row(item, { league: key }), partition_key: key })),
-      onWrite: cellar.clearEtag,
     });
     return {
       reads: {
@@ -98,7 +97,6 @@ export const itemStore = defineSqliteStore({
           empty: 0,
         }),
       },
-      push: { queue: push.queue },
     };
   },
 });

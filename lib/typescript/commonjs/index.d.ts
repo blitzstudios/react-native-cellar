@@ -11,7 +11,7 @@
 export type { QueryClient, QuerySpec, QueryStatus, ReadGate, ReadGateRuntime } from './runtime';
 export { configureCellar } from './runtime';
 export { defineSqliteStore } from './define_sqlite_store';
-export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePushIngest, StorePushSpec, StoreSurface } from './define_sqlite_store';
+export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePush, StorePushOf, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { PartitionLifecycle } from './define_partitions';
 export type { DataStatus, DataResult } from './store_result';
 export { DATA_RESULT_KEYS, makeResult } from './store_result';
