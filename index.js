@@ -141,19 +141,13 @@ function createCellarRules(layout) {
 
   const READ_DECL = /export\s+(?:const|function)\s+((?:use|get)[A-Z]\w*)/g;
 
-  /** The names of a file's paired-read tables: `const Reads = { Player: pairRead(...) }`, or `const Reads = publishReads(...)`. */
+  /** The names of a file's paired-read tables — `const Reads = { Player: pairRead(...) }`. */
   function pairedReadTableNames(src) {
     const names = new Set();
     let open = null;
     let sawPairRead = false;
 
     for (const line of src.split('\n')) {
-      // `const Reads = publishReads(() => store.reads)` publishes every read of the store in one line.
-      const published = /^\s*(?:const|let)\s+(\w+)\s*=\s*publishReads\(/.exec(line);
-      if (published) {
-        names.add(published[1]);
-        continue;
-      }
       if (open === null) {
         const start = /^\s*(?:const|let)\s+(\w+)\s*=\s*\{\s*$/.exec(line);
         if (start) {

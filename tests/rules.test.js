@@ -16,22 +16,6 @@ process.on('exit', () => fs.rmSync(ROOT, { recursive: true, force: true }));
 
 fs.mkdirSync(path.join(ROOT, 'shared/stores/scores'), { recursive: true });
 fs.mkdirSync(path.join(ROOT, 'shared/services/score_service'), { recursive: true });
-fs.mkdirSync(path.join(ROOT, 'shared/stores/players'), { recursive: true });
-fs.writeFileSync(
-  path.join(ROOT, 'shared/services/player_service.tsx'),
-  [
-    "import { playerStore } from '../stores/players';",
-    "import { publishReads } from '@sleeperhq/react-native-cellar';",
-    '',
-    'export namespace PlayerService {',
-    '  const Reads = publishReads(() => playerStore.reads);',
-    '  export namespace Hooks {',
-    '    export const usePlayer = Reads.Player.useValue;',
-    '  }',
-    '  export const getPlayer = Reads.Player.getValue;',
-    '}',
-  ].join('\n'),
-);
 fs.writeFileSync(
   path.join(ROOT, 'shared/services/score_service/score_service.ts'),
   [
@@ -93,9 +77,6 @@ ruleTester.run('no_read_arg_sentinel', plugin.rules.no_read_arg_sentinel, {
   ],
   invalid: [
     { filename: CONSUMER, code: "GameScoreService.Hooks.useLiveScore({ params: { gameId: gameId ?? '' } });", errors: [{ messageId: 'emptyStringSentinel' }] },
-    // A read published through `publishReads` is found, hook and getter alike.
-    { filename: CONSUMER, code: "PlayerService.Hooks.usePlayer({ params: { playerId: id ?? '' } });", errors: [{ messageId: 'emptyStringSentinel' }] },
-    { filename: CONSUMER, code: "PlayerService.getPlayer({ params: { playerId: id ?? '' } });", errors: [{ messageId: 'emptyStringSentinel' }] },
   ],
 });
 
