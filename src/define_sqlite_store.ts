@@ -10,6 +10,7 @@ import { createVersionAtom, VersionAtom } from './reactivity/version_atom';
 import { FindOpts, RowShape, RowTable } from './table/types';
 import { NativeShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
+import { createOnceGuard } from './diagnostics/once_guard';
 import { createSqliteRowTable } from './table/sqlite';
 import { PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
 import { definePartitions } from './define_partitions';
@@ -368,9 +369,15 @@ const NULL_CONNECTION: SqliteConnection = { execute: () => ({ rows: { _array: []
  */
 const MAX_REOPENS = 2;
 
-/** An error that means the file itself is unusable, so reopening it would only fail the same way. */
-const CORRUPTION = /SQLITE_CORRUPT|SQLITE_NOTADB|malformed|not a database/i;
+/**
+ * An error that means the file itself is unusable, so reopening it would only fail the same way. SQLite's own wording
+ * only: a bare "malformed" is also how `json_extract` reports one bad value, which says nothing about the file.
+ */
+const CORRUPTION = /SQLITE_CORRUPT|SQLITE_NOTADB|database disk image is malformed|file is not a database/i;
 const messageOf = (error: unknown): string => String((error as { message?: unknown })?.message ?? error);
+
+/** A failing read's statement, reported once a session per store and message. */
+const statementErrors = createOnceGuard();
 
 /**
  * A view of one group of the running surface, looked up at each access so that a move reaches every caller, including
@@ -567,6 +574,15 @@ export function defineSqliteStore<
           error,
           extra: extra({ op }),
         }),
+      (error, op) => {
+        if (statementErrors.seen(config.name, messageOf(error))) return;
+        reportStoreDegradation({
+          scope: `${config.name}.statement_error`,
+          context: `a SQLite \`${op}\` read failed on its own statement and answered empty; the connection is fine, and the read's SQL or the value it parsed is not`,
+          error,
+          extra: extra({ op }),
+        });
+      },
     );
     return buildOver(guarded, !!options.temporary).surface;
   };

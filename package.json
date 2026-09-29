@@ -1,6 +1,6 @@
 {
   "name": "@sleeperhq/react-native-cellar",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Keeps a React Native app's large server data off the JS heap, in SQLite, while components read it synchronously and re-render only for what changed.",
   "keywords": [
     "react-native",
@@ -75,6 +75,16 @@
         "default": "./lib/commonjs/diagnostics/index.js"
       }
     },
+    "./redux": {
+      "import": {
+        "types": "./lib/typescript/module/redux/index.d.ts",
+        "default": "./lib/module/redux/index.js"
+      },
+      "require": {
+        "types": "./lib/typescript/commonjs/redux/index.d.ts",
+        "default": "./lib/commonjs/redux/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -84,6 +94,7 @@
     "sqljs/package.json",
     "testing/package.json",
     "diagnostics/package.json",
+    "redux/package.json",
     "!**/tests",
     "!**/*.test.ts",
     "!**/*.probe.ts"

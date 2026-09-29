@@ -223,6 +223,21 @@ export interface Read<Args, T> {
      */
     useValue: (args: Args | undefined, options?: ReadCallOptions) => DataResult<T>;
 }
+/** The element type of a read's value when that value is a list, one entry per partition the read spans. */
+export type EachOf<T> = T extends readonly (infer Item)[] ? Item : never;
+/**
+ * A read across several partitions ({@linkcode Partitions.defineReadAcross | defineReadAcross}). When its value is a
+ * list with one entry per partition, in the order its `partitions` names them, {@linkcode ReadAcross.useEach | useEach}
+ * reports each entry's own fetch state.
+ */
+export interface ReadAcross<Args, T> extends Read<Args, T> {
+    /**
+     * The read as a hook, one {@linkcode DataResult} per partition: entry `i` is the value's `i`th element, `loading`
+     * while partition `i` has no rows and its fetch is in flight, and `success` once it has rows, or for a key that
+     * names no partition. Use it where each partition is its own answer, such as one season per row of a game log.
+     */
+    useEach: (args: Args | undefined, options?: ReadCallOptions) => readonly DataResult<EachOf<T>>[];
+}
 /** Names a store's reads by their keys in its {@linkcode StoreSurface.reads | reads}, so warnings can say which read. */
 export declare function labelReads(reads: object): void;
 /** Returns a {@linkcode DataResult} whose identity is stable across renders while its parts hold. */
@@ -241,7 +256,7 @@ export declare function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>): 
      */
     read: <Args, T, Optional extends keyof Args = never>(def: ReadDef<Args, Key, T, Optional>) => Read<Args, T>;
     /** Declares a read across several partitions, whose definition names them: `readAcross<Args, Value>({ … })`. */
-    readAcross: <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => Read<Args, T>;
+    readAcross: <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => ReadAcross<Args, T>;
     has: (key: Key) => boolean;
 };
 export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, shallowEqualStruct, shallowEqualValue };

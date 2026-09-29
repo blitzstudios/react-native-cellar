@@ -54,8 +54,13 @@ export declare function runBatch(conn: SqliteConnection, commands: ReadonlyArray
  * chunks. A driver without one runs it synchronously, so awaiting this is not on its own a promise that JS yielded.
  */
 export declare function runBatchAsync(conn: SqliteConnection, commands: ReadonlyArray<BatchCommand>): Promise<void>;
-/** Wraps `conn` so every statement returns: the first failure calls `onFatal`, and later calls answer empty. */
-export declare function guardedConnection(conn: SqliteConnection, onFatal: (error: unknown, op: string) => void, onContended?: (error: unknown, op: string) => void): SqliteConnection;
+/**
+ * Wraps `conn` so every statement returns. A read that fails on its own statement (a query bug, or a value its SQL
+ * cannot parse) calls `onStatementError` and answers empty, and the connection carries on. Anything else fails the
+ * connection: the first such failure calls `onFatal`, and later calls answer empty. A write fails it even for a bug
+ * in its statement, since the rows it didn't write would otherwise stand behind an ETag that vouches for them.
+ */
+export declare function guardedConnection(conn: SqliteConnection, onFatal: (error: unknown, op: string) => void, onContended?: (error: unknown, op: string) => void, onStatementError?: (error: unknown, op: string) => void): SqliteConnection;
 /**
  * Runs a `SELECT` and returns its rows as plain objects. It runs on the connection's reader if it has one, so a query
  * of a `TEMP` table the caller just created must be passed a {@linkcode PinnedConnection}.

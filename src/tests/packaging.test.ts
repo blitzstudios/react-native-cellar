@@ -15,7 +15,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = join(__dirname, '..', '..');
-const SUBPATHS = ['nitro', 'sqljs', 'testing', 'diagnostics'];
+const SUBPATHS = ['nitro', 'sqljs', 'testing', 'diagnostics', 'redux'];
 
 function readPackage(...segments: string[]): Record<string, string> {
   return JSON.parse(readFileSync(join(ROOT, ...segments, 'package.json'), 'utf8'));

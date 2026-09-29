@@ -12,7 +12,7 @@ import { useCallback } from 'react';
 
 import { cacheKey, partitionLabel, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
-import { createReadSurface, Read, ReadAcrossDef, ReadDef, ReadyArgs, useResult } from './read/surface';
+import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs, useResult } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
@@ -308,7 +308,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    * fetched and subscribed to, and its {@linkcode ReadAcrossDef.select | select} gets their keys, in order. Declared
    * like {@linkcode Partitions.defineRead | defineRead}.
    */
-  defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
+  defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => ReadAcross<A, T>;
   /**
    * Declares the store's caches: every value it keeps on the heap beyond its rows, in one object, each under a name,
    * with entries kept per partition. Each entry is one of two kinds, named for what a write discards:
@@ -563,7 +563,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   }
 
   /** A read across partitions names them as records; the keys they address are this layer's to resolve. */
-  function readAcrossOf<A, T, Optional extends keyof A>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>): Read<A, T> {
+  function readAcrossOf<A, T, Optional extends keyof A>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>): ReadAcross<A, T> {
     const named = def.partitions;
     return surface.readAcross<A, T, Optional>({ ...def, partitions: (args) => (named(args) ?? NO_DESCRIPTORS).map(keyOfMaybe) } as ReadAcrossDef<A, Key, T, Optional>);
   }

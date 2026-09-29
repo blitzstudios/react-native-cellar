@@ -394,7 +394,8 @@ describe('a memo bound to a partition', () => {
     expect(built).toBe(1);
   });
 
-  it('serializes a structured part once per reference, so a caller re-keying one per row pays for it once', () => {
+  // Release only: dev re-serializes a reused part to catch one mutated under its key.
+  itProd('serializes a structured part once per reference, so a caller re-keying one per row pays for it once', () => {
     const { binding } = bindable();
     const { rows } = createMemos('test', binding, { rows: byPartition<number, [shape: Record<string, unknown>, item: string]>({ max: 64 }) });
     let reads = 0;
@@ -415,20 +416,20 @@ describe('a memo bound to a partition', () => {
     expect(reads).toBe(toIdentify);
   });
 
-  itDev('freezes a structured part, so its content cannot drift from the identity remembered for it', () => {
+  // A part is often state its owner still mutates, such as a Redux array; freezing it would make that owner throw.
+  itDev('leaves a structured part mutable, and keys it again with a warning when its content changed under it', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const { binding } = bindable();
     const { rows } = createMemos('test', binding, { rows: byPartition<number, [shape: Record<string, unknown>, item: string]>({ max: 64 }) });
     const shape = { orderBy: 'pts', nested: { perEvent: true }, tags: ['starters'] };
 
-    rows.for('us').read(shape, 'p1', () => 1);
+    expect(rows.for('us').read(shape, 'p1', () => 1)).toBe(1);
+    expect(Object.isFrozen(shape)).toBe(false);
 
-    // Deep, because a part is only as settled as everything the identity walk reached through it.
-    expect(Object.isFrozen(shape)).toBe(true);
-    expect(Object.isFrozen(shape.nested)).toBe(true);
-    expect(Object.isFrozen(shape.tags)).toBe(true);
-    expect(() => {
-      shape.orderBy = 'reb';
-    }).toThrow(TypeError);
+    shape.orderBy = 'reb';
+    expect(rows.for('us').read(shape, 'p1', () => 2)).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   itProd('leaves a part unfrozen in a release build, where the walk buys nothing a test has not already caught', () => {

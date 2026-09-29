@@ -150,6 +150,16 @@ export declare const INERT_GATE: ReadGateRuntime;
  * Sets the services Cellar uses. Each part passed replaces the current one and the rest are kept, so the app can
  * configure them from different places, and a test can set one and leave the others as defaults.
  */
+/**
+ * The React Query hooks and client an app already has, as Cellar's {@linkcode QueryRuntime}. The hooks can be React
+ * Query's own or the app's wrappers around them (focus-gated ones, say), with whatever generics they declare: Cellar
+ * only ever calls them with a {@linkcode QuerySpec} and reads the {@linkcode QueryStatus} fields of what they return.
+ */
+export declare function reactQueryRuntime(hooks: {
+    client: () => import('@tanstack/query-core').QueryClient;
+    useQuery: (options: never) => QueryStatus;
+    useQueries: (options: never) => readonly QueryStatus[];
+}): QueryRuntime;
 export declare function configureCellar(next: Partial<CellarRuntime>): void;
 /** The configured error sink. */
 export declare function errorSink(): ErrorSink;

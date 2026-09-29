@@ -93,6 +93,55 @@ describe('guardedConnection', () => {
     expect(onFatal).toHaveBeenCalledTimes(1);
   });
 
+  // A read's own statement failing says nothing about the connection: the same SQL fails the same way on any of them,
+  // and every other read still works. Degrading for it costs every user the store.
+  itProd('answers a read whose statement fails empty, reports it, and keeps the connection', () => {
+    const buggy: SqliteConnection = {
+      execute: (sql) => {
+        if (sql.includes('no_such_column')) throw new Error('SQLITE_ERROR: no such column: no_such_column');
+        return { rows: { _array: [{ id: 'a' }] } };
+      },
+    };
+    const onFatal = jest.fn();
+    const onStatementError = jest.fn();
+    const conn = guardedConnection(buggy, onFatal, undefined, onStatementError);
+
+    expect(readRows(conn, 'SELECT no_such_column FROM things;')).toEqual([]);
+    expect(readRows(conn, 'SELECT * FROM things;')).toEqual([{ id: 'a' }]);
+    expect(onFatal).not.toHaveBeenCalled();
+    expect(onStatementError).toHaveBeenCalledTimes(1);
+  });
+
+  itProd('treats a value json_extract cannot parse as the read’s problem, not the file’s', () => {
+    const onFatal = jest.fn();
+    const conn = guardedConnection(
+      {
+        execute: () => {
+          throw new Error('malformed JSON');
+        },
+      },
+      onFatal,
+    );
+
+    expect(readRows(conn, "SELECT json_extract(stats_json, '$.pts') FROM things;")).toEqual([]);
+    expect(onFatal).not.toHaveBeenCalled();
+  });
+
+  itProd('still fails the connection on a write whose statement fails, so its ETag cannot vouch for rows it never wrote', () => {
+    const onFatal = jest.fn();
+    const conn = guardedConnection(
+      {
+        execute: () => {
+          throw new Error('SQLITE_CONSTRAINT: NOT NULL constraint failed: things.id');
+        },
+      },
+      onFatal,
+    );
+
+    conn.execute('INSERT INTO things (id) VALUES (?);', [null]);
+    expect(onFatal).toHaveBeenCalledTimes(1);
+  });
+
   itProd('names the operation that failed, so a read and an ingest are told apart in the report', () => {
     const onFatal = jest.fn();
     const conn = guardedConnection(brokenConn(), onFatal);

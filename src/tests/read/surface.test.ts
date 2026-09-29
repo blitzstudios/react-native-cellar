@@ -839,6 +839,33 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
     probe.unmount();
   });
 
+  // The per-item status a caller used to build by hand stayed `success` when params arrived, since a disabled read and
+  // one still loading hand back the same empty list and a memo over it never re-ran.
+  it('reports each partition’s own state with useEach, loading until that one lands', () => {
+    const harness = manyHarness();
+    harness.land('a', { p1: { score: 1 } });
+
+    const probe = renderHook(() => harness.list.useEach({ keys: ['a', 'b'] }));
+    expect(probe.current.map((result) => result.status)).toEqual(['success', 'loading']);
+    expect(Object.keys(probe.current[0].data)).toEqual(['p1']);
+
+    act(() => harness.land('b', { p2: { score: 2 } }));
+    expect(probe.current.map((result) => result.status)).toEqual(['success', 'success']);
+    expect(Object.keys(probe.current[1].data)).toEqual(['p2']);
+    probe.unmount();
+  });
+
+  it('keeps the same useEach results while nothing changed, so a caller can put them in a dep list', () => {
+    const harness = manyHarness();
+    harness.land('a', { p1: { score: 1 } });
+    const probe = renderHook(() => harness.list.useEach({ keys: ['a'] }));
+    const first = probe.current;
+
+    probe.rerender();
+    expect(probe.current).toBe(first);
+    probe.unmount();
+  });
+
   it('primes a partition set only when its declared prime accepts the args', () => {
     const harness = makeHarness();
     const list = createReadSurface(harness.kernel).readAcross<{ keys: string[]; sport: string }, Slice[]>({

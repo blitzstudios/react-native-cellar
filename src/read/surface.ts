@@ -17,7 +17,7 @@ import { argsKeyOf, cacheKeyOf, KEY_SEP, partitionsKey } from '../args_key';
 import { getOrCreate } from '../collections';
 import { PartitionField, partitionKeyOf } from './partition_fields';
 import { ArgNotPassed, createArgsView } from './args_view';
-import { createBoundedLru, createVersionedCache, shallowEqualValue } from '../caches';
+import { createBoundedLru, createVersionedCache, shallowEqualArray, shallowEqualValue } from '../caches';
 import { addressesPartition, NO_PARTS, PartitionEntry, partitionEntries, VersionAtom } from '../reactivity/version_atom';
 import { createOnceGuard, onGuardReset } from '../diagnostics/once_guard';
 import { shouldLog } from '../diagnostics/log_level';
@@ -240,6 +240,23 @@ export interface Read<Args, T> {
   useValue: (args: Args | undefined, options?: ReadCallOptions) => DataResult<T>;
 }
 
+/** The element type of a read's value when that value is a list, one entry per partition the read spans. */
+export type EachOf<T> = T extends readonly (infer Item)[] ? Item : never;
+
+/**
+ * A read across several partitions ({@linkcode Partitions.defineReadAcross | defineReadAcross}). When its value is a
+ * list with one entry per partition, in the order its `partitions` names them, {@linkcode ReadAcross.useEach | useEach}
+ * reports each entry's own fetch state.
+ */
+export interface ReadAcross<Args, T> extends Read<Args, T> {
+  /**
+   * The read as a hook, one {@linkcode DataResult} per partition: entry `i` is the value's `i`th element, `loading`
+   * while partition `i` has no rows and its fetch is in flight, and `success` once it has rows, or for a key that
+   * names no partition. Use it where each partition is its own answer, such as one season per row of a game log.
+   */
+  useEach: (args: Args | undefined, options?: ReadCallOptions) => readonly DataResult<EachOf<T>>[];
+}
+
 /** Each read's name in its store's {@linkcode StoreSurface.reads | reads}, for dev warnings about that read. */
 const readLabels = new WeakMap<object, string>();
 
@@ -251,6 +268,7 @@ export function labelReads(reads: object): void {
 /** Stable identities so a disabled read's hooks keep the same deps across renders. */
 const NO_KEYS: readonly never[] = Object.freeze([]);
 const NO_PARTITIONS: readonly (readonly string[])[] = Object.freeze([]);
+const NO_PRESENT: readonly boolean[] = Object.freeze([]);
 const NO_ARGS_KEY = `${KEY_SEP}disabled`;
 
 /** Above one viewport's worth of rows: a virtualized list self-limits around 20-30. */
@@ -560,8 +578,9 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
   }
 
   /** A read across several partitions, whose definition names them. */
-  function readAcross<Args, T, Optional extends keyof Args>(def: ReadAcrossDef<Args, Key, T, Optional>): Read<Args, T> {
+  function readAcross<Args, T, Optional extends keyof Args>(def: ReadAcrossDef<Args, Key, T, Optional>): ReadAcross<Args, T> {
     const runner = readRunner(def.optionalArgs);
+    const emptyEach: { value: T; present: readonly boolean[] } = { value: def.empty, present: NO_PRESENT };
     const { view } = runner;
     const partitionsArgsKey = (partitions: readonly (readonly string[])[], args: object): string => argsKeyOf([partitionsKey(partitions)], args);
 
@@ -628,7 +647,48 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       return useReadTail(data, gates.read, () => hasAny(entries), prime, doRefetch);
     }
 
-    const read: Read<Args, T> = { getValue, useValue };
+    function useEach(args: Args | undefined, options?: ReadCallOptions): readonly DataResult<EachOf<T>>[] {
+      const call = resolve(args);
+      const keys = call ? call.keys : (NO_KEYS as readonly Key[]);
+      const entries = call ? call.entries : [];
+      const partitions = call ? call.partitions : NO_PARTITIONS;
+      const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
+      const prime = usePrimingAll(keys, gates.prime, call?.intent);
+      const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
+      const isEqual = def.isEqual ?? shallowEqualValue;
+      // Which partitions hold rows is part of the tracked value, so one landing re-renders even when the value it adds
+      // compares equal to the empty one it replaces.
+      const tracked = useTrackedValue<{ value: T; present: readonly boolean[] }>(
+        () => {
+          trackPresence(partitions);
+          const present = entries.map((entry) => addressesPartition(entry.parts) && hasOne(entry.key, entry.parts));
+          return { value: present.some(Boolean) ? run(args as Args, keys, partitions, () => argsKey) : def.empty, present };
+        },
+        [argsKey],
+        {
+          enabled: gates.read,
+          isEqual: (left, right) => isEqual(left.value, right.value) && shallowEqualArray(left.present, right.present),
+          empty: emptyEach,
+        },
+      );
+      const doRefetch = useCallback(() => {
+        for (const key of keys) ingest?.refetch(key);
+      }, [argsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `argsKey` covers `keys`
+      return useMemo(
+        () =>
+          entries.map((entry, index) => {
+            const live = gates.read && addressesPartition(entry.parts);
+            const status = runSubscribed(() => readStatus(live, live && !!tracked.present[index], prime));
+            const items = tracked.value as unknown as readonly EachOf<T>[] | undefined;
+            return makeResult(items?.[index] as EachOf<T>, status, { isFetching: prime.isFetching, refetch: doRefetch });
+          }),
+        // `argsKey` covers `entries`; the prime state's fields, not its object, since the object is rebuilt each render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [tracked, argsKey, gates.read, prime.isInitialLoading, prime.isError, prime.isFetching, doRefetch],
+      );
+    }
+
+    const read: ReadAcross<Args, T> = { getValue, useValue, useEach };
     runner.bind(read);
     return read;
   }
@@ -643,7 +703,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
      */
     read: readOne as <Args, T, Optional extends keyof Args = never>(def: ReadDef<Args, Key, T, Optional>) => Read<Args, T>,
     /** Declares a read across several partitions, whose definition names them: `readAcross<Args, Value>({ … })`. */
-    readAcross: readAcross as <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => Read<Args, T>,
+    readAcross: readAcross as <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => ReadAcross<Args, T>,
     has,
   };
 }

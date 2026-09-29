@@ -226,6 +226,20 @@ describe('defineSqliteStore — a SQLite failure mid-session', () => {
     expect(second.ran).not.toContain('UPDATE things_meta SET etag = NULL;');
   });
 
+  itProd('keeps its database when a read trips over one malformed JSON value, which says nothing about the file', async () => {
+    const { store } = labelledStore();
+    const first = namedConn('disk', 'malformed JSON');
+    const reopen = jest.fn(() => namedConn('reopened').conn);
+    store.bindSqlite(first.conn, { recovery: { reopen } });
+
+    first.failing.now = true;
+    expect(store.reads.rows()).toEqual([]);
+    await flush();
+
+    expect(reopen).not.toHaveBeenCalled();
+    expect(store.reads.label).toBe('disk');
+  });
+
   itProd('moves to the in-memory fallback once reopening has failed twice, building its tables as temp tables', async () => {
     const { store } = labelledStore();
     const conns = [namedConn('disk'), namedConn('reopened'), namedConn('reopened again')];

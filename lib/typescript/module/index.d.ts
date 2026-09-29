@@ -9,7 +9,8 @@
  * list grows without someone meaning it to. Test-only fixtures live behind `./testing` instead.
  */
 export type { QueryClient, QuerySpec, QueryStatus, ReadGate, ReadGateRuntime } from './runtime';
-export { configureCellar } from './runtime';
+export type { QueryRuntime } from './runtime';
+export { configureCellar, reactQueryRuntime } from './runtime';
 export { defineSqliteStore } from './define_sqlite_store';
 export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePush, StorePushOf, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { PartitionLifecycle } from './define_partitions';
@@ -18,7 +19,8 @@ export { DATA_RESULT_KEYS, makeResult } from './store_result';
 export type { PrimeState } from './prime_state';
 export type { CacheDeclaration, CacheFactory } from './cache_block';
 export type { CacheKeyPart } from './caches';
-export { byPartition, shallowEqualArray, shallowEqualRecord, shallowEqualStruct, shallowEqualValue } from './caches';
+export type { BoundedLru } from './caches';
+export { byPartition, createBoundedLru, shallowEqualArray, shallowEqualRecord, shallowEqualStruct, shallowEqualValue } from './caches';
 export { byEntity } from './read/derived_values';
 export type { SqlValue, ColumnDef, RowTableSchema, RowTable } from './table/types';
 export type { PartitionKeyColumn, StoreTableSchema } from './table/partitioned';
@@ -33,8 +35,13 @@ export type { ShredColumn, ShredColumns, ShredColumnsBase, NativeShredColumns, R
 export { defineShredColumns } from './write/shred_columns';
 export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';
 export { rowsOf } from './read/row_shaping';
-export type { MaybeId, ReadOptions, Loose } from './read/facade';
-export { pairRead } from './read/facade';
+export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross, PublishedReads, UsePrimeAndVersion } from './read/facade';
+export { lookupRead, pairRead, publishReads } from './read/facade';
+export type { EachOf, ReadAcross } from './read/surface';
+export type { Coverage, CoverageProviderProps } from './read/coverage';
+export { createCoverage } from './read/coverage';
+export type { WithReadSpec } from './read/with_read';
+export { withRead } from './read/with_read';
 export type { WindowedBlock } from './read/windowed_list';
 export { createWindowedList } from './read/windowed_list';
 export type { DerivedValues, DerivedValuesDef, EntityCacheDeclaration } from './read/derived_values';

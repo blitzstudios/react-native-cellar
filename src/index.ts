@@ -14,7 +14,8 @@ import type { defineSqliteStore } from './define_sqlite_store';
 // What the host installs before it binds a store: where a report goes, the query runtime an ingest mounts on, and
 // when a read is live.
 export type { QueryClient, QuerySpec, QueryStatus, ReadGate, ReadGateRuntime } from './runtime';
-export { configureCellar } from './runtime';
+export type { QueryRuntime } from './runtime';
+export { configureCellar, reactQueryRuntime } from './runtime';
 
 // Declaring a store.
 export { defineSqliteStore } from './define_sqlite_store';
@@ -30,7 +31,8 @@ export type { PrimeState } from './prime_state';
 // builds a key.
 export type { CacheDeclaration, CacheFactory } from './cache_block';
 export type { CacheKeyPart } from './caches';
-export { byPartition, shallowEqualArray, shallowEqualRecord, shallowEqualStruct, shallowEqualValue } from './caches';
+export type { BoundedLru } from './caches';
+export { byPartition, createBoundedLru, shallowEqualArray, shallowEqualRecord, shallowEqualStruct, shallowEqualValue } from './caches';
 export { byEntity } from './read/derived_values';
 
 // The table a store's schema describes, and the rows it holds.
@@ -51,8 +53,13 @@ export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';
 
 // Declaring reads, and turning rows into view models.
 export { rowsOf } from './read/row_shaping';
-export type { MaybeId, ReadOptions, Loose } from './read/facade';
-export { pairRead } from './read/facade';
+export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross, PublishedReads, UsePrimeAndVersion } from './read/facade';
+export { lookupRead, pairRead, publishReads } from './read/facade';
+export type { EachOf, ReadAcross } from './read/surface';
+export type { Coverage, CoverageProviderProps } from './read/coverage';
+export { createCoverage } from './read/coverage';
+export type { WithReadSpec } from './read/with_read';
+export { withRead } from './read/with_read';
 export type { WindowedBlock } from './read/windowed_list';
 export { createWindowedList } from './read/windowed_list';
 export type { DerivedValues, DerivedValuesDef, EntityCacheDeclaration } from './read/derived_values';

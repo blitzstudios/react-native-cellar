@@ -8,7 +8,7 @@
  * args, and reading a partition that has never been fetched fetches it.
  */
 import { RawQuery } from './write/fetch_ingest';
-import { Read, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
+import { Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -289,7 +289,7 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
      * fetched and subscribed to, and its {@linkcode ReadAcrossDef.select | select} gets their keys, in order. Declared
      * like {@linkcode Partitions.defineRead | defineRead}.
      */
-    defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => Read<A, T>;
+    defineReadAcross: <A, T, Optional extends keyof A = never>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>) => ReadAcross<A, T>;
     /**
      * Declares the store's caches: every value it keeps on the heap beyond its rows, in one object, each under a name,
      * with entries kept per partition. Each entry is one of two kinds, named for what a write discards:

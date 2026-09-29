@@ -220,6 +220,24 @@ let runtime: CellarRuntime = { errors: INERT_ERRORS, query: INERT_QUERY, gate: I
  * Sets the services Cellar uses. Each part passed replaces the current one and the rest are kept, so the app can
  * configure them from different places, and a test can set one and leave the others as defaults.
  */
+/**
+ * The React Query hooks and client an app already has, as Cellar's {@linkcode QueryRuntime}. The hooks can be React
+ * Query's own or the app's wrappers around them (focus-gated ones, say), with whatever generics they declare: Cellar
+ * only ever calls them with a {@linkcode QuerySpec} and reads the {@linkcode QueryStatus} fields of what they return.
+ */
+export function reactQueryRuntime(hooks: {
+  client: () => import('@tanstack/query-core').QueryClient;
+  useQuery: (options: never) => QueryStatus;
+  useQueries: (options: never) => readonly QueryStatus[];
+}): QueryRuntime {
+  return {
+    // React Query's generics are wider than a `QuerySpec` in every position, so the shapes agree where Cellar uses them.
+    client: hooks.client as unknown as QueryRuntime['client'],
+    useQuery: hooks.useQuery as unknown as QueryRuntime['useQuery'],
+    useQueries: hooks.useQueries as unknown as QueryRuntime['useQueries'],
+  };
+}
+
 export function configureCellar(next: Partial<CellarRuntime>): void {
   runtime = {
     errors: next.errors ?? runtime.errors,

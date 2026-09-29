@@ -153,8 +153,10 @@ are more than a few small fields gives `partition.toKey` too. A read of several 
 player's stats across several weeks, is a `defineReadAcross`, whose `partitions` names them from the args.
 
 Until it is bound, a store runs over a connection that answers nothing, so each read gives back its `empty`. Startup
-binds it (step 4). On device, a SQLite failure mid-session reopens the database, deleting it first when the file is what
-failed, and after two failed reopens moves the store to an in-memory database: the same SQLite, with the store's tables
+binds it (step 4). On device, a read whose own statement fails (a query bug, or a value `json_extract` cannot parse) is
+reported once and answers empty, and the connection carries on. Any other SQLite failure mid-session reopens the
+database, deleting it first when the file is what failed, and after two failed reopens moves the store to an in-memory
+database: the same SQLite, with the store's tables
 in the connection's temp schema. With `react-native-nitro-sqlite` 1.1.5 or later in the binary, that database needs no
 file at all; on an older binary it is a scratch file beside the store's own, with `temp_store` in memory. `build` runs
 again each time the store moves, so it holds nothing outside what it returns — and `itemStore.reads` always reaches
@@ -223,13 +225,13 @@ Calling it with no `groupId` is fine: the read addresses nothing, fetches nothin
 The host installs two services, and binds each store to its platform's SQLite.
 
 ```ts
-import { configureCellar } from '@sleeperhq/react-native-cellar';
+import { configureCellar, reactQueryRuntime } from '@sleeperhq/react-native-cellar';
 import { AppState } from 'react-native';
 import { bindSqliteStore, retrySqliteStores } from '@sleeperhq/react-native-cellar/nitro';
 
 configureCellar({
   errors: { captureException, captureMessage },
-  query: { client: () => queryClient, useQuery, useQueries },
+  query: reactQueryRuntime({ client: () => queryClient, useQuery, useQueries }),
   gate: { useReadGate },
 });
 
@@ -250,7 +252,8 @@ initSqlJs({ locateFile: (file) => `/static/${file}` }).then((SQL) => bindSqlJsSt
 ```
 
 `useQuery` and `useQueries` are passed in rather than imported, so an app keeps its own fetch policy — focus
-gating, retries, whatever it already does. Until `configureCellar` runs Cellar is inert: reads answer
+gating, retries, whatever it already does. `reactQueryRuntime` takes React Query v4's hooks, or an app's wrappers of
+them, with whatever generics they declare. Until `configureCellar` runs Cellar is inert: reads answer
 from rows already stored, and nothing fetches.
 
 A database that will not open or migrate is retried once from empty, since it is only a cache. A store that still
@@ -345,7 +348,12 @@ with nothing to compare against, its rows go straight in and every entity counts
 
 | export | what it gives you |
 | --- | --- |
-| `cellar.defineRead()`, `cellar.defineReadAcross()` | a `{ getValue, useValue }` pair per read: one partition, or a set of them its `partitions` names. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once — which is why `__DEV__` freezes it: a key remembered for a reference is only sound while the content holds still |
+| `cellar.defineRead()`, `cellar.defineReadAcross()` | a `{ getValue, useValue }` pair per read: one partition, or a set of them its `partitions` names. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once. That is only sound while the content holds still, so `__DEV__` checks it on every reuse and warns when it changed, rather than freezing an object its owner may still mutate |
+| `read.useEach(args)` | on a `defineReadAcross` read whose value is a list with one entry per partition: one `DataResult` per partition, each `loading` until its own partition lands |
+| `publishReads(() => store.reads)` | every read of a store paired by name (`Reads.Player.useValue`, `Reads.Player.getValue`), so no read can be published one way only; `pairRead` for one read |
+| `lookupRead(usePrimeAndVersion, read)` | a hook returning a lookup function over one partition, such as a sport's players by id, whose identity changes only when the partition does |
+| `withRead(useRead, { prop, useParams })` | a read's value handed to a class or `connect` component as a prop |
+| `createCoverage(name)` | a list that already read its rows' values hands them to the rows below it, and a row reads its own only when the list doesn't cover it |
 | `pairRead(read)` | publishes a read's two halves on a service. A caller passes every arg the read's args type requires, each as a value it may not have yet. They return the same value but do not fetch alike: `useValue` refetches on React Query's staleness, `getValue` fetches a partition that has never been fetched and otherwise leaves it |
 | `rowsOf(table)` | a query, then a shape: `.rows`, `.map`, `.indexed`, `.grouped`, and `.ordered` for results parallel to the ids asked for — each returning the caller's stable empty |
 | `createWindowedList(...)` | windowed list reads: fetch a page, keep the rest in SQLite |
@@ -373,6 +381,8 @@ with nothing to compare against, its rows go straight in and every entity counts
 | export | what it gives you |
 | --- | --- |
 | `configureCellar(services)` | where an error report goes, and the React Query runtime an ingest mounts on |
+| `reactQueryRuntime({ client, useQuery, useQueries })` | an app's React Query v4 client and hooks as that runtime, typed without casts at the call site |
+| `createBoundedLru(max)` | the LRU map every cache here keeps its entries in, for an app's own bounded memo |
 | `reportStoreDegradation`, `createOnceGuard` | how Cellar reports a silent slowdown, and warn-once guards a test can reset |
 
 ## Entry points
@@ -384,6 +394,9 @@ with nothing to compare against, its rows go straight in and every entity counts
 | `…/sqljs` | `bindSqlJsStore` and `openSqlJsConnection`, over a sql.js module the app loads — what the web runs on |
 | `…/testing` | sql.js off-device (`createTestRowTable`, `createSqlJsConnection`), an in-process version atom, the host services as spies, and the internals only a test reaches for |
 | `…/diagnostics` | `getIngestTimings` and `rollupIngestTimings`, for a developer surface; no shipping screen reads these |
+| `…/redux` | `createReduxBridge(useStore)`: `useTrackedStores` and `withTrackedStores`, derivations over a Redux store and the Cellar stores together, which re-run on a dispatch that replaced the state or a write to what they read. Handed the app's `useStore`, so Cellar depends on neither Redux nor its React binding |
+
+The lint rules that go with these ship as [`@sleeperhq/eslint-plugin-cellar`](eslint-plugin/README.md).
 
 The core entry runs anywhere React does. Each subpath is declared twice — in `exports`, and as a stub
 `package.json` beside `lib/` — because TypeScript and Metro still resolve the way Node did before `exports`
