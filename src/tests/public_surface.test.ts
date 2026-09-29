@@ -29,7 +29,7 @@ describe('the core entry point', () => {
   it('exports what a store, a service or a screen writes against, and nothing else', () => {
     expect(exportedFrom('index.ts')).toEqual([
       'ALL_ENTITIES', 'BoundedLru', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'CellarContext', 'ChangeSet',
-      'ColumnDef', 'Coverage', 'CoverageProviderProps', 'DATA_RESULT_KEYS', 'DataResult', 'DataStatus', 'Dep',
+      'ColumnDef', 'Coverage', 'CoverageProviderProps', 'DATA_RESULT_KEYS', 'DataResult', 'DataStatus', 'DecodedRow', 'Dep',
       'DerivedValues', 'DerivedValuesDef', 'EachOf', 'EntityCacheDeclaration', 'Loose', 'MaybeId', 'NO_CHANGES',
       'NativeShredColumns', 'NativeShredSpec', 'PairedRead', 'PairedReadAcross', 'PartitionKeyColumn',
       'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'QueryClient',

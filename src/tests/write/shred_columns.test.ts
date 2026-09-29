@@ -1,3 +1,4 @@
+import { SqlValue } from '../../table/types';
 import { defineShredColumns, shredColumnValue, ShredColumn } from '../../write/shred_columns';
 import { evalShredElement } from '../../write/shred_spec';
 
@@ -51,5 +52,49 @@ describe('defineShredColumns — a column declared by its op alone', () => {
     const item: Item = { id: 'p1', team: 'KC', number: 15 };
     const row = shred.row(item, undefined);
     for (const column of shred.columns) expect(shredColumnValue(column, item, undefined)).toEqual((row as Record<string, unknown>)[column.name]);
+  });
+});
+
+describe('defineShredColumns — decode, a stored row read back', () => {
+  const stored = shred.row({ id: 'p1', team: 'SF', number: 13, stats: { rec: 6 }, active: true, positions: ['WR', 'TE'] }, undefined);
+  const empty = shred.row({ id: 'p2' }, undefined);
+
+  it('reads each named column as its op stored it, and nothing it was not asked for', () => {
+    expect(shred.decode(stored, ['id', 'team', 'number', 'rec'])).toEqual({ id: 'p1', team: 'SF', number: 13, rec: 6 });
+  });
+
+  it('reads a boolInt as a boolean, and a rawJsonField parsed', () => {
+    expect(shred.decode(stored, ['active', 'positions'])).toEqual({ active: true, positions: ['WR', 'TE'] });
+    expect(shred.decode(shred.row({ id: 'p3', active: false }, undefined), ['active']).active).toBe(false);
+  });
+
+  it('reads a NULL as undefined, or as null when the caller asks', () => {
+    expect(shred.decode(empty, ['team', 'active', 'positions'])).toEqual({ team: undefined, active: undefined, positions: undefined });
+    expect(shred.decode(empty, ['team', 'active'], { absent: null })).toEqual({ team: null, active: null });
+  });
+
+  it('reads JSON that does not parse as absent rather than throwing, since it runs during render', () => {
+    expect(shred.decode({ positions: '[not json' }, ['positions']).positions).toBeUndefined();
+  });
+
+  it("reads a column through its own decode, and that decode's null as absent", () => {
+    const decoded = defineShredColumns<Item>()([
+      {
+        name: 'positions',
+        type: 'TEXT',
+        op: { op: 'rawJsonField', path: 'positions' },
+        decode: (value: SqlValue) => {
+          const list = typeof value === 'string' ? (JSON.parse(value) as unknown[]) : [];
+          return list.length ? list.filter((part): part is string => typeof part === 'string') : null;
+        },
+      },
+    ] as const satisfies readonly ShredColumn<Item>[]);
+
+    expect(decoded.decode({ positions: '["WR", 3, "TE"]' }, ['positions']).positions).toEqual(['WR', 'TE']);
+    expect(decoded.decode({ positions: '[]' }, ['positions'], { absent: null }).positions).toBeNull();
+  });
+
+  it('fails for a name the table does not declare, which only a JS caller can pass', () => {
+    expect(() => shred.decode(stored, ['nope'] as never)).toThrow(/not a column/);
   });
 });

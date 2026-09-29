@@ -108,3 +108,33 @@ export const fallbackWithoutBuilder: ShredColumn<Player> = { name: 'sport', type
 
 // @ts-expect-error a column says how its value is computed one way or the other
 export const neither: ShredColumn<Player> = { name: 'team', type: 'TEXT' };
+
+const opOnly = defineShredColumns<Player>()(OP_ONLY);
+declare const storedOpRow: OpRow;
+
+/** `decode` types each column by what it reads back as: a NULL as undefined, a `boolInt` as a boolean. */
+export const decoded: { player_id: string; team: string | undefined; active: boolean | undefined } = opOnly.decode(storedOpRow, ['player_id', 'team', 'active']);
+
+/** Asked for `null`, a NULL reads as null. */
+export const decodedNull: { team: string | null } = opOnly.decode(storedOpRow, ['team'], { absent: null });
+
+// @ts-expect-error `decode` hands back only the columns it was asked for
+export const decodedUnasked: string = opOnly.decode(storedOpRow, ['player_id']).team;
+
+// @ts-expect-error a name the table does not declare is not one `decode` reads
+export const decodedNotAColumn = opOnly.decode(storedOpRow, ['opponent']);
+
+// @ts-expect-error a `boolInt` reads as a boolean, not the 0 or 1 stored
+export const decodedFlagAsNumber: number | undefined = opOnly.decode(storedOpRow, ['active']).active;
+
+const WITH_DECODE = [
+  {
+    name: 'positions',
+    type: 'TEXT',
+    op: { op: 'rawJsonField', path: 'fantasy_positions' },
+    decode: (value: string | number | null): string[] | null => (typeof value === 'string' ? (JSON.parse(value) as string[]) : null),
+  },
+] as const satisfies readonly ShredColumn<Player>[];
+
+/** A column's own `decode` types what it reads back as, with its null read as the caller's absent value. */
+export const decodedByColumn: string[] | undefined = defineShredColumns<Player>()(WITH_DECODE).decode({ positions: '["WR"]' }, ['positions']).positions;

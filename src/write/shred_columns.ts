@@ -33,6 +33,12 @@ interface ShredColumnBase {
    * same check runs in tests, so a row builder that misses the column fails in a test the way it would on a device.
    */
   notNull?: boolean;
+  /**
+   * How {@linkcode ShredColumnsBase.decode | decode} reads this column's stored value back, where the op's own reading
+   * is not what a caller wants: a JSON array validated into a list of strings, say. It is handed the value as stored,
+   * `null` included, and a `null` it returns reads as the caller's absent value.
+   */
+  decode?(stored: SqlValue): unknown;
 }
 
 /**
@@ -124,6 +130,27 @@ export type RowOf<Columns extends readonly ShredColumn<never, never>[]> = {
   [Column in Columns[number] as Column['name']]: ColumnValue<Column>;
 };
 
+/** A stored value with its `null` read as `Absent` instead. */
+type ReadAs<Value, Absent> = null extends Value ? Exclude<Value, null> | Absent : Value;
+
+/** What {@linkcode ShredColumnsBase.decode | decode} reads a column back as, given what a NULL reads as. */
+type DecodedValue<Column, Absent> = Column extends { decode(stored: never): infer Value }
+  ? ReadAs<Value, Absent>
+  : Column extends { op: { op: 'boolInt' } }
+    ? boolean | Absent
+    : Column extends { op: { op: 'rawJsonField' } }
+      ? unknown
+      : ReadAs<ColumnValue<Column>, Absent>;
+
+/**
+ * The named columns of a row as {@linkcode ShredColumnsBase.decode | decode} reads them back: each typed by what its op
+ * stores, a `boolInt` as a boolean, a column with its own {@linkcode ShredColumn.decode | decode} by what that
+ * returns, and a NULL as `Absent`.
+ */
+export type DecodedRow<Columns extends readonly ShredColumn<never, never>[], Names extends Columns[number]['name'], Absent = undefined> = {
+  [Column in Columns[number] as Column['name'] extends Names ? Column['name'] : never]: DecodedValue<Column, Absent>;
+};
+
 /** The `RowTableSchema['columns']` map a column table describes. */
 type ColumnDefsOf<Columns extends readonly ShredColumn<never, never>[]> = {
   [Column in Columns[number] as Column['name']]: ColumnDef;
@@ -156,6 +183,22 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
    * web, in tests, and on a device when the native shred can't run.
    */
   row: (src: Src, ctx: Ctx) => RowOf<Columns>;
+  /**
+   * Reads the named columns of a stored row back into JS values, which is most of what building a view model from a
+   * row is: each column as its {@linkcode ShredColumn.op | op} stores it, except that a `boolInt` reads as a boolean, a
+   * `rawJsonField` is parsed, and a column that declares its own {@linkcode ShredColumn.decode | decode} reads through
+   * it. A NULL reads as `options.absent`, which is `undefined` unless the caller says `null`, and so does JSON that does
+   * not parse.
+   *
+   * ```ts
+   * const vm = { ...itemShred.decode(row, ['item_id', 'name', 'rank']), label: row.name ?? 'Unnamed' };
+   * ```
+   */
+  decode<Names extends Columns[number]['name'], Absent extends null | undefined = undefined>(
+    row: { readonly [Name in Names]?: SqlValue },
+    names: readonly Names[],
+    options?: { absent: Absent },
+  ): DecodedRow<Columns, Names, Absent>;
 }
 
 /**
@@ -206,6 +249,27 @@ export function shredColumnValue<Src, Ctx>(column: ShredColumn<Src, Ctx>, src: S
   return column.js ? column.js(src, ctx) : evalShredOp(column.op, src, NO_BINDS);
 }
 
+type Decoder = (stored: SqlValue) => unknown;
+
+const AS_STORED: Decoder = (stored) => stored;
+const AS_FLAG: Decoder = (stored) => (stored == null ? null : stored === 1);
+const AS_JSON: Decoder = (stored) => {
+  if (typeof stored !== 'string') return null;
+  try {
+    return JSON.parse(stored) as unknown;
+  } catch {
+    return null;
+  }
+};
+
+/** How `decode` reads one column back: through the column's own `decode`, or as its op says what it stored. */
+function decoderOf(column: ShredColumn<never, never>): Decoder {
+  if (column.decode) return (stored) => column.decode!(stored);
+  if (column.op?.op === 'boolInt') return AS_FLAG;
+  if (column.op?.op === 'rawJsonField') return AS_JSON;
+  return AS_STORED;
+}
+
 /** Whether an op reads only the element, so the JS row builder can run it without the native write's binds. */
 function readsOnlyTheElement(op: ShredOp | undefined): boolean {
   if (!op || op.op === 'bind') return false;
@@ -224,8 +288,10 @@ function readsOnlyTheElement(op: ShredOp | undefined): boolean {
 export function defineShredColumns<Src, Ctx = void>() {
   return <const Columns extends readonly ShredColumn<Src, Ctx>[]>(columns: Columns): ShredColumns<Columns, Src, Ctx> => {
     const defs: Record<string, ColumnDef> = {};
+    const decoders: Record<string, Decoder> = {};
     for (const column of columns) {
       defs[column.name] = column.notNull ? { type: column.type, notNull: true } : { type: column.type };
+      decoders[column.name] = decoderOf(column as ShredColumn<never, never>);
       // Unreachable from TypeScript, which requires a builder unless the op reads only the element; this catches a JS caller.
       if (!column.js && !readsOnlyTheElement(column.op)) {
         throw new Error(`shred_columns: column ${JSON.stringify(column.name)} needs a js builder: its op reads a value only the native write has`);
@@ -257,6 +323,18 @@ export function defineShredColumns<Src, Ctx = void>() {
         for (const column of columns) row[column.name] = shredColumnValue(column, src, ctx);
         return row as RowOf<Columns>;
       },
+      decode: ((row: Readonly<Record<string, SqlValue | undefined>>, names: readonly string[], options?: { absent: null | undefined }) => {
+        const absent = options ? options.absent : undefined;
+        const out: Record<string, unknown> = {};
+        for (const name of names) {
+          // Unreachable from TypeScript, which types `names` by the table's columns; this catches a JS caller.
+          const decoder = decoders[name];
+          if (!decoder) throw new Error(`shred_columns: ${JSON.stringify(name)} is not a column of this table`);
+          const value = decoder(row[name] ?? null);
+          out[name] = value == null ? absent : value;
+        }
+        return out;
+      }) as ShredColumnsBase<Columns, Src, Ctx>['decode'],
     } as ShredColumns<Columns, Src, Ctx>;
   };
 }

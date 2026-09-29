@@ -50,7 +50,7 @@ same engine compiled to WebAssembly, through `./sqljs`. Tests use sql.js too, th
 
 ```jsonc
 // package.json
-"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.1.0-gitpkg",
+"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.2.5-gitpkg",
 // On device, the SQLite driver `./nitro` opens databases with: 1.1.4 or later, and 1.1.5 or later for an in-memory
 // fallback that needs no file. An app that runs Cellar only on the web or in tests leaves it out.
 "react-native-nitro-sqlite": "blitzstudios/react-native-nitro-sqlite.git#react-native-nitro-sqlite-v1.1.5-gitpkg"
@@ -96,6 +96,11 @@ writes the same value on either path, and the row type follows the op (`text` is
 express, such as a field that falls back to what the store passes for the write, keeps a `js` builder; a native store
 gives it an op too, and its parity test holds the two together. `shredColumnValue(column, src, ctx)` computes one
 column as the row builder would, for building part of a row.
+
+The same table reads a stored row back. `itemShred.decode(row, ['item_id', 'name'])` returns those columns as JS
+values, which is most of building a view model: a `boolInt` reads as a boolean, a `rawJsonField` is parsed, and a NULL
+reads as `undefined`, or as `null` with `{ absent: null }`. A column whose stored value needs more than that, such as
+a JSON list validated into strings, declares its own `decode`.
 
 Cellar adds the rest of the table: a `partition_key` column naming each row's partition, which leads the primary key
 and is indexed with the entity id, and a side table (`items_meta`) holding each partition's ETag and description.
@@ -335,7 +340,7 @@ Everything below is exported from the package root.
 | --- | --- |
 | `defineSqliteStore(config)` | the store, from its `schema`, `partition`, an optional `fetch` and `push`, and `build`: `reads`, `lifecycle`, and `push` for a store that declares one, on whichever connection is running, `capabilities` for what the store builds from that connection (a ranker running its own SQL, say), `bindSqlite` to run it on a connection, and `testing.over(conn)` for a test's own surface and the table to seed it through |
 | `build`'s `cellar` | the read and cache constructors (`defineRead`, `defineReadAcross`, `defineCaches`), a partition's `rows(key, filter?)`, the partition primitives (`keyOf`, `partitionOf`, `keys`, `has`, `versionOf`, `bump`, `clearEtag`, `where`), and the `table` and `caps` for a store's own SQL |
-| `defineShredColumns<Src, Ctx>()(columns)` | one column table bound to everything derived from it: `names`, `columnDefs`, `row`, and `ops` once every column declares one |
+| `defineShredColumns<Src, Ctx>()(columns)` | one column table bound to everything derived from it: `names`, `columnDefs`, `row`, `decode`, and `ops` once every column declares one |
 
 ### Rows
 

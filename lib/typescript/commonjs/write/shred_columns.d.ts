@@ -36,6 +36,12 @@ interface ShredColumnBase {
      * same check runs in tests, so a row builder that misses the column fails in a test the way it would on a device.
      */
     notNull?: boolean;
+    /**
+     * How {@linkcode ShredColumnsBase.decode | decode} reads this column's stored value back, where the op's own reading
+     * is not what a caller wants: a JSON array validated into a list of strings, say. It is handed the value as stored,
+     * `null` included, and a `null` it returns reads as the caller's absent value.
+     */
+    decode?(stored: SqlValue): unknown;
 }
 /**
  * One column of a store's table, declared with everything needed to fill it: its name and SQLite type, and how to
@@ -118,6 +124,28 @@ type ColumnValue<Column> = Column extends {
 export type RowOf<Columns extends readonly ShredColumn<never, never>[]> = {
     [Column in Columns[number] as Column['name']]: ColumnValue<Column>;
 };
+/** A stored value with its `null` read as `Absent` instead. */
+type ReadAs<Value, Absent> = null extends Value ? Exclude<Value, null> | Absent : Value;
+/** What {@linkcode ShredColumnsBase.decode | decode} reads a column back as, given what a NULL reads as. */
+type DecodedValue<Column, Absent> = Column extends {
+    decode(stored: never): infer Value;
+} ? ReadAs<Value, Absent> : Column extends {
+    op: {
+        op: 'boolInt';
+    };
+} ? boolean | Absent : Column extends {
+    op: {
+        op: 'rawJsonField';
+    };
+} ? unknown : ReadAs<ColumnValue<Column>, Absent>;
+/**
+ * The named columns of a row as {@linkcode ShredColumnsBase.decode | decode} reads them back: each typed by what its op
+ * stores, a `boolInt` as a boolean, a column with its own {@linkcode ShredColumn.decode | decode} by what that
+ * returns, and a NULL as `Absent`.
+ */
+export type DecodedRow<Columns extends readonly ShredColumn<never, never>[], Names extends Columns[number]['name'], Absent = undefined> = {
+    [Column in Columns[number] as Column['name'] extends Names ? Column['name'] : never]: DecodedValue<Column, Absent>;
+};
 /** The `RowTableSchema['columns']` map a column table describes. */
 type ColumnDefsOf<Columns extends readonly ShredColumn<never, never>[]> = {
     [Column in Columns[number] as Column['name']]: ColumnDef;
@@ -149,6 +177,22 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
      * web, in tests, and on a device when the native shred can't run.
      */
     row: (src: Src, ctx: Ctx) => RowOf<Columns>;
+    /**
+     * Reads the named columns of a stored row back into JS values, which is most of what building a view model from a
+     * row is: each column as its {@linkcode ShredColumn.op | op} stores it, except that a `boolInt` reads as a boolean, a
+     * `rawJsonField` is parsed, and a column that declares its own {@linkcode ShredColumn.decode | decode} reads through
+     * it. A NULL reads as `options.absent`, which is `undefined` unless the caller says `null`, and so does JSON that does
+     * not parse.
+     *
+     * ```ts
+     * const vm = { ...itemShred.decode(row, ['item_id', 'name', 'rank']), label: row.name ?? 'Unnamed' };
+     * ```
+     */
+    decode<Names extends Columns[number]['name'], Absent extends null | undefined = undefined>(row: {
+        readonly [Name in Names]?: SqlValue;
+    }, names: readonly Names[], options?: {
+        absent: Absent;
+    }): DecodedRow<Columns, Names, Absent>;
 }
 /**
  * The parts of a native shred program generated from a column list; present only when every column has an

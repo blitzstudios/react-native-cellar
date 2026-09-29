@@ -421,7 +421,7 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | ------------------------------------------------ | ------------------------------------------------------------------------ |
 | `fetch_ingest.ts`                                | write-through fetch → shred → bump                                       |
 | `push_ingest.ts`                                 | the push counterpart: buffer → dedupe → chunked write → bump, with per-partition holds for an in-flight fetch |
-| `shred_columns.ts`                               | co-located shred column table (each column's `sql` + its `js` twin), and `defineShredColumns`, which binds it to everything derived from it — `names`, `columnDefs`, `row`, and, once every column declares an `op`, `namedOps` and `ops` |
+| `shred_columns.ts`                               | co-located shred column table (each column's `sql` + its `js` twin), and `defineShredColumns`, which binds it to everything derived from it — `names`, `columnDefs`, `row`, `decode` (a stored row read back into JS values), and, once every column declares an `op`, `namedOps` and `ops` |
 | `shred_spec.ts`                                  | the native shred op language + its JS reference interpreter              |
 
 | `read/` — how rows come out                      |                                                                          |
