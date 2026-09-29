@@ -72,3 +72,39 @@ const partly = defineShredColumns<Event>()(PARTLY_SHREDDABLE);
 
 // @ts-expect-error one column short is still short: a bind order that skipped it would not match the columns
 export const partialOps = partly.ops;
+
+type Player = { team?: string | null; stats?: { rec?: number }; player_id?: string; active?: boolean };
+
+/** A column an op can say leaves the builder out, and its field is typed by what the op stores. */
+const OP_ONLY = [
+  { name: 'player_id', type: 'TEXT', notNull: true, op: { op: 'coalesceText', paths: ['player_id'], emptyDefault: true } },
+  { name: 'team', type: 'TEXT', op: { op: 'text', path: 'team' } },
+  { name: 'rec', type: 'REAL', op: { op: 'real0', path: 'stats.rec' } },
+  { name: 'active', type: 'INTEGER', op: { op: 'boolInt', path: 'active' } },
+  { name: 'label', type: 'TEXT', js: (player: Player): string => `${player.team}`, op: { op: 'text', path: 'team' } },
+] as const satisfies readonly ShredColumn<Player>[];
+
+type OpRow = RowOf<typeof OP_ONLY>;
+
+export const opRow: OpRow = { player_id: '1', team: null, rec: 0, active: 1, label: 'SF' };
+
+// @ts-expect-error `coalesceText` with an empty default always stores a string
+export const opIdNull: OpRow['player_id'] = null;
+
+// @ts-expect-error `real0` stores 0 for a missing value, never null
+export const opRecNull: OpRow['rec'] = null;
+
+// @ts-expect-error `boolInt` stores a flag as 1 or 0
+export const opActiveTwo: OpRow['active'] = 2;
+
+/** Every column carries an op, whether or not it also has a builder, so the table binds a native shred. */
+export const opOnlyOps: ShredOp[] = defineShredColumns<Player>()(OP_ONLY).ops;
+
+// @ts-expect-error a `bind` op reads a value only the native write is handed, so the column needs a builder
+export const bindWithoutBuilder: ShredColumn<Player> = { name: 'league', type: 'TEXT', op: { op: 'bind', index: 0 } };
+
+// @ts-expect-error and so does a `coalesceText` that falls back to a bind
+export const fallbackWithoutBuilder: ShredColumn<Player> = { name: 'sport', type: 'TEXT', op: { op: 'coalesceText', paths: ['sport'], fallbackBindIndex: 0 } };
+
+// @ts-expect-error a column says how its value is computed one way or the other
+export const neither: ShredColumn<Player> = { name: 'team', type: 'TEXT' };

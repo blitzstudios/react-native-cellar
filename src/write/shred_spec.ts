@@ -294,7 +294,11 @@ function coalesce(element: unknown, paths: readonly string[]): unknown {
   return undefined;
 }
 
-function evalOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue {
+/**
+ * What one op computes for one element, exactly as the C++ shredder does. It is also how a column that declares an op
+ * and no {@linkcode ShredColumn.js | js} builder is built in JS, so the two paths can't disagree about that column.
+ */
+export function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue {
   switch (op.op) {
     case 'bind':
       return binds[op.index] ?? null;
@@ -360,7 +364,7 @@ export function evalShredElement(spec: ShredSpec, element: unknown, binds: reado
   if (!passesGuard(spec, element)) return undefined;
   const row: Record<string, SqlValue> = {};
   for (let index = 0; index < spec.columns.length; index += 1) {
-    row[spec.columns[index]] = evalOp(spec.ops[index], element, binds);
+    row[spec.columns[index]] = evalShredOp(spec.ops[index], element, binds);
   }
   return row;
 }

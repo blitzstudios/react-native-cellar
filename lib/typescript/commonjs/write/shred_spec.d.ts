@@ -245,6 +245,11 @@ export interface NativeShredSpec<Partition extends object = Readonly<Record<stri
     binds: (partition: Partition) => SqlValue[];
 }
 /**
+ * What one op computes for one element, exactly as the C++ shredder does. It is also how a column that declares an op
+ * and no {@linkcode ShredColumn.js | js} builder is built in JS, so the two paths can't disagree about that column.
+ */
+export declare function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue;
+/**
  * Runs a native shred program on one element of a response body, in JS, and returns the row the C++ shredder produces
  * for it: an object from each of the program's {@linkcode ShredSpec.columns | columns} to the value its op computes.
  * Returns `undefined` when the program's {@linkcode ShredSpec.whereGuard | whereGuard} skips the element. A store's

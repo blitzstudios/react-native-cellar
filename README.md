@@ -28,7 +28,7 @@ A store's table is divided into partitions, and each row belongs to an entity.
 | **change set** | what a write changed: the entity id of every row it added, changed or removed. The write replaces those entities' rows, then bumps the partition's version and the version of each changed entity |
 | **read** | a query declared on a store, used as a hook or a getter. It fetches its partition if needed, and recomputes when what it depends on changes: a read that asks for particular entities (through a `byEntity` cache) depends on those entities; one that looks at the whole partition depends on the partition. The component re-renders only if the recomputed value differs. A read caches nothing itself: its values come from the store's caches |
 | **cache** | a store's values built from rows, declared in `defineCaches`: one value per entity (`byEntity`), rebuilt when that entity's rows change, or per partition and any key parts (`byPartition`), rebuilt when anything in the partition changes. The value is whatever the store builds, often a view model |
-| **shred** | turning a JSON response into rows: in C++ from a `NativeShredSpec`, so no JS object is built per row, or in JS with each column's `js` builder |
+| **shred** | turning a JSON response into rows: in C++ from a `NativeShredSpec`, so no JS object is built per row, or in JS from each column's `op` or `js` builder |
 
 ## Why
 
@@ -89,6 +89,13 @@ export const itemSchema: StoreTableSchema<ItemRow> = {
   entityId: 'item_id',
 };
 ```
+
+A column an op can describe declares the op instead of a builder: `{ name: 'name', type: 'TEXT', op: { op: 'text',
+path: 'name' } }`. The JS row builder runs the op the way the native shredder does, so a store that shreds natively
+writes the same value on either path, and the row type follows the op (`text` is `string | null`). A value no op can
+express, such as a field that falls back to what the store passes for the write, keeps a `js` builder; a native store
+gives it an op too, and its parity test holds the two together. `shredColumnValue(column, src, ctx)` computes one
+column as the row builder would, for building part of a row.
 
 Cellar adds the rest of the table: a `partition_key` column naming each row's partition, which leads the primary key
 and is indexed with the entity id, and a side table (`items_meta`) holding each partition's ETag and description.
@@ -297,7 +304,7 @@ Other calls of the same read keep following both gates.
   write. Fetches are orchestrated through the host's React Query, deduped and shared between readers.
 - **JSON that never becomes objects.** A response body can be shredded from text straight into columns in C++,
   so a large payload is never a JS object graph. Declaring a `NativeShredSpec` is optional; without one the same
-  columns are filled by their JS builders.
+  columns are filled in JS, from their ops or their builders.
 - **Schema migration with no migration to write.** `init` fingerprints the schema it built. A database whose
   fingerprint no longer matches is migrated on the spot — widened by `ALTER TABLE ADD COLUMN` when the change
   only added columns, rebuilt from the next fetch otherwise.

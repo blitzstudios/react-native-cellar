@@ -32,7 +32,7 @@ export { readRows, readRowsIn, pinnedReader } from './table/connection';
 export type { RawQuery } from './write/fetch_ingest';
 export { RAW_TEXT_RESPONSE_TRANSFORM } from './write/fetch_ingest';
 export type { ShredColumn, ShredColumns, ShredColumnsBase, NativeShredColumns, RowOf } from './write/shred_columns';
-export { defineShredColumns } from './write/shred_columns';
+export { defineShredColumns, shredColumnValue } from './write/shred_columns';
 export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';
 export { rowsOf } from './read/row_shaping';
 export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross } from './read/facade';

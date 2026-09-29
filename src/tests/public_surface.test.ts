@@ -42,7 +42,7 @@ describe('the core entry point', () => {
       'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
       'makeResult', 'pairRead', 'pinnedReader', 'reactQueryRuntime', 'readRows',
       'readRowsIn', 'reportStoreDegradation', 'rowsOf', 'runTracked', 'shallowEqualArray',
-      'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue', 'useTrackedValue', 'withRead',
+      'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue', 'shredColumnValue', 'useTrackedValue', 'withRead',
     ]);
   });
 
