@@ -1,0 +1,22 @@
+{
+  "name": "@sleeperhq/eslint-plugin-cellar",
+  "version": "1.0.0",
+  "description": "ESLint rules for an app built on @sleeperhq/react-native-cellar: stores behind their services, one call shape, and reads used as DataResults.",
+  "license": "MIT",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "peerDependencies": {
+    "eslint": ">=8"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "5.62.0",
+    "eslint": "8.38.0",
+    "typescript": "5.8.3"
+  }
+}
