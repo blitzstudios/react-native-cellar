@@ -60,10 +60,7 @@ export interface QuerySpec<T> {
    * the partition's version instead.
    */
   notifyOnChangeProps?: readonly string[];
-  /**
-   * The runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, on the query of a read whose caller passed
-   * {@linkcode ReadCallOptions.bypassGates | bypassGates}; absent otherwise.
-   */
+  /** The `meta` the read's caller passed ({@linkcode ReadCallOptions.meta | meta}); absent otherwise. */
   meta?: Readonly<Record<string, unknown>>;
 }
 
@@ -114,11 +111,11 @@ export interface QueryRuntime {
     queries: readonly QuerySpec<T>[];
   }) => readonly QueryStatus[];
   /**
-   * What a read's query carries as `meta` when its caller passed {@linkcode ReadCallOptions.bypassGates | bypassGates},
-   * for an app whose query hooks gate fetches (on screen focus, say) and let a query marked this way through. Unset,
-   * a bypassing read's query is the same as any other's.
+   * Whether a read call's {@linkcode ReadCallOptions.meta | meta} marks it as one that must stay current while its
+   * screen isn't live, for an app whose query hooks let such a query through their own gate (on screen focus, say).
+   * A call it accepts ignores the read gate too. Unset, no call does.
    */
-  bypassGateMeta?: Readonly<Record<string, unknown>>;
+  bypassesGates?: (meta: Readonly<Record<string, unknown>>) => boolean;
 }
 
 /**
@@ -237,15 +234,15 @@ export function reactQueryRuntime(hooks: {
   client: () => import('@tanstack/query-core').QueryClient;
   useQuery: (options: never) => QueryStatus;
   useQueries: (options: never) => readonly QueryStatus[];
-  /** See {@linkcode QueryRuntime.bypassGateMeta}. */
-  bypassGateMeta?: Readonly<Record<string, unknown>>;
+  /** See {@linkcode QueryRuntime.bypassesGates}. */
+  bypassesGates?: (meta: Readonly<Record<string, unknown>>) => boolean;
 }): QueryRuntime {
   return {
     // React Query's generics are wider than a `QuerySpec` in every position, so the shapes agree where Cellar uses them.
     client: hooks.client as unknown as QueryRuntime['client'],
     useQuery: hooks.useQuery as unknown as QueryRuntime['useQuery'],
     useQueries: hooks.useQueries as unknown as QueryRuntime['useQueries'],
-    bypassGateMeta: hooks.bypassGateMeta,
+    bypassesGates: hooks.bypassesGates,
   };
 }
 

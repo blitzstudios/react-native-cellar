@@ -32,7 +32,7 @@ import type { shallowEqualStruct } from '../caches';
 import type { byEntity } from './derived_values';
 import type { StoreSurface } from '../define_sqlite_store';
 import type { PrimeIntent } from '../write/fetch_ingest';
-import type { QueryRuntime } from '../runtime';
+import { queryRuntime, type QueryRuntime } from '../runtime';
 
 /**
  * The parts of a store's fetch ingest that its reads use: the hooks that fetch partitions, and imperative fetch starts.
@@ -219,12 +219,12 @@ export interface ReadCallOptions {
    */
   prime?: false;
   /**
-   * Set true for a call that must stay current while its screen isn't live: it keeps re-rendering when its data
-   * changes, whatever the app's read gate says, and its fetch carries the query runtime's
-   * {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, so an app that gates fetches lets it through. Other calls
-   * of the same read keep following the gates.
+   * The query `meta` this call's fetch carries, as a React Query hook's options do, so an app whose query hooks gate
+   * on it sees it there. A call whose `meta` the runtime's {@linkcode QueryRuntime.bypassesGates | bypassesGates}
+   * accepts must stay current while its screen isn't live: it ignores the read gate too, and keeps re-rendering when its
+   * data changes. Other calls of the same read keep following the gates.
    */
-  bypassGates?: boolean;
+  meta?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -344,13 +344,16 @@ export function useResult<T>(data: T, status: DataStatus, isFetching: boolean, d
 }
 
 const SELECTS_SLICE = { slice: true } as const;
-const BYPASSES_GATE = { bypassGate: true } as const;
-const SELECTS_SLICE_BYPASSING_GATE = { slice: true, bypassGate: true } as const;
 
-/** A call's prime intent, marked when the call bypasses the gates. */
-function intentWith(intent: { slice: boolean } | undefined, bypassGates: boolean | undefined): PrimeIntent | undefined {
-  if (!bypassGates) return intent;
-  return intent?.slice ? SELECTS_SLICE_BYPASSING_GATE : BYPASSES_GATE;
+/** A call's prime intent, with the query `meta` it passed. */
+function intentWith(intent: { slice: boolean } | undefined, meta: Readonly<Record<string, unknown>> | undefined): PrimeIntent | undefined {
+  if (!meta) return intent;
+  return intent?.slice ? { slice: true, meta } : { meta };
+}
+
+/** Whether a call's `meta` marks it as bypassing the read gate, by the app's {@linkcode QueryRuntime.bypassesGates}. */
+function bypassesGates(meta: Readonly<Record<string, unknown>> | undefined): boolean {
+  return !!meta && !!queryRuntime().bypassesGates?.(meta);
 }
 
 /**
@@ -575,14 +578,14 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const key = call?.key;
       const parts = call ? call.parts : NO_PARTS;
       const gates = gatesFor(args as Args, parts, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.bypassGates));
+      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.meta));
       const argsKey = call ? argsKeyOf(parts, args as object) : NO_ARGS_KEY;
       if (__DEV__ && gates.read) noteRead(store, argsKey, batchSizeOf(args as object));
       const data = useTrackedValue<T>(() => (hasOne(key as Key, parts) ? run(args as Args, key as Key, parts, () => argsKey) : def.empty), [argsKey], {
         enabled: gates.read,
         isEqual: def.isEqual ?? shallowEqualValue,
         empty: def.empty,
-        bypassGate: options?.bypassGates,
+        bypassGate: bypassesGates(options?.meta),
       });
       const doRefetch = useCallback(() => {
         if (key !== undefined) ingest?.refetch(key);
@@ -649,7 +652,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.bypassGates));
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const data = useTrackedValue<T>(
         () => {
@@ -657,7 +660,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
           return hasAny(entries) ? run(args as Args, keys, partitions, () => argsKey) : def.empty;
         },
         [argsKey],
-        { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty, bypassGate: options?.bypassGates },
+        { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty, bypassGate: bypassesGates(options?.meta) },
       );
       const doRefetch = useCallback(() => {
         for (const key of keys) ingest?.refetch(key);
@@ -671,7 +674,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.bypassGates));
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const isEqual = def.isEqual ?? shallowEqualValue;
       // Which partitions hold rows is part of the tracked value, so one landing re-renders even when the value it adds
@@ -687,7 +690,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
           enabled: gates.read,
           isEqual: (left, right) => isEqual(left.value, right.value) && shallowEqualArray(left.present, right.present),
           empty: emptyEach,
-          bypassGate: options?.bypassGates,
+          bypassGate: bypassesGates(options?.meta),
         },
       );
       const doRefetch = useCallback(() => {

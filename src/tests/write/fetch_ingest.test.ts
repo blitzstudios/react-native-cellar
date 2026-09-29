@@ -665,18 +665,13 @@ describe('createFetchIngest — usePrime (reactive wiring)', () => {
     expect(res).toEqual({ isInitialLoading: false, isFetching: false, isError: false });
   });
 
-  it("puts the runtime's bypass meta on the query of a caller bypassing the gates, and on no other", () => {
+  it("puts a caller's meta on its query, and on no other caller's", () => {
     const harness = makeCfg();
     const ingest = createFetchIngest(harness.cfg);
-    const configured = queryRuntime();
-    configureCellar({ query: { ...configured, bypassGateMeta: { bypassFocusGate: true } } });
-    try {
-      ingest.usePrime('us', true, { bypassGate: true });
-      ingest.usePrime('us');
-      renderHook(() => ingest.usePrimeMany(['us', 'eu'], true, { bypassGate: true }));
-    } finally {
-      configureCellar({ query: configured });
-    }
+
+    ingest.usePrime('us', true, { meta: { bypassFocusGate: true } });
+    ingest.usePrime('us');
+    renderHook(() => ingest.usePrimeMany(['us', 'eu'], true, { meta: { bypassFocusGate: true } }));
 
     expect(useFocusGatedQueryMock.mock.calls[0][0].meta).toEqual({ bypassFocusGate: true });
     expect(useFocusGatedQueryMock.mock.calls[1][0]).not.toHaveProperty('meta');
@@ -684,13 +679,15 @@ describe('createFetchIngest — usePrime (reactive wiring)', () => {
     expect(many.map((query: { meta?: unknown }) => query.meta)).toEqual([{ bypassFocusGate: true }, { bypassFocusGate: true }]);
   });
 
-  it('leaves a bypassing query unmarked when the runtime names no bypass meta', () => {
+  it('keeps a set of queries when its caller passes the same meta again, as a new object', () => {
     const harness = makeCfg();
     const ingest = createFetchIngest(harness.cfg);
 
-    ingest.usePrime('us', true, { bypassGate: true });
+    const probe = renderHook(() => ingest.usePrimeMany(['us', 'eu'], true, { meta: { bypassFocusGate: true } }));
+    probe.rerender();
 
-    expect(useFocusGatedQueryMock.mock.calls[0][0]).not.toHaveProperty('meta');
+    const calls = useFocusGatedQueriesMock.mock.calls;
+    expect(calls[calls.length - 1][0].queries).toBe(calls[0][0].queries);
   });
 
   it('disables the query when a part is falsy, or when explicitly disabled', () => {

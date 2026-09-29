@@ -51,10 +51,7 @@ export interface QuerySpec<T> {
      * the partition's version instead.
      */
     notifyOnChangeProps?: readonly string[];
-    /**
-     * The runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, on the query of a read whose caller passed
-     * {@linkcode ReadCallOptions.bypassGates | bypassGates}; absent otherwise.
-     */
+    /** The `meta` the read's caller passed ({@linkcode ReadCallOptions.meta | meta}); absent otherwise. */
     meta?: Readonly<Record<string, unknown>>;
 }
 /** The fields of a {@linkcode QueryRuntime.useQuery | useQuery} result Cellar reads. */
@@ -102,11 +99,11 @@ export interface QueryRuntime {
         queries: readonly QuerySpec<T>[];
     }) => readonly QueryStatus[];
     /**
-     * What a read's query carries as `meta` when its caller passed {@linkcode ReadCallOptions.bypassGates | bypassGates},
-     * for an app whose query hooks gate fetches (on screen focus, say) and let a query marked this way through. Unset,
-     * a bypassing read's query is the same as any other's.
+     * Whether a read call's {@linkcode ReadCallOptions.meta | meta} marks it as one that must stay current while its
+     * screen isn't live, for an app whose query hooks let such a query through their own gate (on screen focus, say).
+     * A call it accepts ignores the read gate too. Unset, no call does.
      */
-    bypassGateMeta?: Readonly<Record<string, unknown>>;
+    bypassesGates?: (meta: Readonly<Record<string, unknown>>) => boolean;
 }
 /**
  * A read gate: tells the reads in one part of the app (typically one screen) whether they are live. A live read is
@@ -167,8 +164,8 @@ export declare function reactQueryRuntime(hooks: {
     client: () => import('@tanstack/query-core').QueryClient;
     useQuery: (options: never) => QueryStatus;
     useQueries: (options: never) => readonly QueryStatus[];
-    /** See {@linkcode QueryRuntime.bypassGateMeta}. */
-    bypassGateMeta?: Readonly<Record<string, unknown>>;
+    /** See {@linkcode QueryRuntime.bypassesGates}. */
+    bypassesGates?: (meta: Readonly<Record<string, unknown>>) => boolean;
 }): QueryRuntime;
 /**
  * Sets the services Cellar uses. Each part passed replaces the current one and the rest are kept, so the app can

@@ -242,18 +242,15 @@ export interface PrimeIntent {
    * isn't used.
    */
   slice?: boolean;
-  /**
-   * True when the caller asked to bypass the gates ({@linkcode ReadCallOptions.bypassGates | bypassGates}): the query
-   * carries the runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}.
-   */
-  bypassGate?: boolean;
+  /** The caller's query `meta` ({@linkcode ReadCallOptions.meta | meta}), which the partition's query carries. */
+  meta?: Readonly<Record<string, unknown>>;
 }
 
 const NO_META: { meta?: Readonly<Record<string, unknown>> } = Object.freeze({});
 
-/** The `meta` a prime query carries: the runtime's bypass marker for a caller bypassing the gates, else none. */
-function metaFor(runtime: QueryRuntime, opts: PrimeIntent | undefined): { meta?: Readonly<Record<string, unknown>> } {
-  return opts?.bypassGate && runtime.bypassGateMeta ? { meta: runtime.bypassGateMeta } : NO_META;
+/** The `meta` a prime query carries: its caller's, else none. */
+function metaFor(opts: PrimeIntent | undefined): { meta?: Readonly<Record<string, unknown>> } {
+  return opts?.meta ? { meta: opts.meta } : NO_META;
 }
 
 const OVERSIZED_PRIME_ROWS = 5_000;
@@ -433,7 +430,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
       enabled: isEnabled,
       ...timings,
       notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
-      ...metaFor(runtime, opts),
+      ...metaFor(opts),
     });
     return { isInitialLoading: result.isInitialLoading, isFetching: result.isFetching, isError: result.isError };
   }
@@ -444,7 +441,8 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     if (!opts?.slice) for (const entry of addressable) wantedWhole.add(partitionLabel(entry.parts));
     const identity = partitionsKey(addressable.map((entry) => entry.parts));
     const runtime = queryRuntime();
-    const bypassGate = !!opts?.bypassGate;
+    // Callers pass `meta` inline, a new object each render, so memo on its contents.
+    const metaKey = opts?.meta ? JSON.stringify(opts.meta) : '';
     const queries = useMemo(
       () =>
         addressable.map(({ key, parts }) => {
@@ -454,10 +452,10 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
             enabled,
             ...timingsFor(key),
             notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
-            ...metaFor(runtime, opts),
+            ...metaFor(opts),
           };
         }),
-      [identity, enabled, bypassGate], // eslint-disable-line react-hooks/exhaustive-deps -- `identity` covers `addressable`
+      [identity, enabled, metaKey], // eslint-disable-line react-hooks/exhaustive-deps -- `identity` covers `addressable`
     );
     const results = runtime.useQueries({ queries });
     // Failed only if *every* partition failed, so one bad partition degrades to a gap in the list.

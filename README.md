@@ -278,10 +278,18 @@ render when it goes live again. They do not blank, and the gate never reaches th
 re-rendered on gate changes would wake every screen in the stack on each navigation, which is the cost this
 avoids. Configure no gate and every read stays live.
 
-A call that has to stay current on a screen that isn't live passes `options: { bypassGates: true }`. Its reads
-ignore the read gate, and its fetch carries as `meta` whatever the app passed `reactQueryRuntime` as
-`bypassGateMeta` (`{ bypassFocusGate: true }`, say), so query hooks that gate on focus can let it through. Other
-calls of the same read keep following both gates.
+A read call takes `meta` as a React Query hook does, and its fetch carries it, so the app's query hooks see what
+they would on any other query. A call that has to stay current on a screen that isn't live passes the `meta` those
+hooks already let through their own gate, and the app tells `reactQueryRuntime` which `meta` that is, so the read
+gate lets it through too:
+
+```ts
+query: reactQueryRuntime({ client, useQuery, useQueries, bypassesGates: (meta) => meta.bypassFocusGate === true }),
+// …
+Stats.Hooks.useStats({ params, options: { meta: { bypassFocusGate: true } } });
+```
+
+Other calls of the same read keep following both gates.
 
 ## What you get without writing it
 

@@ -155,11 +155,8 @@ export interface PrimeIntent {
      * isn't used.
      */
     slice?: boolean;
-    /**
-     * True when the caller asked to bypass the gates ({@linkcode ReadCallOptions.bypassGates | bypassGates}): the query
-     * carries the runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}.
-     */
-    bypassGate?: boolean;
+    /** The caller's query `meta` ({@linkcode ReadCallOptions.meta | meta}), which the partition's query carries. */
+    meta?: Readonly<Record<string, unknown>>;
 }
 /**
  * Creates a store's fetching: one React Query query per partition (the set of rows one fetch returns and replaces). Its

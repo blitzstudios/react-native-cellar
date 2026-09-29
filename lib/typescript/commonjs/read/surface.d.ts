@@ -20,7 +20,7 @@ import type { pairRead } from './facade';
 import type { shallowEqualStruct } from '../caches';
 import type { byEntity } from './derived_values';
 import type { StoreSurface } from '../define_sqlite_store';
-import type { QueryRuntime } from '../runtime';
+import { type QueryRuntime } from '../runtime';
 /**
  * The parts of a store's fetch ingest that its reads use: the hooks that fetch partitions, and imperative fetch starts.
  */
@@ -203,12 +203,12 @@ export interface ReadCallOptions {
      */
     prime?: false;
     /**
-     * Set true for a call that must stay current while its screen isn't live: it keeps re-rendering when its data
-     * changes, whatever the app's read gate says, and its fetch carries the query runtime's
-     * {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, so an app that gates fetches lets it through. Other calls
-     * of the same read keep following the gates.
+     * The query `meta` this call's fetch carries, as a React Query hook's options do, so an app whose query hooks gate
+     * on it sees it there. A call whose `meta` the runtime's {@linkcode QueryRuntime.bypassesGates | bypassesGates}
+     * accepts must stay current while its screen isn't live: it ignores the read gate too, and keeps re-rendering when its
+     * data changes. Other calls of the same read keep following the gates.
      */
-    bypassGates?: boolean;
+    meta?: Readonly<Record<string, unknown>>;
 }
 /**
  * A declared read, as a store's {@linkcode StoreSurface.reads | reads} hold it: a hook

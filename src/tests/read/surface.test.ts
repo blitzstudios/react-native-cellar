@@ -10,6 +10,7 @@ import { createVersionAtom } from '../../reactivity/version_atom';
 import { createVersionedCache, shallowEqualRecord } from '../../caches';
 import { runTracked } from '../../reactivity/tracking';
 import type { PrimeIntent } from '../../write/fetch_ingest';
+import { configureCellar, INERT_GATE, queryRuntime, ReadGate } from '../../runtime';
 
 /* global globalThis */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -940,7 +941,7 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
     probe.unmount();
   });
 
-  it('marks the prime of a call that bypasses the gates, and only that call', () => {
+  it("carries a call's meta on its prime, and only that call's", () => {
     const harness = makeHarness();
     const list = harness.surface.readAcross<{ keys: string[] }, Slice[]>({
       partitions: (args) => args.keys,
@@ -948,12 +949,47 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
       empty: [],
     });
 
-    const bypassing = renderHook(() => list.useValue({ keys: ['a'] }, { bypassGates: true }));
-    expect(harness.spies.primeIntents[harness.spies.primeIntents.length - 1]).toEqual({ bypassGate: true });
-    const gated = renderHook(() => list.useValue({ keys: ['a'] }));
+    const marked = renderHook(() => list.useValue({ keys: ['a'] }, { meta: { bypassFocusGate: true } }));
+    expect(harness.spies.primeIntents[harness.spies.primeIntents.length - 1]).toEqual({ meta: { bypassFocusGate: true } });
+    const plain = renderHook(() => list.useValue({ keys: ['a'] }));
     expect(harness.spies.primeIntents[harness.spies.primeIntents.length - 1]).toBeUndefined();
-    bypassing.unmount();
-    gated.unmount();
+    marked.unmount();
+    plain.unmount();
+  });
+
+  it("keeps a call live while the read gate is closed when the runtime says its meta bypasses the gates", () => {
+    const harness = makeHarness();
+    let live = true;
+    const listeners = new Set<() => void>();
+    const gate: ReadGate = {
+      isLive: () => live,
+      onChange: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const configured = queryRuntime();
+    configureCellar({ gate: { useReadGate: () => gate }, query: { ...configured, bypassesGates: (meta) => meta.bypassFocusGate === true } });
+    try {
+      const read = harness.read(harness.sliceDef);
+      harness.land('p1', { a: { score: 1 } });
+      const bypassing = renderHook(() => read.useValue({ key: 'p1' }, { meta: { bypassFocusGate: true } }));
+      const otherMeta = renderHook(() => read.useValue({ key: 'p1' }, { meta: { source: 'test' } }));
+      const gated = renderHook(() => read.useValue({ key: 'p1' }));
+
+      act(() => {
+        live = false;
+        listeners.forEach((listener) => listener());
+      });
+      harness.land('p1', { a: { score: 2 } });
+
+      expect(bypassing.current.data).toEqual({ a: { score: 2 } });
+      expect(otherMeta.current.data).toEqual({ a: { score: 1 } });
+      expect(gated.current.data).toEqual({ a: { score: 1 } });
+      [bypassing, otherMeta, gated].forEach((probe) => probe.unmount());
+    } finally {
+      configureCellar({ gate: INERT_GATE, query: configured });
+    }
   });
 
   it('declines to prime a whole set when the call site says its parent owns the fetch', () => {
