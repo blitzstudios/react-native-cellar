@@ -3,12 +3,8 @@
  * which publishes each of a store's reads as a hook and a getter taking one `{ params, options }` argument.
  */
 
-import { useMemo } from 'react';
-
 import type { EachOf, Read, ReadAcross, ReadCallOptions } from './surface';
 import type { DataResult } from '../store_result';
-import { stableKey } from '../args_key';
-import { runSubscribed } from '../reactivity/tracking';
 import type { CommonDef } from './surface';
 import type { RawQuery } from '../write/fetch_ingest';
 
@@ -102,59 +98,6 @@ export function pairRead<Args, T>(read: () => Read<Args, T> | ReadAcross<Args, T
 export interface PairedReadAcross<Params, T> extends PairedRead<Params, T> {
   /** One `DataResult` per partition the args name, in order: {@linkcode ReadAcross.useEach}. */
   useEach: (args: { params: Params } & ReadOptions) => readonly DataResult<EachOf<T>>[];
-}
-
-/** Every read of a store, paired: what {@linkcode publishReads} hands back. */
-export type PublishedReads<Reads> = {
-  readonly [K in keyof Reads]: Reads[K] extends ReadAcross<infer A, infer T>
-    ? PairedReadAcross<Loose<A>, T>
-    : Reads[K] extends Read<infer A, infer T>
-      ? PairedRead<Loose<A>, T>
-      : never;
-};
-
-/**
- * Every one of a store's reads, published as a hook and a getter ({@linkcode pairRead}), under the read's own name.
- * `reads` is called on every use, like `pairRead`'s, so a read always reaches the store's current database. Nothing
- * can be published one way only: each read's pair exists as soon as the store declares the read.
- */
-export function publishReads<Reads extends object>(reads: () => Reads): PublishedReads<Reads> {
-  const paired = new Map<PropertyKey, unknown>();
-  return new Proxy({} as PublishedReads<Reads>, {
-    get(_target, name) {
-      if (typeof name !== 'string') return undefined;
-      let pair = paired.get(name);
-      if (!pair) {
-        pair = pairRead(() => (reads() as Record<string, Read<unknown, unknown>>)[name]);
-        paired.set(name, pair);
-      }
-      return pair;
-    },
-  });
-}
-
-/** The version hook a store's lifecycle has, which a lookup subscribes to: `store.lifecycle.usePrimeAndVersion`. */
-export type UsePrimeAndVersion<KeyArgs> = (args: Loose<KeyArgs> | undefined, options?: { enabled?: boolean; bypassGates?: boolean }) => DataResult<number>;
-
-/**
- * A hook returning a function that looks one entry up in a partition, such as a sport's players by id: `lookup(rest)`
- * is `read`'s value for the partition's args plus `rest`. The hook fetches the partition, and the function's identity
- * changes whenever the partition does, so a component that passes it down re-renders its children then and only then.
- */
-export function lookupRead<KeyArgs extends object, Rest extends object, T>(
-  usePrimeAndVersion: () => UsePrimeAndVersion<KeyArgs>,
-  read: () => Read<KeyArgs & Rest, T>,
-): (args: { params: Loose<KeyArgs> } & ReadOptions) => (rest: Loose<Rest>) => T {
-  return ({ params, options }) => {
-    const { data: version } = usePrimeAndVersion()(params, { enabled: options?.enabled ?? true, bypassGates: options?.bypassGates });
-    const paramsKey = stableKey(params);
-    return useMemo(
-      () => (rest: Loose<Rest>) => runSubscribed(() => read().getValue({ ...params, ...rest } as unknown as KeyArgs & Rest)),
-      // `paramsKey` is `params` by content; the version is what makes the function new when the partition changes.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [paramsKey, version],
-    );
-  };
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a

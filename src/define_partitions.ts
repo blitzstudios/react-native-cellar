@@ -8,28 +8,24 @@
  * args, and reading a partition that has never been fetched fetches it.
  */
 
-import { useCallback } from 'react';
 
 import { cacheKey, partitionLabel, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
-import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs, useResult } from './read/surface';
+import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
-import { addressesPartition, NO_PARTS, VersionAtom } from './reactivity/version_atom';
+import { addressesPartition, VersionAtom } from './reactivity/version_atom';
 import { PartitionField, partitionKeyOf } from './read/partition_fields';
 import { NO_PRIMING, PrimeState } from './prime_state';
-import { DataResult, readStatus } from './store_result';
+import type { DataResult } from './store_result';
 import { reportStoreDegradation } from './diagnostics/telemetry';
-import { runSubscribed } from './reactivity/tracking';
 import type { Loose } from './read/facade';
 import { ALL_ENTITIES, ChangeSet, isUnchanged, WriteResult } from './table/change_set';
 import type { SqliteStoreConfig } from './define_sqlite_store';
-import type { CommonDef, ReadCallOptions } from './read/surface';
+import type { CommonDef } from './read/surface';
 import type { byPartition } from './caches';
 import type { byEntity, DerivedValues } from './read/derived_values';
-
-const BYPASSES_GATE = { bypassGate: true } as const;
 
 /** No partition: args still being filled in, or a slot a caller left empty, which keeps its index in the result. */
 type MaybePartition<Descriptor> = Descriptor | null | undefined;
@@ -185,20 +181,6 @@ export interface PrimeHookOptions {
   enabled?: boolean;
 }
 
-/**
- * Options for a store's {@linkcode PartitionLifecycle.usePrimeAndVersion | usePrimeAndVersion} hook, which fetches a
- * partition and re-renders when it changes.
- */
-export interface PrimeAndVersionOptions extends PrimeHookOptions {
-  /**
-   * Set false to only subscribe: the hook still re-renders when the partition changes, but never starts a fetch. For a
-   * component whose parent already fetches the partition.
-   */
-  prime?: false;
-  /** As a read's {@linkcode ReadCallOptions.bypassGates | bypassGates}: the hook follows neither gate. */
-  bypassGates?: boolean;
-}
-
 /** Options for a store's imperative {@linkcode PartitionLifecycle.fetch | fetch}. */
 export interface FetchOptions {
   /**
@@ -228,13 +210,6 @@ export interface PartitionLifecycle<Args> {
    * only if all failed.
    */
   usePrimeMany: (args: readonly Args[], options?: PrimeHookOptions) => PrimeState;
-  /**
-   * A hook that fetches the partition the args name (as {@linkcode PartitionLifecycle.usePrime | usePrime} does) and
-   * returns its version number as a {@linkcode DataResult}, re-rendering the component on every write that changes the
-   * partition. For a component that reads the store with getters rather than hooks and needs something that re-renders
-   * it when the rows change.
-   */
-  usePrimeAndVersion: (args: Loose<Args> | undefined, options?: PrimeAndVersionOptions) => DataResult<number>;
   /**
    * Whether the partition the args name holds any rows. Tracked: inside a tracking scope (a
    * {@linkcode Read.useValue | useValue} read, `useTrackedStores`, a tracked selector), the scope re-runs when the
@@ -551,21 +526,6 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
    */
   const keyOfHookArgs = (args: Loose<Args>): Key => keyOfArgs(args as Args);
 
-  function usePrimeAndVersion(args: Loose<Args> | undefined, options?: PrimeAndVersionOptions): DataResult<number> {
-    const key = args === undefined ? undefined : keyOfHookArgs(args);
-    const parts = key === undefined ? NO_PARTS : toParts(key);
-    const isEnabled = (options?.enabled ?? true) && key !== undefined && addressesPartition(parts);
-    // `prime: false` keeps the version subscription and drops only the fetch, the same split `ReadCallOptions` makes.
-    const prime = usePriming(key, isEnabled && options?.prime !== false, options?.bypassGates ? BYPASSES_GATE : undefined);
-    const ver = version.useVersion(parts, isEnabled, options?.bypassGates);
-    const partsKey = cacheKeyOf(parts);
-    const status = runSubscribed(() => readStatus(isEnabled, isEnabled && surface.has(key as Key), prime));
-    const doRefetch = useCallback(() => {
-      if (key !== undefined) ingest?.refetch(key);
-    }, [partsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `partsKey` covers `key`
-    return useResult(ver, status, prime.isFetching, doRefetch);
-  }
-
   /** A read across partitions names them as records; the keys they address are this layer's to resolve. */
   function readAcrossOf<A, T, Optional extends keyof A>(def: PartitionReadAcrossDef<A, Key, T, Descriptor, Optional>): ReadAcross<A, T> {
     const named = def.partitions;
@@ -587,7 +547,6 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     lifecycle: {
       usePrime: (args, options) => usePriming(args === undefined ? undefined : keyOfHookArgs(args), options?.enabled ?? true),
       usePrimeMany: (args, options) => usePrimingAll(args.map(keyOfArgs), options?.enabled ?? true),
-      usePrimeAndVersion,
       has: (args) => has(keyOfArgs(args)),
       getVersion: (args) => versionOf(keyOfArgs(args)),
       getFetchedAt: (args) => {

@@ -125,54 +125,7 @@ describe('createVersionAtom — imperative surface', () => {
 });
 
 describe('createVersionAtom — reactive hooks', () => {
-  it('useVersion re-reads on a bump to its partition and ignores unrelated bumps', () => {
-    const atom = createVersionAtom('test_store_version');
-    const probe = renderHook(() => atom.useVersion(US));
-    expect(probe.current).toBe(0);
 
-    act(() => {
-      atom.bump(US);
-    });
-    expect(probe.current).toBe(1);
-
-    const rendersBefore = probe.renders;
-    act(() => {
-      atom.bump(EU);
-    });
-    expect(probe.current).toBe(1);
-    expect(probe.renders).toBe(rendersBefore);
-
-    probe.unmount();
-  });
-
-  it('shares one entry across subscribers — a single bump updates all', () => {
-    const atom = createVersionAtom('test_store_version');
-    const first = renderHook(() => atom.useVersion(US));
-    const second = renderHook(() => atom.useVersion(US));
-
-    act(() => {
-      atom.bump(US);
-    });
-    expect(first.current).toBe(1);
-    expect(second.current).toBe(1);
-
-    first.unmount();
-    second.unmount();
-  });
-
-  it('useVersion stays 0 and unsubscribed when a partition part is falsy (disabled)', () => {
-    const atom = createVersionAtom('test_store_version');
-    const disabled = ['us', '', 'regular', '5'];
-    const probe = renderHook(() => atom.useVersion(disabled));
-    expect(probe.current).toBe(0);
-
-    act(() => {
-      atom.bump(disabled);
-    });
-    expect(probe.current).toBe(0);
-
-    probe.unmount();
-  });
 });
 
 describe('createVersionAtom — entities', () => {

@@ -83,28 +83,5 @@ export interface PairedReadAcross<Params, T> extends PairedRead<Params, T> {
         params: Params;
     } & ReadOptions) => readonly DataResult<EachOf<T>>[];
 }
-/** Every read of a store, paired: what {@linkcode publishReads} hands back. */
-export type PublishedReads<Reads> = {
-    readonly [K in keyof Reads]: Reads[K] extends ReadAcross<infer A, infer T> ? PairedReadAcross<Loose<A>, T> : Reads[K] extends Read<infer A, infer T> ? PairedRead<Loose<A>, T> : never;
-};
-/**
- * Every one of a store's reads, published as a hook and a getter ({@linkcode pairRead}), under the read's own name.
- * `reads` is called on every use, like `pairRead`'s, so a read always reaches the store's current database. Nothing
- * can be published one way only: each read's pair exists as soon as the store declares the read.
- */
-export declare function publishReads<Reads extends object>(reads: () => Reads): PublishedReads<Reads>;
-/** The version hook a store's lifecycle has, which a lookup subscribes to: `store.lifecycle.usePrimeAndVersion`. */
-export type UsePrimeAndVersion<KeyArgs> = (args: Loose<KeyArgs> | undefined, options?: {
-    enabled?: boolean;
-    bypassGates?: boolean;
-}) => DataResult<number>;
-/**
- * A hook returning a function that looks one entry up in a partition, such as a sport's players by id: `lookup(rest)`
- * is `read`'s value for the partition's args plus `rest`. The hook fetches the partition, and the function's identity
- * changes whenever the partition does, so a component that passes it down re-renders its children then and only then.
- */
-export declare function lookupRead<KeyArgs extends object, Rest extends object, T>(usePrimeAndVersion: () => UsePrimeAndVersion<KeyArgs>, read: () => Read<KeyArgs & Rest, T>): (args: {
-    params: Loose<KeyArgs>;
-} & ReadOptions) => (rest: Loose<Rest>) => T;
 export type { CommonDef, DataResult, RawQuery, Read };
 //# sourceMappingURL=facade.d.ts.map

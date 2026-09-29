@@ -1,6 +1,6 @@
 {
   "name": "@sleeperhq/eslint-plugin-cellar",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ESLint rules for an app built on @sleeperhq/react-native-cellar: stores behind their services, one call shape, and reads used as DataResults.",
   "license": "MIT",
   "main": "index.js",

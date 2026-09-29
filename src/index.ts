@@ -53,8 +53,8 @@ export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';
 
 // Declaring reads, and turning rows into view models.
 export { rowsOf } from './read/row_shaping';
-export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross, PublishedReads, UsePrimeAndVersion } from './read/facade';
-export { lookupRead, pairRead, publishReads } from './read/facade';
+export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross } from './read/facade';
+export { pairRead } from './read/facade';
 export type { EachOf, ReadAcross } from './read/surface';
 export type { Coverage, CoverageProviderProps } from './read/coverage';
 export { createCoverage } from './read/coverage';
@@ -67,7 +67,7 @@ export type { DerivedValues, DerivedValuesDef, EntityCacheDeclaration } from './
 // Repainting on a write.
 export type { VersionAtom } from './reactivity/version_atom';
 export type { Dep } from './reactivity/tracking';
-export { runTracked, runSubscribed } from './reactivity/tracking';
+export { runTracked } from './reactivity/tracking';
 export { createTrackedSelector } from './reactivity/tracked_selector';
 export type { TrackedValueOptions } from './reactivity/tracked_value';
 export { useTrackedValue } from './reactivity/tracked_value';

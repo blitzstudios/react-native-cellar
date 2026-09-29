@@ -157,27 +157,6 @@ describe('the read gate on a subscription', () => {
     expect(gate.watchers()).toBe(0);
   });
 
-  it('gates useVersion the same way, so a gated reader of the raw counter also holds', () => {
-    const gate = controllableGate();
-    gate.install();
-    const atom = createVersionAtom('test_store_version');
-
-    const probe = renderHook(() => atom.useVersion(US));
-    act(() => {
-      atom.bump(US);
-    });
-    expect(probe.current).toBe(1);
-
-    gate.set(false);
-    act(() => {
-      atom.bump(US);
-    });
-    expect(probe.current).toBe(1);
-
-    gate.set(true);
-    expect(probe.current).toBe(2);
-  });
-
   it('keeps a read that bypasses the gate live while the gate is closed', () => {
     const gate = controllableGate();
     gate.install();
@@ -198,20 +177,6 @@ describe('the read gate on a subscription', () => {
 
     expect(bypassing.current).toBe('second');
     expect(gated.current).toBe('first');
-  });
-
-  it('keeps useVersion live for a caller that bypasses the gate', () => {
-    const gate = controllableGate();
-    gate.install();
-    const atom = createVersionAtom('test_store_version');
-
-    const probe = renderHook(() => atom.useVersion(US, true, true));
-    gate.set(false);
-    act(() => {
-      atom.bump(US);
-    });
-
-    expect(probe.current).toBe(1);
   });
 
   it('keeps every read live when the host configures no gate', () => {

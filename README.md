@@ -355,8 +355,6 @@ with nothing to compare against, its rows go straight in and every entity counts
 | --- | --- |
 | `cellar.defineRead()`, `cellar.defineReadAcross()` | a `{ getValue, useValue }` pair per read: one partition, or a set of them its `partitions` names. A read declares none of its args: it waits until every arg its caller passed has a value, fetching nothing meanwhile, and runs `select` again when they change. `optionalArgs` names the few it may be handed without one. An arg that is an object or an array keys by its content, and its identity is remembered per reference so a caller holding one across a list serializes it once. That is only sound while the content holds still, so `__DEV__` checks it on every reuse and warns when it changed, rather than freezing an object its owner may still mutate |
 | `read.useEach(args)` | on a `defineReadAcross` read whose value is a list with one entry per partition: one `DataResult` per partition, each `loading` until its own partition lands |
-| `publishReads(() => store.reads)` | every read of a store paired by name (`Reads.Player.useValue`, `Reads.Player.getValue`), so no read can be published one way only; `pairRead` for one read |
-| `lookupRead(usePrimeAndVersion, read)` | a hook returning a lookup function over one partition, such as a sport's players by id, whose identity changes only when the partition does |
 | `withRead(useRead, { prop, useParams })` | a read's value handed to a class or `connect` component as a prop |
 | `createCoverage(name)` | a list that already read its rows' values hands them to the rows below it, and a row reads its own only when the list doesn't cover it |
 | `pairRead(read)` | publishes a read's two halves on a service. A caller passes every arg the read's args type requires, each as a value it may not have yet. They return the same value but do not fetch alike: `useValue` refetches on React Query's staleness, `getValue` fetches a partition that has never been fetched and otherwise leaves it |
@@ -368,7 +366,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 
 | export | what it gives you |
 | --- | --- |
-| `runTracked`, `runSubscribed` | the tracking scopes an imperative read runs inside |
+| `runTracked` | the tracking scope an imperative read runs inside |
 | `createTrackedSelector` | store-aware reselect, for reads reached from a Redux selector |
 | `useTrackedValue` | the hook every reactive read goes through: runs a derivation, subscribes to exactly what it read, and honours the read gate — for a derivation over several stores, or over Redux as well |
 

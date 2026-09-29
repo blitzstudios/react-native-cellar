@@ -13,7 +13,7 @@ import { RowShape, RowTable } from './table/types';
 import { CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
 import { PrimeState } from './prime_state';
-import { DataResult } from './store_result';
+import type { DataResult } from './store_result';
 import type { Loose } from './read/facade';
 import { ChangeSet } from './table/change_set';
 import type { SqliteStoreConfig } from './define_sqlite_store';
@@ -169,19 +169,6 @@ export interface PrimeHookOptions {
      */
     enabled?: boolean;
 }
-/**
- * Options for a store's {@linkcode PartitionLifecycle.usePrimeAndVersion | usePrimeAndVersion} hook, which fetches a
- * partition and re-renders when it changes.
- */
-export interface PrimeAndVersionOptions extends PrimeHookOptions {
-    /**
-     * Set false to only subscribe: the hook still re-renders when the partition changes, but never starts a fetch. For a
-     * component whose parent already fetches the partition.
-     */
-    prime?: false;
-    /** As a read's {@linkcode ReadCallOptions.bypassGates | bypassGates}: the hook follows neither gate. */
-    bypassGates?: boolean;
-}
 /** Options for a store's imperative {@linkcode PartitionLifecycle.fetch | fetch}. */
 export interface FetchOptions {
     /**
@@ -210,13 +197,6 @@ export interface PartitionLifecycle<Args> {
      * only if all failed.
      */
     usePrimeMany: (args: readonly Args[], options?: PrimeHookOptions) => PrimeState;
-    /**
-     * A hook that fetches the partition the args name (as {@linkcode PartitionLifecycle.usePrime | usePrime} does) and
-     * returns its version number as a {@linkcode DataResult}, re-rendering the component on every write that changes the
-     * partition. For a component that reads the store with getters rather than hooks and needs something that re-renders
-     * it when the rows change.
-     */
-    usePrimeAndVersion: (args: Loose<Args> | undefined, options?: PrimeAndVersionOptions) => DataResult<number>;
     /**
      * Whether the partition the args name holds any rows. Tracked: inside a tracking scope (a
      * {@linkcode Read.useValue | useValue} read, `useTrackedStores`, a tracked selector), the scope re-runs when the

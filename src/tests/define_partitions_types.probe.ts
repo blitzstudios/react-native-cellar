@@ -30,25 +30,18 @@ const byRecord = definePartitions<Row, string, Locator, { region: string; week: 
 /** A key spelled by fields takes the fields a caller has so far, as its reads do. */
 export const looseFields = () => {
   byFields.lifecycle.usePrime({ region: undefined });
-  byFields.lifecycle.usePrimeAndVersion({ region: null });
+  byFields.lifecycle.usePrime({ region: null });
 };
 
 /** A key computed from a record takes the record a caller has so far, which `key.of` answers `null` for. */
 export const looseRecord = () => {
   byRecord.lifecycle.usePrime({ locator: { region: 'us', week: 1 } });
   byRecord.lifecycle.usePrime({ locator: undefined });
-  byRecord.lifecycle.usePrimeAndVersion(undefined);
+  byRecord.lifecycle.usePrime(undefined);
 };
 
 /** Loose reaches the args' own fields, not through them: a record short of a field `key.of` reads is a mistake. */
 export const strictWithinTheRecord = () => {
   // @ts-expect-error `week` is one of the fields this partition is addressed by
-  byRecord.lifecycle.usePrimeAndVersion({ locator: { region: 'us' } });
-};
-
-/** A subscriber that another caller feeds keeps the version and declines the fetch, and cannot ask for one. */
-export const passiveSubscriber = () => {
-  byFields.lifecycle.usePrimeAndVersion({ region: 'us' }, { prime: false });
-  // @ts-expect-error only `false` — a call site may decline priming, never demand it
-  byFields.lifecycle.usePrimeAndVersion({ region: 'us' }, { prime: true });
+  byRecord.lifecycle.usePrime({ locator: { region: 'us' } });
 };

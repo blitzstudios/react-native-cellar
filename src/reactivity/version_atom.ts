@@ -8,12 +8,9 @@
  * entities only when those entities change, a read of the whole partition on any change.
  */
 
-import { useCallback, useRef } from 'react';
-import { useSyncExternalStore } from 'use-sync-external-store/shim';
 
 import { cacheKey, GROUP_SEP, cacheKeyOf } from '../args_key';
 import { getOrCreate } from '../collections';
-import { useReadGateFor } from '../runtime';
 import { Dep, trackDependency } from './tracking';
 import { ALL_ENTITIES, ChangeSet, isUnchanged } from '../table/change_set';
 import type { Read } from '../read/surface';
@@ -97,13 +94,6 @@ export interface VersionAtom {
   bumpAll(): void;
   /** Calls `listener` after every write that changes the partition, and returns a function that unsubscribes it. */
   subscribe(parts: readonly string[], listener: () => void): () => void;
-  /**
-   * The partition's version number as a hook, re-rendering the component after every write that changes the partition.
-   * While the component's read gate isn't live (its screen is hidden, say), it keeps returning the version it had and
-   * doesn't re-render; when the gate is live again, it re-renders once if the partition changed meanwhile, unless
-   * `bypassGate` keeps it subscribed throughout. `enabled` false returns 0 and subscribes to nothing.
-   */
-  useVersion(parts: readonly string[], enabled?: boolean, bypassGate?: boolean): number;
 }
 
 type Listener = () => void;
@@ -283,63 +273,7 @@ export function createVersionAtom(root: string): VersionAtom {
   const subscribe = (parts: readonly string[], listener: Listener): (() => void) =>
     listen(specifier(parts), (entry) => entry.listeners, listener);
 
-  /**
-   * The host's read gate, applied to a subscription. While the gate is dead the subscription is dropped and the
-   * version is HELD at what it was when the gate closed, so a read keeps showing the value it already had rather
-   * than repainting with data nobody is looking at. When the gate goes live the subscription is restored and, only
-   * if the version moved meanwhile, one notification is sent so the reader catches up in a single render.
-   */
-  function useHeldVersion(spec: string, enabled: boolean, bypassGate: boolean | undefined) {
-    const gate = useReadGateFor(bypassGate);
-    // Non-null exactly while held. Written from the subscription below, never from `getSnapshot`, which stays pure.
-    const held = useRef<number | null>(null);
-
-    const subscribeHeld = useCallback(
-      (onChange: () => void) => {
-        if (!enabled) return () => {};
-        let unsub: (() => void) | null = null;
-        const sync = (announce: boolean) => {
-          if (gate.isLive()) {
-            const wasHeld = held.current;
-            held.current = null;
-            if (!unsub) unsub = listen(spec, (entry) => entry.listeners, onChange);
-            // Nothing moved while away, so there is nothing to catch up on and no render to spend.
-            if (announce && wasHeld !== null && wasHeld !== valueOf(spec)) onChange();
-          } else {
-            // Captured as the gate closes, so a bump arriving later cannot move what a held read shows.
-            held.current = valueOf(spec);
-            unsub?.();
-            unsub = null;
-          }
-        };
-        sync(false);
-        const offGate = gate.onChange(() => sync(true));
-        return () => {
-          unsub?.();
-          offGate();
-          held.current = null;
-        };
-      },
-      [spec, enabled, gate],
-    );
-
-    const getSnapshot = useCallback(() => {
-      if (!enabled) return 0;
-      const version = held.current;
-      return version !== null ? version : valueOf(spec);
-    }, [spec, enabled]);
-
-    return { subscribe: subscribeHeld, getSnapshot };
-  }
-
-  const useVersion = (parts: readonly string[], enabled?: boolean, bypassGate?: boolean): number => {
-    const spec = specifier(parts);
-    const isEnabled = (enabled ?? true) && addressesPartition(parts);
-    const { subscribe: subscribeHeld, getSnapshot } = useHeldVersion(spec, isEnabled, bypassGate);
-    return useSyncExternalStore(subscribeHeld, getSnapshot, getSnapshot);
-  };
-
-  return { key, get, getEntity, getPresence, bump, bumpAll, subscribe, useVersion };
+  return { key, get, getEntity, getPresence, bump, bumpAll, subscribe };
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
