@@ -96,6 +96,7 @@ export declare function publishReads<Reads extends object>(reads: () => Reads): 
 /** The version hook a store's lifecycle has, which a lookup subscribes to: `store.lifecycle.usePrimeAndVersion`. */
 export type UsePrimeAndVersion<KeyArgs> = (args: Loose<KeyArgs> | undefined, options?: {
     enabled?: boolean;
+    bypassGates?: boolean;
 }) => DataResult<number>;
 /**
  * A hook returning a function that looks one entry up in a partition, such as a sport's players by id: `lookup(rest)`

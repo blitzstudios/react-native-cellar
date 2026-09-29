@@ -9,6 +9,7 @@ import { resetOnceGuards } from '../../diagnostics/once_guard';
 import { createVersionAtom } from '../../reactivity/version_atom';
 import { createVersionedCache, shallowEqualRecord } from '../../caches';
 import { runTracked } from '../../reactivity/tracking';
+import type { PrimeIntent } from '../../write/fetch_ingest';
 
 /* global globalThis */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,6 +52,7 @@ function makeHarness() {
     ensure: [] as string[],
     usePrime: [] as { key: string; enabled: boolean }[],
     usePrimeMany: [] as { keys: string[]; enabled: boolean }[],
+    primeIntents: [] as (PrimeIntent | undefined)[],
     refetch: [] as string[],
     has: [] as string[],
   };
@@ -64,15 +66,17 @@ function makeHarness() {
     },
     hasFetched: (key) => fetchedAt.has(key),
     ingest: {
-      usePrime: (key, enabled) => {
+      usePrime: (key, enabled, intent) => {
         spies.usePrime.push({ key: key as string, enabled });
+        spies.primeIntents.push(intent);
         const isError = enabled && !!key && failed.has(key);
         const isInitialLoading = enabled && !isError && !(!!key && present.has(key));
         return { isInitialLoading, isFetching: isInitialLoading, isError };
       },
-      usePrimeMany: (allKeys, enabled) => {
+      usePrimeMany: (allKeys, enabled, intent) => {
         const keys = allKeys.filter(Boolean);
         spies.usePrimeMany.push({ keys, enabled });
+        spies.primeIntents.push(intent);
         const isError = enabled && keys.length > 0 && keys.every((key) => failed.has(key));
         const isInitialLoading = enabled && !isError && keys.some((key) => !present.has(key));
         return { isInitialLoading, isFetching: isInitialLoading, isError };
@@ -919,7 +923,7 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
     oneFailed.unmount();
   });
 
-  it('primes a set it is not yet reading, since a disabled read still wants its data on the way', () => {
+  it('fetches nothing for a set its enabled turns off, since it would read none of it', () => {
     const harness = makeHarness();
     const EMPTY_LIST: Slice[] = [];
     const list = harness.surface.readAcross<{ keys: string[]; reading: boolean }, Slice[]>({
@@ -931,9 +935,25 @@ describe('createReadSurface — readAcross (a read spanning a variable partition
 
     const probe = renderHook(() => list.useValue({ keys: ['a', 'b'], reading: false }));
 
-    expect(harness.spies.usePrimeMany[harness.spies.usePrimeMany.length - 1]).toEqual({ keys: ['a', 'b'], enabled: true });
+    expect(harness.spies.usePrimeMany[harness.spies.usePrimeMany.length - 1]).toEqual({ keys: ['a', 'b'], enabled: false });
     expect(probe.current.data).toBe(EMPTY_LIST);
     probe.unmount();
+  });
+
+  it('marks the prime of a call that bypasses the gates, and only that call', () => {
+    const harness = makeHarness();
+    const list = harness.surface.readAcross<{ keys: string[] }, Slice[]>({
+      partitions: (args) => args.keys,
+      select: (_args, keys) => keys.map((key) => harness.slices.get(key) ?? harness.EMPTY),
+      empty: [],
+    });
+
+    const bypassing = renderHook(() => list.useValue({ keys: ['a'] }, { bypassGates: true }));
+    expect(harness.spies.primeIntents[harness.spies.primeIntents.length - 1]).toEqual({ bypassGate: true });
+    const gated = renderHook(() => list.useValue({ keys: ['a'] }));
+    expect(harness.spies.primeIntents[harness.spies.primeIntents.length - 1]).toBeUndefined();
+    bypassing.unmount();
+    gated.unmount();
   });
 
   it('declines to prime a whole set when the call site says its parent owns the fetch', () => {

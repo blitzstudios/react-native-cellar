@@ -178,6 +178,42 @@ describe('the read gate on a subscription', () => {
     expect(probe.current).toBe(2);
   });
 
+  it('keeps a read that bypasses the gate live while the gate is closed', () => {
+    const gate = controllableGate();
+    gate.install();
+    const atom = createVersionAtom('test_store_version');
+    const state = { value: 'first' };
+    const compute = () => {
+      atom.get(US);
+      return state.value;
+    };
+    const bypassing = renderHook(() => useTrackedValue(compute, ['k'], { enabled: true, isEqual: Object.is, empty: 'empty', bypassGate: true }));
+    const gated = renderHook(() => useTrackedValue(compute, ['k'], { enabled: true, isEqual: Object.is, empty: 'empty' }));
+
+    gate.set(false);
+    act(() => {
+      state.value = 'second';
+      atom.bump(US);
+    });
+
+    expect(bypassing.current).toBe('second');
+    expect(gated.current).toBe('first');
+  });
+
+  it('keeps useVersion live for a caller that bypasses the gate', () => {
+    const gate = controllableGate();
+    gate.install();
+    const atom = createVersionAtom('test_store_version');
+
+    const probe = renderHook(() => atom.useVersion(US, true, true));
+    gate.set(false);
+    act(() => {
+      atom.bump(US);
+    });
+
+    expect(probe.current).toBe(1);
+  });
+
   it('keeps every read live when the host configures no gate', () => {
     // INERT_GATE is the default, so this is the behaviour of a host that never opted in — and of every other test in
     // this package that does not install one.

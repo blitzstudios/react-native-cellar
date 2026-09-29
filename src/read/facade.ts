@@ -134,7 +134,7 @@ export function publishReads<Reads extends object>(reads: () => Reads): Publishe
 }
 
 /** The version hook a store's lifecycle has, which a lookup subscribes to: `store.lifecycle.usePrimeAndVersion`. */
-export type UsePrimeAndVersion<KeyArgs> = (args: Loose<KeyArgs> | undefined, options?: { enabled?: boolean }) => DataResult<number>;
+export type UsePrimeAndVersion<KeyArgs> = (args: Loose<KeyArgs> | undefined, options?: { enabled?: boolean; bypassGates?: boolean }) => DataResult<number>;
 
 /**
  * A hook returning a function that looks one entry up in a partition, such as a sport's players by id: `lookup(rest)`
@@ -146,7 +146,7 @@ export function lookupRead<KeyArgs extends object, Rest extends object, T>(
   read: () => Read<KeyArgs & Rest, T>,
 ): (args: { params: Loose<KeyArgs> } & ReadOptions) => (rest: Loose<Rest>) => T {
   return ({ params, options }) => {
-    const { data: version } = usePrimeAndVersion()(params, { enabled: options?.enabled ?? true });
+    const { data: version } = usePrimeAndVersion()(params, { enabled: options?.enabled ?? true, bypassGates: options?.bypassGates });
     const paramsKey = stableKey(params);
     return useMemo(
       () => (rest: Loose<Rest>) => runSubscribed(() => read().getValue({ ...params, ...rest } as unknown as KeyArgs & Rest)),

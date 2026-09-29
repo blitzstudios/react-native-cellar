@@ -86,10 +86,10 @@ export interface VersionAtom {
     /**
      * The partition's version number as a hook, re-rendering the component after every write that changes the partition.
      * While the component's read gate isn't live (its screen is hidden, say), it keeps returning the version it had and
-     * doesn't re-render; when the gate is live again, it re-renders once if the partition changed meanwhile. `enabled`
-     * false returns 0 and subscribes to nothing.
+     * doesn't re-render; when the gate is live again, it re-renders once if the partition changed meanwhile, unless
+     * `bypassGate` keeps it subscribed throughout. `enabled` false returns 0 and subscribes to nothing.
      */
-    useVersion(parts: readonly string[], enabled?: boolean): number;
+    useVersion(parts: readonly string[], enabled?: boolean, bypassGate?: boolean): number;
 }
 /**
  * Creates a store's {@linkcode VersionAtom}: the version numbers, per partition and per entity, that its reads depend

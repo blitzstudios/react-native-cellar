@@ -179,6 +179,8 @@ export interface PrimeAndVersionOptions extends PrimeHookOptions {
      * component whose parent already fetches the partition.
      */
     prime?: false;
+    /** As a read's {@linkcode ReadCallOptions.bypassGates | bypassGates}: the hook follows neither gate. */
+    bypassGates?: boolean;
 }
 /** Options for a store's imperative {@linkcode PartitionLifecycle.fetch | fetch}. */
 export interface FetchOptions {

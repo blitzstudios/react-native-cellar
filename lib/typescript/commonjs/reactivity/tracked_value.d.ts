@@ -30,6 +30,8 @@ export interface TrackedValueOptions<T> {
      * also reads Redux state. Called with a `notify` function that re-runs the computation; returns an unsubscribe.
      */
     subscribeExtra?: (notify: () => void) => () => void;
+    /** True to stay subscribed while the component's read gate isn't live, so the hook keeps re-rendering on changes. */
+    bypassGate?: boolean;
 }
 /**
  * A hook that runs `compute` as a tracking scope (recording every store version number it reads), subscribes to what it
@@ -40,7 +42,7 @@ export interface TrackedValueOptions<T> {
  *
  * It follows the app's read gate: while the component's gate isn't live (its screen is hidden, say), it unsubscribes
  * and keeps returning its last value, so a hidden screen doesn't re-render. When the gate is live again, it re-runs and
- * re-renders once, if anything changed meanwhile.
+ * re-renders once, if anything changed meanwhile. {@linkcode TrackedValueOptions.bypassGate | bypassGate} opts out.
  */
 export declare function useTrackedValue<T>(compute: () => T, inputs: DependencyList, options: TrackedValueOptions<T>): T;
 export type { Read };

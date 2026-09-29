@@ -10,7 +10,7 @@
 import { DependencyList, useCallback, useEffect, useState } from 'react';
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector';
 
-import { readGateRuntime } from '../runtime';
+import { useReadGateFor } from '../runtime';
 import { Dep, runTracked } from './tracking';
 import type { Read } from '../read/surface';
 
@@ -36,6 +36,8 @@ export interface TrackedValueOptions<T> {
    * also reads Redux state. Called with a `notify` function that re-runs the computation; returns an unsubscribe.
    */
   subscribeExtra?: (notify: () => void) => () => void;
+  /** True to stay subscribed while the component's read gate isn't live, so the hook keeps re-rendering on changes. */
+  bypassGate?: boolean;
 }
 
 interface Tracked<T> {
@@ -91,11 +93,11 @@ function subscribeTo(inst: Instance, deps: readonly Dep[]): void {
  *
  * It follows the app's read gate: while the component's gate isn't live (its screen is hidden, say), it unsubscribes
  * and keeps returning its last value, so a hidden screen doesn't re-render. When the gate is live again, it re-runs and
- * re-renders once, if anything changed meanwhile.
+ * re-renders once, if anything changed meanwhile. {@linkcode TrackedValueOptions.bypassGate | bypassGate} opts out.
  */
 export function useTrackedValue<T>(compute: () => T, inputs: DependencyList, options: TrackedValueOptions<T>): T {
-  const { enabled, isEqual, empty, subscribeExtra } = options;
-  const gate = readGateRuntime().useReadGate();
+  const { enabled, isEqual, empty, subscribeExtra, bypassGate } = options;
+  const gate = useReadGateFor(bypassGate);
   const [inst] = useState(createInstance);
 
   const subscribe = useCallback(

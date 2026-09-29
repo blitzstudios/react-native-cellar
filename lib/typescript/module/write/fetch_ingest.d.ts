@@ -7,11 +7,12 @@
  */
 import { VersionAtom } from '../reactivity/version_atom';
 import { PrimeState } from '../prime_state';
+import type { QueryRuntime } from '../runtime';
 import { ChangeSet, WriteResult } from '../table/change_set';
 import type { PartitionFetchSpec, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
 import type { DataResult } from '../store_result';
 import type { IngestTiming } from '../diagnostics/ingest_timing';
-import type { CommonDef } from '../read/surface';
+import type { CommonDef, ReadCallOptions } from '../read/surface';
 /** What a partition's request resolves to: the response body, its ETag, and whether the server answered 304. */
 export interface RawFetchResponse {
     /**
@@ -154,6 +155,11 @@ export interface PrimeIntent {
      * isn't used.
      */
     slice?: boolean;
+    /**
+     * True when the caller asked to bypass the gates ({@linkcode ReadCallOptions.bypassGates | bypassGates}): the query
+     * carries the runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}.
+     */
+    bypassGate?: boolean;
 }
 /**
  * Creates a store's fetching: one React Query query per partition (the set of rows one fetch returns and replaces). Its
@@ -163,5 +169,5 @@ export interface PrimeIntent {
  * store's {@linkcode PartitionsConfig.fetch | fetch} spec, so a store declares that spec rather than calling this.
  */
 export declare function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest<Key>;
-export type { CommonDef, DataResult, IngestTiming, PartitionFetchSpec, Partitions, PartitionsConfig, PrimeState, VersionAtom, definePartitions };
+export type { CommonDef, DataResult, IngestTiming, PartitionFetchSpec, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };
 //# sourceMappingURL=fetch_ingest.d.ts.map

@@ -25,9 +25,11 @@ import { runSubscribed } from './reactivity/tracking';
 import type { Loose } from './read/facade';
 import { ALL_ENTITIES, ChangeSet, isUnchanged, WriteResult } from './table/change_set';
 import type { SqliteStoreConfig } from './define_sqlite_store';
-import type { CommonDef } from './read/surface';
+import type { CommonDef, ReadCallOptions } from './read/surface';
 import type { byPartition } from './caches';
 import type { byEntity, DerivedValues } from './read/derived_values';
+
+const BYPASSES_GATE = { bypassGate: true } as const;
 
 /** No partition: args still being filled in, or a slot a caller left empty, which keeps its index in the result. */
 type MaybePartition<Descriptor> = Descriptor | null | undefined;
@@ -193,6 +195,8 @@ export interface PrimeAndVersionOptions extends PrimeHookOptions {
    * component whose parent already fetches the partition.
    */
   prime?: false;
+  /** As a read's {@linkcode ReadCallOptions.bypassGates | bypassGates}: the hook follows neither gate. */
+  bypassGates?: boolean;
 }
 
 /** Options for a store's imperative {@linkcode PartitionLifecycle.fetch | fetch}. */
@@ -547,13 +551,13 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
    */
   const keyOfHookArgs = (args: Loose<Args>): Key => keyOfArgs(args as Args);
 
-  function usePrimeAndVersion(args: Loose<Args> | undefined, options?: { enabled?: boolean; prime?: false }): DataResult<number> {
+  function usePrimeAndVersion(args: Loose<Args> | undefined, options?: PrimeAndVersionOptions): DataResult<number> {
     const key = args === undefined ? undefined : keyOfHookArgs(args);
     const parts = key === undefined ? NO_PARTS : toParts(key);
     const isEnabled = (options?.enabled ?? true) && key !== undefined && addressesPartition(parts);
     // `prime: false` keeps the version subscription and drops only the fetch, the same split `ReadCallOptions` makes.
-    const prime = usePriming(key, isEnabled && options?.prime !== false);
-    const ver = version.useVersion(parts, isEnabled);
+    const prime = usePriming(key, isEnabled && options?.prime !== false, options?.bypassGates ? BYPASSES_GATE : undefined);
+    const ver = version.useVersion(parts, isEnabled, options?.bypassGates);
     const partsKey = cacheKeyOf(parts);
     const status = runSubscribed(() => readStatus(isEnabled, isEnabled && surface.has(key as Key), prime));
     const doRefetch = useCallback(() => {

@@ -31,6 +31,8 @@ import type { pairRead } from './facade';
 import type { shallowEqualStruct } from '../caches';
 import type { byEntity } from './derived_values';
 import type { StoreSurface } from '../define_sqlite_store';
+import type { PrimeIntent } from '../write/fetch_ingest';
+import type { QueryRuntime } from '../runtime';
 
 /**
  * The parts of a store's fetch ingest that its reads use: the hooks that fetch partitions, and imperative fetch starts.
@@ -109,11 +111,10 @@ export type ReadyArgs<Args, Optional extends keyof Args = never> = {
  */
 export interface CommonDef<Args, T, Optional extends keyof Args = never> {
   /**
-   * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty} and
-   * doesn't run {@linkcode ReadDef.select | select}. For args that name something that can't exist, such as a
-   * placeholder id. It doesn't stop the fetch; use {@linkcode CommonDef.prime | prime} or the caller's
-   * {@linkcode CommonDef.enabled | enabled} option for that. For args no caller wants fetched, such as a sport the
-   * read has nothing for, declare both with the same predicate.
+   * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty},
+   * doesn't run {@linkcode ReadDef.select | select}, and doesn't fetch on this read's behalf. For args the read has
+   * nothing for, such as a placeholder id or a sport without the data it reads. Other reads of the same partition
+   * still fetch it.
    */
   enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
   /**
@@ -139,9 +140,9 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
   /**
    * Whether reading a partition that has never been fetched fetches it; true by default. Set false for a read that
    * should only use rows something else fetched, such as one that looks in partitions a value might be in without
-   * wanting to fetch them all. Pass a function to decide per call, from the args: a read with nothing to return for
-   * some sport can decline to fetch that sport's partition, while other reads of it still fetch. A function that reads
-   * an arg its caller didn't pass declines.
+   * wanting to fetch them all. Pass a function to decide per call, from the args. A function that reads an arg its
+   * caller didn't pass declines. A read its {@linkcode CommonDef.enabled | enabled} turns off doesn't fetch either,
+   * whatever this says.
    *
    * A fetch loads the whole partition, not just what the read selects, so a read of one row in a large partition pays
    * for all of it. A partition fetch large enough to matter is reported once per session (as an info notice) when
@@ -217,6 +218,13 @@ export interface ReadCallOptions {
    * make a read fetch when its definition says `prime: false`.
    */
   prime?: false;
+  /**
+   * Set true for a call that must stay current while its screen isn't live: it keeps re-rendering when its data
+   * changes, whatever the app's read gate says, and its fetch carries the query runtime's
+   * {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, so an app that gates fetches lets it through. Other calls
+   * of the same read keep following the gates.
+   */
+  bypassGates?: boolean;
 }
 
 /**
@@ -336,6 +344,14 @@ export function useResult<T>(data: T, status: DataStatus, isFetching: boolean, d
 }
 
 const SELECTS_SLICE = { slice: true } as const;
+const BYPASSES_GATE = { bypassGate: true } as const;
+const SELECTS_SLICE_BYPASSING_GATE = { slice: true, bypassGate: true } as const;
+
+/** A call's prime intent, marked when the call bypasses the gates. */
+function intentWith(intent: { slice: boolean } | undefined, bypassGates: boolean | undefined): PrimeIntent | undefined {
+  if (!bypassGates) return intent;
+  return intent?.slice ? SELECTS_SLICE_BYPASSING_GATE : BYPASSES_GATE;
+}
 
 /**
  * What a call wants of the partitions it primes: part of them when it passes an arg that naming them didn't read, the
@@ -348,16 +364,17 @@ function intentOf(args: object, naming: ReadonlySet<string>): { slice: boolean }
 }
 
 /**
- * Whether a read may prime its partitions and whether its {@linkcode ReadDef.select | select} may run. Priming asks
- * strictly less: a read its {@linkcode CommonDef.enabled | enabled} turns off still primes, since that marks an arg
- * naming nothing rather than a partition nobody wants.
+ * Whether a read may prime its partitions and whether its {@linkcode ReadDef.select | select} may run. A read primes
+ * only when it would read: {@linkcode CommonDef.prime | prime} can decline the fetch of a read that runs, but nothing
+ * fetches for one that doesn't.
  */
 function readGates(primes: () => boolean, addressable: boolean, primeWanted: boolean, enabled: () => boolean): { prime: boolean; read: boolean } {
+  const read = addressable && enabled();
   return {
     // Both the declaration and the call site can veto priming, and neither can override the other: a read that
     // declares `prime: false` never fetches, and a caller passing `prime: false` never fetches, whoever else does.
-    prime: addressable && primeWanted && primes(),
-    read: addressable && enabled(),
+    prime: read && primeWanted && primes(),
+    read,
   };
 }
 
@@ -558,13 +575,14 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const key = call?.key;
       const parts = call ? call.parts : NO_PARTS;
       const gates = gatesFor(args as Args, parts, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePriming(key, gates.prime, call?.intent);
+      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.bypassGates));
       const argsKey = call ? argsKeyOf(parts, args as object) : NO_ARGS_KEY;
       if (__DEV__ && gates.read) noteRead(store, argsKey, batchSizeOf(args as object));
       const data = useTrackedValue<T>(() => (hasOne(key as Key, parts) ? run(args as Args, key as Key, parts, () => argsKey) : def.empty), [argsKey], {
         enabled: gates.read,
         isEqual: def.isEqual ?? shallowEqualValue,
         empty: def.empty,
+        bypassGate: options?.bypassGates,
       });
       const doRefetch = useCallback(() => {
         if (key !== undefined) ingest?.refetch(key);
@@ -631,7 +649,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, call?.intent);
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.bypassGates));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const data = useTrackedValue<T>(
         () => {
@@ -639,7 +657,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
           return hasAny(entries) ? run(args as Args, keys, partitions, () => argsKey) : def.empty;
         },
         [argsKey],
-        { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty },
+        { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty, bypassGate: options?.bypassGates },
       );
       const doRefetch = useCallback(() => {
         for (const key of keys) ingest?.refetch(key);
@@ -653,7 +671,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, call?.intent);
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.bypassGates));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const isEqual = def.isEqual ?? shallowEqualValue;
       // Which partitions hold rows is part of the tracked value, so one landing re-renders even when the value it adds
@@ -669,6 +687,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
           enabled: gates.read,
           isEqual: (left, right) => isEqual(left.value, right.value) && shallowEqualArray(left.present, right.present),
           empty: emptyEach,
+          bypassGate: options?.bypassGates,
         },
       );
       const doRefetch = useCallback(() => {
@@ -710,4 +729,4 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, shallowEqualStruct, shallowEqualValue };
+export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, QueryRuntime, shallowEqualStruct, shallowEqualValue };

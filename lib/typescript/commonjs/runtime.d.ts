@@ -5,6 +5,7 @@
  */
 import type { FetchIngest } from './write/fetch_ingest';
 import type { PartitionLifecycle } from './define_partitions';
+import type { ReadCallOptions } from './read/surface';
 /** The extra context sent with a Cellar error report, in Sentry's shape. */
 export interface CaptureContext {
     /** Searchable tags, such as the store's name. */
@@ -50,6 +51,11 @@ export interface QuerySpec<T> {
      * the partition's version instead.
      */
     notifyOnChangeProps?: readonly string[];
+    /**
+     * The runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, on the query of a read whose caller passed
+     * {@linkcode ReadCallOptions.bypassGates | bypassGates}; absent otherwise.
+     */
+    meta?: Readonly<Record<string, unknown>>;
 }
 /** The fields of a {@linkcode QueryRuntime.useQuery | useQuery} result Cellar reads. */
 export interface QueryStatus {
@@ -95,6 +101,12 @@ export interface QueryRuntime {
         /** The queries to run. */
         queries: readonly QuerySpec<T>[];
     }) => readonly QueryStatus[];
+    /**
+     * What a read's query carries as `meta` when its caller passed {@linkcode ReadCallOptions.bypassGates | bypassGates},
+     * for an app whose query hooks gate fetches (on screen focus, say) and let a query marked this way through. Unset,
+     * a bypassing read's query is the same as any other's.
+     */
+    bypassGateMeta?: Readonly<Record<string, unknown>>;
 }
 /**
  * A read gate: tells the reads in one part of the app (typically one screen) whether they are live. A live read is
@@ -147,10 +159,6 @@ export declare const INERT_QUERY: QueryRuntime;
 /** A gate runtime whose reads are always live; the default until the app configures one. */
 export declare const INERT_GATE: ReadGateRuntime;
 /**
- * Sets the services Cellar uses. Each part passed replaces the current one and the rest are kept, so the app can
- * configure them from different places, and a test can set one and leave the others as defaults.
- */
-/**
  * The React Query hooks and client an app already has, as Cellar's {@linkcode QueryRuntime}. The hooks can be React
  * Query's own or the app's wrappers around them (focus-gated ones, say), with whatever generics they declare: Cellar
  * only ever calls them with a {@linkcode QuerySpec} and reads the {@linkcode QueryStatus} fields of what they return.
@@ -159,7 +167,13 @@ export declare function reactQueryRuntime(hooks: {
     client: () => import('@tanstack/query-core').QueryClient;
     useQuery: (options: never) => QueryStatus;
     useQueries: (options: never) => readonly QueryStatus[];
+    /** See {@linkcode QueryRuntime.bypassGateMeta}. */
+    bypassGateMeta?: Readonly<Record<string, unknown>>;
 }): QueryRuntime;
+/**
+ * Sets the services Cellar uses. Each part passed replaces the current one and the rest are kept, so the app can
+ * configure them from different places, and a test can set one and leave the others as defaults.
+ */
 export declare function configureCellar(next: Partial<CellarRuntime>): void;
 /** The configured error sink. */
 export declare function errorSink(): ErrorSink;
@@ -167,5 +181,10 @@ export declare function errorSink(): ErrorSink;
 export declare function queryRuntime(): QueryRuntime;
 /** The configured read gate runtime. */
 export declare function readGateRuntime(): ReadGateRuntime;
-export type { FetchIngest, PartitionLifecycle };
+/**
+ * The read gate a hook follows: the app's, or one that is always live for a call that bypasses it. The app's hook runs
+ * either way, so a call switching between the two keeps its hooks in the same order.
+ */
+export declare function useReadGateFor(bypass: boolean | undefined): ReadGate;
+export type { FetchIngest, PartitionLifecycle, ReadCallOptions };
 //# sourceMappingURL=runtime.d.ts.map

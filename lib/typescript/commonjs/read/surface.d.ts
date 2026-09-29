@@ -20,6 +20,7 @@ import type { pairRead } from './facade';
 import type { shallowEqualStruct } from '../caches';
 import type { byEntity } from './derived_values';
 import type { StoreSurface } from '../define_sqlite_store';
+import type { QueryRuntime } from '../runtime';
 /**
  * The parts of a store's fetch ingest that its reads use: the hooks that fetch partitions, and imperative fetch starts.
  */
@@ -97,11 +98,10 @@ export type ReadyArgs<Args, Optional extends keyof Args = never> = {
  */
 export interface CommonDef<Args, T, Optional extends keyof Args = never> {
     /**
-     * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty} and
-     * doesn't run {@linkcode ReadDef.select | select}. For args that name something that can't exist, such as a
-     * placeholder id. It doesn't stop the fetch; use {@linkcode CommonDef.prime | prime} or the caller's
-     * {@linkcode CommonDef.enabled | enabled} option for that. For args no caller wants fetched, such as a sport the
-     * read has nothing for, declare both with the same predicate.
+     * Turns the read off for some args: while it returns false, the read returns {@linkcode CommonDef.empty | empty},
+     * doesn't run {@linkcode ReadDef.select | select}, and doesn't fetch on this read's behalf. For args the read has
+     * nothing for, such as a placeholder id or a sport without the data it reads. Other reads of the same partition
+     * still fetch it.
      */
     enabled?: (args: ReadyArgs<Args, Optional>) => boolean;
     /**
@@ -127,9 +127,9 @@ export interface CommonDef<Args, T, Optional extends keyof Args = never> {
     /**
      * Whether reading a partition that has never been fetched fetches it; true by default. Set false for a read that
      * should only use rows something else fetched, such as one that looks in partitions a value might be in without
-     * wanting to fetch them all. Pass a function to decide per call, from the args: a read with nothing to return for
-     * some sport can decline to fetch that sport's partition, while other reads of it still fetch. A function that reads
-     * an arg its caller didn't pass declines.
+     * wanting to fetch them all. Pass a function to decide per call, from the args. A function that reads an arg its
+     * caller didn't pass declines. A read its {@linkcode CommonDef.enabled | enabled} turns off doesn't fetch either,
+     * whatever this says.
      *
      * A fetch loads the whole partition, not just what the read selects, so a read of one row in a large partition pays
      * for all of it. A partition fetch large enough to matter is reported once per session (as an info notice) when
@@ -202,6 +202,13 @@ export interface ReadCallOptions {
      * make a read fetch when its definition says `prime: false`.
      */
     prime?: false;
+    /**
+     * Set true for a call that must stay current while its screen isn't live: it keeps re-rendering when its data
+     * changes, whatever the app's read gate says, and its fetch carries the query runtime's
+     * {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}, so an app that gates fetches lets it through. Other calls
+     * of the same read keep following the gates.
+     */
+    bypassGates?: boolean;
 }
 /**
  * A declared read, as a store's {@linkcode StoreSurface.reads | reads} hold it: a hook
@@ -259,5 +266,5 @@ export declare function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>): 
     readAcross: <Args, T, Optional extends keyof Args = never>(def: ReadAcrossDef<Args, Key, T, Optional>) => ReadAcross<Args, T>;
     has: (key: Key) => boolean;
 };
-export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, shallowEqualStruct, shallowEqualValue };
+export type { DataResult, PartitionLifecycle, Partitions, StoreSurface, byEntity, definePartitions, pairRead, QueryRuntime, shallowEqualStruct, shallowEqualValue };
 //# sourceMappingURL=surface.d.ts.map

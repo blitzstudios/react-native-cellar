@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
 import { installTestRuntime } from '../../testing/runtime';
-import { configureCellar, INERT_ERRORS } from '../../runtime';
+import { configureCellar, INERT_ERRORS, queryRuntime } from '../../runtime';
 import { createFetchIngest, FetchIngestConfig, RawFetchResponse, RAW_TEXT_RESPONSE_TRANSFORM } from '../../write/fetch_ingest';
 import { resetOnceGuards } from '../../diagnostics/once_guard';
 import { VersionAtom } from '../../reactivity/version_atom';
@@ -663,6 +663,34 @@ describe('createFetchIngest — usePrime (reactive wiring)', () => {
     // `isFetching`, which toggles twice per fetch and would wake every reader on the partition to say nothing changed.
     expect(config.notifyOnChangeProps).toEqual(['isInitialLoading', 'isError']);
     expect(res).toEqual({ isInitialLoading: false, isFetching: false, isError: false });
+  });
+
+  it("puts the runtime's bypass meta on the query of a caller bypassing the gates, and on no other", () => {
+    const harness = makeCfg();
+    const ingest = createFetchIngest(harness.cfg);
+    const configured = queryRuntime();
+    configureCellar({ query: { ...configured, bypassGateMeta: { bypassFocusGate: true } } });
+    try {
+      ingest.usePrime('us', true, { bypassGate: true });
+      ingest.usePrime('us');
+      renderHook(() => ingest.usePrimeMany(['us', 'eu'], true, { bypassGate: true }));
+    } finally {
+      configureCellar({ query: configured });
+    }
+
+    expect(useFocusGatedQueryMock.mock.calls[0][0].meta).toEqual({ bypassFocusGate: true });
+    expect(useFocusGatedQueryMock.mock.calls[1][0]).not.toHaveProperty('meta');
+    const many = useFocusGatedQueriesMock.mock.calls[0][0].queries;
+    expect(many.map((query: { meta?: unknown }) => query.meta)).toEqual([{ bypassFocusGate: true }, { bypassFocusGate: true }]);
+  });
+
+  it('leaves a bypassing query unmarked when the runtime names no bypass meta', () => {
+    const harness = makeCfg();
+    const ingest = createFetchIngest(harness.cfg);
+
+    ingest.usePrime('us', true, { bypassGate: true });
+
+    expect(useFocusGatedQueryMock.mock.calls[0][0]).not.toHaveProperty('meta');
   });
 
   it('disables the query when a part is falsy, or when explicitly disabled', () => {

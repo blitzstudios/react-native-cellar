@@ -13,7 +13,7 @@ import { useSyncExternalStore } from 'use-sync-external-store/shim';
 
 import { cacheKey, GROUP_SEP, cacheKeyOf } from '../args_key';
 import { getOrCreate } from '../collections';
-import { readGateRuntime } from '../runtime';
+import { useReadGateFor } from '../runtime';
 import { Dep, trackDependency } from './tracking';
 import { ALL_ENTITIES, ChangeSet, isUnchanged } from '../table/change_set';
 import type { Read } from '../read/surface';
@@ -100,10 +100,10 @@ export interface VersionAtom {
   /**
    * The partition's version number as a hook, re-rendering the component after every write that changes the partition.
    * While the component's read gate isn't live (its screen is hidden, say), it keeps returning the version it had and
-   * doesn't re-render; when the gate is live again, it re-renders once if the partition changed meanwhile. `enabled`
-   * false returns 0 and subscribes to nothing.
+   * doesn't re-render; when the gate is live again, it re-renders once if the partition changed meanwhile, unless
+   * `bypassGate` keeps it subscribed throughout. `enabled` false returns 0 and subscribes to nothing.
    */
-  useVersion(parts: readonly string[], enabled?: boolean): number;
+  useVersion(parts: readonly string[], enabled?: boolean, bypassGate?: boolean): number;
 }
 
 type Listener = () => void;
@@ -289,8 +289,8 @@ export function createVersionAtom(root: string): VersionAtom {
    * than repainting with data nobody is looking at. When the gate goes live the subscription is restored and, only
    * if the version moved meanwhile, one notification is sent so the reader catches up in a single render.
    */
-  function useHeldVersion(spec: string, enabled: boolean) {
-    const gate = readGateRuntime().useReadGate();
+  function useHeldVersion(spec: string, enabled: boolean, bypassGate: boolean | undefined) {
+    const gate = useReadGateFor(bypassGate);
     // Non-null exactly while held. Written from the subscription below, never from `getSnapshot`, which stays pure.
     const held = useRef<number | null>(null);
 
@@ -332,10 +332,10 @@ export function createVersionAtom(root: string): VersionAtom {
     return { subscribe: subscribeHeld, getSnapshot };
   }
 
-  const useVersion = (parts: readonly string[], enabled?: boolean): number => {
+  const useVersion = (parts: readonly string[], enabled?: boolean, bypassGate?: boolean): number => {
     const spec = specifier(parts);
     const isEnabled = (enabled ?? true) && addressesPartition(parts);
-    const { subscribe: subscribeHeld, getSnapshot } = useHeldVersion(spec, isEnabled);
+    const { subscribe: subscribeHeld, getSnapshot } = useHeldVersion(spec, isEnabled, bypassGate);
     return useSyncExternalStore(subscribeHeld, getSnapshot, getSnapshot);
   };
 

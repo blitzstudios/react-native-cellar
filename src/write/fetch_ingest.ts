@@ -15,11 +15,12 @@ import { recordIngestTiming } from '../diagnostics/ingest_timing';
 import { createOnceGuard } from '../diagnostics/once_guard';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
 import { queryRuntime } from '../runtime';
+import type { QueryRuntime } from '../runtime';
 import { ChangeSet, isUnchanged, WriteResult } from '../table/change_set';
 import type { PartitionFetchSpec, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
 import type { DataResult } from '../store_result';
 import type { IngestTiming } from '../diagnostics/ingest_timing';
-import type { CommonDef } from '../read/surface';
+import type { CommonDef, ReadCallOptions } from '../read/surface';
 
 /**
  * What a change in the fetch's state is allowed to repaint a reader for. Deliberately short of every field
@@ -241,6 +242,18 @@ export interface PrimeIntent {
    * isn't used.
    */
   slice?: boolean;
+  /**
+   * True when the caller asked to bypass the gates ({@linkcode ReadCallOptions.bypassGates | bypassGates}): the query
+   * carries the runtime's {@linkcode QueryRuntime.bypassGateMeta | bypassGateMeta}.
+   */
+  bypassGate?: boolean;
+}
+
+const NO_META: { meta?: Readonly<Record<string, unknown>> } = Object.freeze({});
+
+/** The `meta` a prime query carries: the runtime's bypass marker for a caller bypassing the gates, else none. */
+function metaFor(runtime: QueryRuntime, opts: PrimeIntent | undefined): { meta?: Readonly<Record<string, unknown>> } {
+  return opts?.bypassGate && runtime.bypassGateMeta ? { meta: runtime.bypassGateMeta } : NO_META;
 }
 
 const OVERSIZED_PRIME_ROWS = 5_000;
@@ -413,12 +426,14 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     // it then fetches when it is enabled, however fresh the cache is.
     const timings = addressable ? timingsFor(key as Key) : NO_TIMINGS;
     // The runtime is installed once during startup, so which hook this resolves to is fixed for the app's lifetime.
-    const result = queryRuntime().useQuery<{ version: number; count: number }>({
+    const runtime = queryRuntime();
+    const result = runtime.useQuery<{ version: number; count: number }>({
       queryKey: queryKey(parts),
       queryFn: () => runIngest(key as Key),
       enabled: isEnabled,
       ...timings,
       notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
+      ...metaFor(runtime, opts),
     });
     return { isInitialLoading: result.isInitialLoading, isFetching: result.isFetching, isError: result.isError };
   }
@@ -428,6 +443,8 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     const addressable = partitionEntries(keys, cfg.toParts).filter((entry) => addressesPartition(entry.parts));
     if (!opts?.slice) for (const entry of addressable) wantedWhole.add(partitionLabel(entry.parts));
     const identity = partitionsKey(addressable.map((entry) => entry.parts));
+    const runtime = queryRuntime();
+    const bypassGate = !!opts?.bypassGate;
     const queries = useMemo(
       () =>
         addressable.map(({ key, parts }) => {
@@ -437,11 +454,12 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
             enabled,
             ...timingsFor(key),
             notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
+            ...metaFor(runtime, opts),
           };
         }),
-      [identity, enabled], // eslint-disable-line react-hooks/exhaustive-deps -- `identity` covers `addressable`
+      [identity, enabled, bypassGate], // eslint-disable-line react-hooks/exhaustive-deps -- `identity` covers `addressable`
     );
-    const results = queryRuntime().useQueries({ queries });
+    const results = runtime.useQueries({ queries });
     // Failed only if *every* partition failed, so one bad partition degrades to a gap in the list.
     return {
       isInitialLoading: results.some((result) => result.isInitialLoading),
@@ -491,4 +509,4 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, IngestTiming, PartitionFetchSpec, Partitions, PartitionsConfig, PrimeState, VersionAtom, definePartitions };
+export type { CommonDef, DataResult, IngestTiming, PartitionFetchSpec, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };
