@@ -576,6 +576,7 @@ textarea:focus {
   padding: 0;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
 }
 
 .disclosure-mark {

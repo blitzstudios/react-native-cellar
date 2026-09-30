@@ -6,7 +6,7 @@ and last fetch, read-only SQL over a store's live database that re-runs as the s
 the stores do — writes, fetches, moves between databases and degradation reports. The same view is open to
 agents (Cursor, Claude, the Rozenite CLI) as tools.
 
-It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.7 or
+It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.8 or
 later. Nothing it does changes a store's rows: a query that would write is refused, and its only actions are
 refetching a partition and clearing its ETag, which a store does on its own anyway.
 
@@ -26,7 +26,7 @@ refetching a partition and clearing its ETag, which a store does on its own anyw
    `dependencies` and `devDependencies`):
 
    ```json
-   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.0-gitpkg"
+   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.1-gitpkg"
    ```
 
 3. The hook, once, near the app's root. A release build gets a hook that does nothing, and the rest of the plugin
