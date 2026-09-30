@@ -6,7 +6,7 @@ and last fetch, read-only SQL over a store's live database that re-runs as the s
 the stores do — writes, fetches, moves between databases and degradation reports. The same view is open to
 agents (Cursor, Claude, the Rozenite CLI) as tools.
 
-It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.14 or
+It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.15 or
 later. Nothing it does changes a store's rows: a query that would write is refused, and its only actions are
 refetching a partition and clearing its ETag, which a store does on its own anyway.
 
@@ -26,7 +26,7 @@ refetching a partition and clearing its ETag, which a store does on its own anyw
    `dependencies` and `devDependencies`):
 
    ```json
-   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.6-gitpkg"
+   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.7-gitpkg"
    ```
 
 3. The hook, once, near the app's root. A release build gets a hook that does nothing, and the rest of the plugin
@@ -54,8 +54,10 @@ Then start Metro with `WITH_ROZENITE=true`, open React Native DevTools (`j` in M
 - **Partitions** — each partition of a store with its rows, entities, version, ETag and when it last landed,
   sortable and filterable, updating as the store writes. A partition opens to its description, its recent writes and
   fetches, and the entities it changed lately, and has actions: query its rows, refetch it, clear its ETag.
-- **Entities** — the store's entities by row count, searchable; one opens to its partitions (rows, and the version
-  it last changed at), its cache entries with their values, and its recent writes.
+- **Entities** — the store's entities by row count, searchable. An entity is an id within one partition, as Cellar
+  tracks it: player 1003 in NFL and player 1003 in NBA are different entities (and different players). One opens to
+  its rows, the version it last changed at, its cache entries with their values, its recent writes, and the other
+  partitions using the same id.
 - **Query** — one read-only statement at a time (`SELECT`, `WITH`, `VALUES`, `EXPLAIN`, a reading `PRAGMA`) on the
   store's live database, with `?` params, a page size with next and previous pages, snippets and history. **Live** re-runs the query whenever
   the store writes. A cell opens to its whole value, pretty-printed when it holds JSON; results copy as JSON or
@@ -81,7 +83,7 @@ Registered under `@sleeperhq/rozenite-plugin-cellar` while the hook is mounted:
 | `describe-store` | a store's columns, primary key, entity column, indexes and reads |
 | `list-partitions` | a store's partitions, optionally matching a key, with rows, version, ETag and last fetch |
 | `query` | one read-only statement over a store's live database, a page at a time |
-| `entity` | one entity across a store: its partitions, rows, versions and cache entries |
+| `entity` | one entity (an id within a partition): its rows, version, cache entries, and other partitions using the id |
 | `entity-changes` | the entities a partition changed lately, with the version each changed at |
 | `list-caches` | the stores' caches with their entries, heap estimate, hits, misses, evictions and builds |
 | `cache-entries` | a page of one cache's entries: key, version, heap estimate and value |

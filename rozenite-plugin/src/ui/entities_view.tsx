@@ -8,13 +8,19 @@ import type { CellarRpc } from './use_cellar';
 
 const LIST_LIMIT = 200;
 
-interface EntityRow {
+/** An entity: an id within one partition. The same id in another partition is another entity. */
+interface EntityRef {
+  partition: string;
   id: string;
-  rows: number;
-  partitions: number;
 }
 
-/** A store's entities, by how many rows each has, and one of them across its partitions and caches. */
+interface EntityRow extends EntityRef {
+  rows: number;
+}
+
+const sameRef = (a: EntityRef | undefined, b: EntityRef) => !!a && a.partition === b.partition && a.id === b.id;
+
+/** A store's entities, each an id within one partition, by how many rows it has; and one of them in full. */
 export function EntitiesView({
   rpc,
   store,
@@ -28,7 +34,7 @@ export function EntitiesView({
 }) {
   const [search, setSearch] = useState('');
   const [list, setList] = useState<{ rows: EntityRow[]; truncated: boolean }>();
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useState<EntityRef>();
   const [error, setError] = useState<string>();
   const entity = quoteName(store.schema.entityColumn);
   const table = quoteName(store.schema.table);
@@ -39,13 +45,13 @@ export function EntitiesView({
     try {
       const result = await rpc.method('query').invoke({
         store: store.name,
-        sql: `SELECT ${entity} AS id, COUNT(*) AS rows, COUNT(DISTINCT partition_key) AS partitions FROM ${table} ${needle ? `WHERE ${entity} LIKE ?` : ''} GROUP BY ${entity} ORDER BY rows DESC, id`,
+        sql: `SELECT partition_key AS partition, ${entity} AS id, COUNT(*) AS rows FROM ${table} ${needle ? `WHERE ${entity} LIKE ?` : ''} GROUP BY partition_key, ${entity} ORDER BY rows DESC, id, partition`,
         params: needle ? [`%${needle}%`] : [],
         limit: LIST_LIMIT,
       });
       const at = (column: string) => result.columns.indexOf(column);
       setList({
-        rows: result.rows.map((row) => ({ id: String(row[at('id')]), rows: Number(row[at('rows')]), partitions: Number(row[at('partitions')]) })),
+        rows: result.rows.map((row) => ({ partition: String(row[at('partition')]), id: String(row[at('id')]), rows: Number(row[at('rows')]) })),
         truncated: result.truncated,
       });
       setError(undefined);
@@ -77,18 +83,20 @@ export function EntitiesView({
             <thead>
               <tr>
                 <th>{store.schema.entityColumn}</th>
+                <th>Partition</th>
                 <th className="num">Rows</th>
-                <th className="num">Partitions</th>
               </tr>
             </thead>
             <tbody>
               {(list?.rows ?? []).map((row) => (
-                <tr key={row.id} className={`clickable-row${selected === row.id ? ' row-open' : ''}`} onClick={() => setSelected(row.id)}>
+                <tr key={`${row.partition}\u0000${row.id}`} className={`clickable-row${sameRef(selected, row) ? ' row-open' : ''}`} onClick={() => setSelected(row)}>
                   <td>
                     <code>{row.id}</code>
                   </td>
+                  <td>
+                    <code>{row.partition}</code>
+                  </td>
                   <td className="num">{formatCount(row.rows)}</td>
-                  <td className="num">{formatCount(row.partitions)}</td>
                 </tr>
               ))}
             </tbody>
@@ -97,12 +105,15 @@ export function EntitiesView({
         <div className="entity-detail">
           {selected ? (
             <EntityDetail
-              key={selected}
+              key={`${selected.partition}\u0000${selected.id}`}
               rpc={rpc}
               store={store}
-              id={selected}
+              entityRef={selected}
               events={events}
-              onRows={() => onQuery(`SELECT *\nFROM ${table}\nWHERE ${entity} = ?\nORDER BY partition_key`, JSON.stringify([selected]))}
+              onSelect={setSelected}
+              onRows={() =>
+                onQuery(`SELECT *\nFROM ${table}\nWHERE partition_key = ? AND ${entity} = ?`, JSON.stringify([selected.partition, selected.id]))
+              }
             />
           ) : (
             <Empty title="Select an entity" />
@@ -113,25 +124,44 @@ export function EntitiesView({
   );
 }
 
-function EntityDetail({ rpc, store, id, events, onRows }: { rpc: CellarRpc | null; store: StoreOverview; id: string; events: readonly InspectorEvent[]; onRows: () => void }) {
+function EntityDetail({
+  rpc,
+  store,
+  entityRef,
+  events,
+  onSelect,
+  onRows,
+}: {
+  rpc: CellarRpc | null;
+  store: StoreOverview;
+  entityRef: EntityRef;
+  events: readonly InspectorEvent[];
+  onSelect: (ref: EntityRef) => void;
+  onRows: () => void;
+}) {
   const [entity, setEntity] = useState<InspectedEntity>();
   const [open, setOpen] = useState<number>();
   const [error, setError] = useState<string>();
+  const { partition, id } = entityRef;
 
   const load = useCallback(async () => {
     if (!rpc) return;
     try {
-      setEntity(await rpc.method('entity').invoke({ store: store.name, id }));
+      setEntity(await rpc.method('entity').invoke({ store: store.name, key: partition, id }));
     } catch (caught) {
       setError(errorMessage(caught));
     }
-  }, [rpc, store.name, id]);
+  }, [rpc, store.name, partition, id]);
 
   const writes = useMemo(
-    () => events.filter((event) => event.kind === 'write' && event.store === store.name && event.entities !== 'all' && event.entities.includes(id)).slice(-20).reverse(),
-    [events, store.name, id],
+    () =>
+      events
+        .filter((event) => event.kind === 'write' && event.store === store.name && event.partition === partition && (event.entities === 'all' || event.entities.includes(id)))
+        .slice(-20)
+        .reverse(),
+    [events, store.name, partition, id],
   );
-  const latest = useLatestEventId(events, (event) => event.kind === 'write' && event.store === store.name);
+  const latest = useLatestEventId(events, (event) => event.kind === 'write' && event.store === store.name && event.partition === partition);
   useEffect(() => {
     load();
   }, [load]);
@@ -146,38 +176,16 @@ function EntityDetail({ rpc, store, id, events, onRows }: { rpc: CellarRpc | nul
         <h3>
           <code>{id}</code>
         </h3>
+        <span className="muted">
+          in <code>{partition}</code> · {entity.version ? `changed at v${entity.version}` : 'unchanged this session'}
+        </span>
         <button type="button" className="button button-small" onClick={onRows}>
-          Rows
+          Query
         </button>
       </header>
       <section>
-        <h4>Partitions</h4>
-        {entity.partitions.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Partition</th>
-                <th className="num">Rows</th>
-                <th className="num" title="The partition version at which this entity last changed">
-                  Changed at
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {entity.partitions.map((partition) => (
-                <tr key={partition.key}>
-                  <td>
-                    <code>{partition.key}</code>
-                  </td>
-                  <td className="num">{formatCount(partition.rows)}</td>
-                  <td className="num">{partition.version ? `v${partition.version}` : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="muted">None</div>
-        )}
+        <h4>Rows</h4>
+        {entity.rows.length ? <JsonView value={entity.rows.length === 1 ? entity.rows[0] : entity.rows} /> : <div className="muted">None</div>}
       </section>
       <section>
         <h4>Cache entries</h4>
@@ -225,8 +233,8 @@ function EntityDetail({ rpc, store, id, events, onRows }: { rpc: CellarRpc | nul
               event.kind === 'write' ? (
                 <li key={event.id}>
                   <span className="time">{formatClock(event.at)}</span>
-                  <code>{event.partition}</code>
                   <span className="muted">v{event.version}</span>
+                  {event.entities === 'all' ? <span className="muted">every entity</span> : null}
                 </li>
               ) : null,
             )}
@@ -235,6 +243,18 @@ function EntityDetail({ rpc, store, id, events, onRows }: { rpc: CellarRpc | nul
           <div className="muted">None</div>
         )}
       </section>
+      {entity.sameIdIn.length ? (
+        <section>
+          <h4 title="Other entities: the same id in another partition may name something else">Same id in other partitions</h4>
+          <div className="entities">
+            {entity.sameIdIn.map((other) => (
+              <button key={other} type="button" className="chip chip-on" onClick={() => onSelect({ partition: other, id })}>
+                {other}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

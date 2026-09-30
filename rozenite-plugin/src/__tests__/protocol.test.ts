@@ -98,17 +98,17 @@ describe('the calls the panel makes', () => {
     expect(Array.isArray(await session.rpc.method('caches').invoke({}))).toBe(true);
   });
 
-  it("finds one entity across a store's partitions", async () => {
+  it("reads one entity as an id within one partition", async () => {
     const store = await gamesStore('protocol_entity_store');
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NBA, [{ team: 'KC', sport: 'nba', score: 1 }]);
-    expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', id: 'KC' })).toEqual({
+    expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', key: 'nfl:2026', id: 'KC' })).toEqual({
+      partition: 'nfl:2026',
       id: 'KC',
-      partitions: [
-        { key: 'nba:2026', rows: 1, version: 1 },
-        { key: 'nfl:2026', rows: 1, version: 1 },
-      ],
+      rows: [{ partition_key: 'nfl:2026', team: 'KC', sport: 'nfl', score: 27 }],
+      version: 1,
       cacheEntries: [],
+      sameIdIn: ['nba:2026'],
     });
   });
 

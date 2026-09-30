@@ -38,9 +38,8 @@ export type CellarMethods = {
     partitions: (params: {
         store: string;
     }) => Promise<InspectedPartition[]>;
-    /** One entity across a store's partitions and caches. */
-    entity: (params: {
-        store: string;
+    /** One entity: an id within one partition. */
+    entity: (params: PartitionRef & {
         id: string;
     }) => Promise<InspectedEntity>;
     /** A partition's recently changed entities. */

@@ -67,11 +67,15 @@ export const cellarAgentTools = {
   entity: {
     name: 'entity',
     description:
-      "One entity (such as a player, by its id) across a store: each partition holding its rows, with how many and the partition version at which it last changed, and its entries in the store's per-entity caches with their values.",
+      "One entity, which is an id within one partition (the same id in another partition is another entity, and may name something else: player 1003 is a different player in each sport): its rows, the partition version at which it last changed, its per-entity cache entries with their values, and the other partitions using the same id.",
     inputSchema: {
       type: 'object',
-      properties: { store: STORE, id: { type: 'string', description: "The entity's id, the value of the store's entity column (describe-store)." } },
-      required: ['store', 'id'],
+      properties: {
+        store: STORE,
+        key: PARTITION_KEY,
+        id: { type: 'string', description: "The entity's id, the value of the store's entity column (describe-store)." },
+      },
+      required: ['store', 'key', 'id'],
     },
     readOnly: true,
   },
@@ -164,7 +168,7 @@ export const agentToolHandlers = (inspector: CellarInspector) => ({
     return { total: matching.length, partitions: matching.slice(0, limit) };
   },
   query: (request: QueryRequest) => runQuery(inspector, request),
-  entity: async ({ store, id }: { store: string; id: string }) => storeOf(inspector, store).entity(id),
+  entity: async ({ store, key, id }: PartitionRef & { id: string }) => storeOf(inspector, store).entity(key, id),
   entityChanges: async ({ store, key, limit }: PartitionRef & { limit?: number }) => storeOf(inspector, store).entityChanges(key, limit),
   listCaches: async ({ store, heap }: { store?: string; heap?: boolean }) => ({ caches: listCaches(inspector, store, heap) }),
   cacheEntries: async ({ store, cache, offset, limit }: { store: string; cache: string; offset?: number; limit?: number }) =>
