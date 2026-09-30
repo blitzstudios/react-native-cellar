@@ -9,8 +9,8 @@ import type { QueryExecResult, SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
-import { inspectedCaches } from './caches';
-import type { InspectedCache } from './caches';
+import { inspectedCacheEntries, inspectedCaches } from './caches';
+import type { InspectedCache, InspectedCacheEntries, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
 
 /** A column of a store's table. */
@@ -70,6 +70,8 @@ export interface InspectedSummary {
   partitions: number;
   /** The size of the store's own database, in bytes; absent on the in-memory fallback and unbound. */
   databaseBytes?: number;
+  /** The store's caches: how many, their entries, and roughly what they hold on the JS heap. Dev builds only. */
+  caches: { count: number; entries: number; heapBytes: number };
 }
 
 /** A value from a query result that JSON can't carry as it is. */
@@ -132,8 +134,10 @@ export interface InspectedStore {
   partitions(): Promise<InspectedPartition[]>;
   /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
   entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
-  /** The store's caches and what each has done; empty in a release build. */
-  caches(): InspectedCache[];
+  /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
+  caches(options?: InspectedCachesOptions): InspectedCache[];
+  /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */
+  cacheEntries(cache: string, page?: { offset?: number; limit?: number }): InspectedCacheEntries;
   /**
    * Runs one read-only statement on the store's database and returns its rows. Throws for a statement that writes, for
    * a pragma that sets something, for more than one statement, and for SQL that SQLite rejects. Reads go to the
@@ -285,7 +289,13 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
     summary: async () => {
       const binding = source.binding();
       const running = source.running();
-      if (!running) return { binding, rows: 0, partitions: 0 };
+      const cacheList = inspectedCaches(source.name, { heap: true });
+      const caches = {
+        count: cacheList.length,
+        entries: cacheList.reduce((sum, cache) => sum + cache.entries, 0),
+        heapBytes: cacheList.reduce((sum, cache) => sum + (cache.heapBytes ?? 0), 0),
+      };
+      if (!running) return { binding, rows: 0, partitions: 0, caches };
       const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
       const keys = new Set([...counts.keys(), ...records.keys()]);
       let rows = 0;
@@ -298,7 +308,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
         ]);
         if (pages && size) databaseBytes = Number(pages.page_count) * Number(size.page_size);
       }
-      return { binding, rows, partitions: keys.size, ...(databaseBytes === undefined ? {} : { databaseBytes }) };
+      return { binding, rows, partitions: keys.size, caches, ...(databaseBytes === undefined ? {} : { databaseBytes }) };
     },
     partitions: async () => {
       const running = source.running();
@@ -348,7 +358,8 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const newest = changed.sort((a, b) => b.version - a.version);
       return { version: running.versionOf(partitionKey), epoch, count: newest.length, changed: newest.slice(0, limit) };
     },
-    caches: () => inspectedCaches(source.name),
+    caches: (options) => inspectedCaches(source.name, options),
+    cacheEntries: (cache, page) => inspectedCacheEntries(`${source.name.replace(/_store$/, '')}.${cache}`, page),
     refetch: (partitionKey) => {
       const refetch = source.running()?.refetch;
       if (!refetch) return false;

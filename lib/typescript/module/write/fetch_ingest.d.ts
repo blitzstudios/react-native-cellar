@@ -124,6 +124,8 @@ export interface FetchIngest<Key> {
     prefetch: (key: Key, opts?: {
         /** How old the last fetch may be, in ms, for this call to skip fetching. Defaults to the partition query's. */
         staleTime?: number;
+        /** Marks a fetch the inspector asked for, so an oversized one names it rather than the app. */
+        via?: 'inspector';
     }) => Promise<{
         version: number;
         count: number;

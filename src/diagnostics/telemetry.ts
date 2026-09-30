@@ -29,8 +29,8 @@ function plainExtra(extra: Record<string, unknown>): NonNullable<InspectorDegrad
  * Where the report came from: the caller's own, else the component rendering now, else the JS stack without this
  * file's frames.
  */
-function callsiteOf(given: string | undefined): Pick<InspectorDegradationEvent, 'callsite' | 'callsiteKind'> {
-  if (given) return { callsite: given, callsiteKind: 'component' };
+function callsiteOf(given: string | undefined, kind: 'component' | 'stack' = 'component'): Pick<InspectorDegradationEvent, 'callsite' | 'callsiteKind'> {
+  if (given) return { callsite: given, callsiteKind: kind };
   const owner = renderPhaseOwnerStack();
   if (owner) return { callsite: owner, callsiteKind: 'component' };
   const stack = new Error().stack?.split('\n').slice(3).join('\n');
@@ -57,6 +57,8 @@ export function reportStoreDegradation(args: {
    * stack. Dev only.
    */
   callsite?: string;
+  /** Whether {@linkcode callsite} is a React owner stack (`component`, the default) or a JS stack (`stack`). */
+  callsiteKind?: 'component' | 'stack';
 }): void {
   const { scope, context, error, extra, severity = 'error', sampleRate = 1 } = args;
 
@@ -73,7 +75,7 @@ export function reportStoreDegradation(args: {
       count,
       ...(error === undefined ? {} : { error: messageOf(error) }),
       ...(extra ? { extra: plainExtra(extra) } : {}),
-      ...callsiteOf(args.callsite),
+      ...callsiteOf(args.callsite, args.callsiteKind),
     });
   }
   if (!first) return;

@@ -7,7 +7,7 @@ import type { defineSqliteStore } from '../define_sqlite_store';
 import type { SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
-import type { InspectedCache } from './caches';
+import type { InspectedCache, InspectedCacheEntries, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
 /** A column of a store's table. */
 export interface InspectedColumn {
@@ -66,6 +66,12 @@ export interface InspectedSummary {
     partitions: number;
     /** The size of the store's own database, in bytes; absent on the in-memory fallback and unbound. */
     databaseBytes?: number;
+    /** The store's caches: how many, their entries, and roughly what they hold on the JS heap. Dev builds only. */
+    caches: {
+        count: number;
+        entries: number;
+        heapBytes: number;
+    };
 }
 /** A value from a query result that JSON can't carry as it is. */
 export interface InspectedBlob {
@@ -126,8 +132,13 @@ export interface InspectedStore {
     partitions(): Promise<InspectedPartition[]>;
     /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
     entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
-    /** The store's caches and what each has done; empty in a release build. */
-    caches(): InspectedCache[];
+    /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
+    caches(options?: InspectedCachesOptions): InspectedCache[];
+    /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */
+    cacheEntries(cache: string, page?: {
+        offset?: number;
+        limit?: number;
+    }): InspectedCacheEntries;
     /**
      * Runs one read-only statement on the store's database and returns its rows. Throws for a statement that writes, for
      * a pragma that sets something, for more than one statement, and for SQL that SQLite rejects. Reads go to the

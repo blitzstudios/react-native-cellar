@@ -203,6 +203,8 @@ export interface FetchIngest<Key> {
     opts?: {
       /** How old the last fetch may be, in ms, for this call to skip fetching. Defaults to the partition query's. */
       staleTime?: number;
+      /** Marks a fetch the inspector asked for, so an oversized one names it rather than the app. */
+      via?: 'inspector';
     },
   ) => Promise<{ version: number; count: number }>;
   /** Fetches the partition again now, however recently it was fetched. Its stored ETag is still sent. */
@@ -250,10 +252,15 @@ export interface PrimeIntent {
   read?: string;
 }
 
-/** Who first asked for a slice of a partition: the read, and the components rendering it. */
-interface SliceCaller {
+/**
+ * What started a partition's fetch, for an oversized fetch's report to name: a read that wanted a slice (with the
+ * components rendering it), app code calling `fetch` or `prefetch` (with its JS stack), or the inspector.
+ */
+interface PrimeCaller {
+  via: 'read' | 'fetch' | 'inspector';
   read?: string;
   callsite?: string;
+  callsiteKind?: 'component' | 'stack';
 }
 
 const NO_META: { meta?: Readonly<Record<string, unknown>> } = Object.freeze({});
@@ -284,7 +291,7 @@ const oversizedPrimeReported = createOnceGuard();
  * taught the reader to ignore the channel. An app priming its own sports at startup is the case that made this
  * necessary.
  */
-function reportOversizedPrime(store: string, partition: string, rows: number, chars: number | null, wantedWhole: boolean, caller: SliceCaller | undefined): void {
+function reportOversizedPrime(store: string, partition: string, rows: number, chars: number | null, wantedWhole: boolean, caller: PrimeCaller | undefined): void {
   // Somebody asked for this partition outright — a prime hook, or a read that selects all of it. The rows are what
   // they asked for, and `prime: false` is not advice that applies, so there is nothing to say.
   if (wantedWhole) return;
@@ -299,8 +306,17 @@ function reportOversizedPrime(store: string, partition: string, rows: number, ch
       'slice, check whether the payload that named those rows already carries what they render, and declare ' +
       '`prime: false` on the read if so.',
     severity: 'info',
-    extra: { store, partition, rows, chars, rowLimit: OVERSIZED_PRIME_ROWS, charLimit: OVERSIZED_PRIME_CHARS, ...(caller?.read ? { read: caller.read } : {}) },
-    ...(caller?.callsite ? { callsite: caller.callsite } : {}),
+    extra: {
+      store,
+      partition,
+      rows,
+      chars,
+      rowLimit: OVERSIZED_PRIME_ROWS,
+      charLimit: OVERSIZED_PRIME_CHARS,
+      ...(caller ? { via: caller.via } : {}),
+      ...(caller?.read ? { read: caller.read } : {}),
+    },
+    ...(caller?.callsite ? { callsite: caller.callsite, callsiteKind: caller.callsiteKind } : {}),
   });
 }
 
@@ -320,11 +336,21 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
    * so the question is only ever whether such a caller has existed, and a refcount would cost an effect per read.
    */
   const wantedWhole = new Set<string>();
-  /** The first caller that asked for a slice of each partition, so an oversized fetch can say who. Dev only. */
-  const sliceCallers = __DEV__ ? createBoundedLru<SliceCaller>(256) : undefined;
+  /**
+   * What first started each partition's fetch, so an oversized one can say. A read that wants a slice replaces a
+   * `fetch` or the inspector, since the read is what will keep paying for it. Dev only.
+   */
+  const primeCallers = __DEV__ ? createBoundedLru<PrimeCaller>(256) : undefined;
   const noteSliceCaller = (partition: string, opts: PrimeIntent): void => {
-    if (!sliceCallers || sliceCallers.get(partition)) return;
-    sliceCallers.set(partition, { read: opts.read, callsite: renderPhaseOwnerStack() ?? undefined });
+    if (!primeCallers || primeCallers.get(partition)?.via === 'read') return;
+    const callsite = renderPhaseOwnerStack() ?? undefined;
+    primeCallers.set(partition, { via: 'read', read: opts.read, ...(callsite ? { callsite, callsiteKind: 'component' as const } : {}) });
+  };
+  const noteFetchCaller = (partition: string, via: 'fetch' | 'inspector'): void => {
+    if (!primeCallers || primeCallers.get(partition)) return;
+    // Two frames of this file above the caller: this function and `prefetch`.
+    const callsite = via === 'fetch' ? new Error().stack?.split('\n').slice(3).join('\n') : undefined;
+    primeCallers.set(partition, { via, ...(callsite ? { callsite, callsiteKind: 'stack' as const } : {}) });
   };
   const queryKey = (parts: readonly string[]): (string | undefined)[] => [cfg.ingestKeyRoot, ...parts];
   const bump = (key: Key, parts: readonly string[], changes: ChangeSet): number =>
@@ -365,7 +391,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
         at,
       });
       // A 304 and an unchanged body report negative rows and shredded nothing, so neither is a prime worth flagging.
-      if (rows > 0) reportOversizedPrime(cfg.ingestKeyRoot, partition, rows, chars, wantedWhole.has(partition), sliceCallers?.get(partition));
+      if (rows > 0) reportOversizedPrime(cfg.ingestKeyRoot, partition, rows, chars, wantedWhole.has(partition), primeCallers?.get(partition));
     };
 
     if (res?.__etagMatch) {
@@ -485,9 +511,10 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     };
   }
 
-  function prefetch(key: Key, opts?: { staleTime?: number }): Promise<{ version: number; count: number }> {
+  function prefetch(key: Key, opts?: { staleTime?: number; via?: 'inspector' }): Promise<{ version: number; count: number }> {
     const parts = cfg.toParts(key);
     if (!addressesPartition(parts)) return Promise.resolve({ version: cfg.version.get(parts), count: 0 });
+    if (__DEV__) noteFetchCaller(partitionLabel(parts), opts?.via ?? 'fetch');
     // Shares `usePrime`'s query key, so a partition a hook already primed resolves from the query cache — and that is
     // `staleTime`'s decision, so the timings are spread rather than named, to keep an absent one absent.
     return queryRuntime().client().fetchQuery<{ version: number; count: number }>({

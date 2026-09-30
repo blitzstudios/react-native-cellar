@@ -41,6 +41,8 @@ export interface BoundedLru<V> {
     set(key: string, value: V): void;
     /** Every stored key, from least to most recently used. */
     keys(): IterableIterator<string>;
+    /** Every stored entry, from least to most recently used, without marking any as used. */
+    entries(): IterableIterator<[string, V]>;
     /** How many entries it holds. */
     readonly size: number;
 }

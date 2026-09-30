@@ -23,5 +23,7 @@ export declare function reportStoreDegradation(args: {
      * stack. Dev only.
      */
     callsite?: string;
+    /** Whether {@linkcode callsite} is a React owner stack (`component`, the default) or a JS stack (`stack`). */
+    callsiteKind?: 'component' | 'stack';
 }): void;
 //# sourceMappingURL=telemetry.d.ts.map

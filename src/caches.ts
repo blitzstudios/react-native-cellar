@@ -47,9 +47,9 @@ function createMemoWatch({ name, keyedBy }: MemoDiagnostics, maxEntries: number,
   const numbers = () => ({ maxEntries, entries: lru?.size ?? 0, hits: stats.hits, misses: stats.stale + stats.absent, evictions: stats.evictions, rereads: stats.rereads });
   return {
     /** Lists the memo in the inspector, sized by `table`. */
-    track: (table: { readonly size: number }): void => {
+    track: (table: BoundedLru<{ version: number; value: unknown }>): void => {
       lru = table;
-      registerInspectedCache({ name, keyedBy, kind, max: maxEntries, stats, size: () => table.size });
+      registerInspectedCache({ name, keyedBy, kind, max: maxEntries, stats, table });
     },
     onEvict: (key: string): void => {
       stats.evictions += 1;
@@ -105,6 +105,8 @@ export interface BoundedLru<V> {
   set(key: string, value: V): void;
   /** Every stored key, from least to most recently used. */
   keys(): IterableIterator<string>;
+  /** Every stored entry, from least to most recently used, without marking any as used. */
+  entries(): IterableIterator<[string, V]>;
   /** How many entries it holds. */
   readonly size: number;
 }
@@ -154,6 +156,9 @@ export function createBoundedLru<V>(max: number, onEvict?: (key: string) => void
     },
     *keys() {
       for (let node = oldest; node !== undefined; node = node.newer) yield node.key;
+    },
+    *entries() {
+      for (let node = oldest; node !== undefined; node = node.newer) yield [node.key, node.value];
     },
     get(key) {
       // A present key always has a node, so a stored `undefined` still reads as a hit.

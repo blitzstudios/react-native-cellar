@@ -573,7 +573,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
       // the partition asked about may have no reader mounted.
       ...(ingest && {
         refetch: (key: Key) => {
-          ingest.prefetch(key, { staleTime: 0 }).catch(() => {
+          ingest.prefetch(key, { staleTime: 0, via: 'inspector' }).catch(() => {
             /* a failed fetch is the store's to report, as any other */
           });
         },

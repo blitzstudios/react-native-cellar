@@ -4,6 +4,11 @@
  * builds only, by the watch each declared cache carries.
  */
 
+import type { BoundedLru } from '../caches';
+import { KEY_SEP } from '../key';
+import { GROUP_SEP } from '../args_key';
+import { estimateHeap, previewValue } from './heap';
+
 /** A {@linkcode byPartition} cache, which holds a value per partition, or a {@linkcode byEntity} one, per entity. */
 export type InspectedCacheKind = 'partition' | 'entity';
 
@@ -42,7 +47,35 @@ export interface InspectedCache extends CacheStats {
   max: number;
   /** How many entries it holds now. */
   entries: number;
+  /**
+   * Roughly what its entries hold on the JS heap, in bytes, with what each entry costs the cache itself; present when
+   * asked for. Each entry is estimated on its own, so an object two entries share counts in both.
+   */
+  heapBytes?: number;
+  /** Whether some entry was too large to walk whole, so {@linkcode InspectedCache.heapBytes | heapBytes} is a floor. */
+  heapPartial?: boolean;
 }
+
+/** One cache entry, for a development tool to show. */
+export interface InspectedCacheEntry {
+  /** The entry's key, split into its parts: the partition's, then the entity's and any others; objects appear as `#n`. */
+  key: string[];
+  /** The version the entry was built at. */
+  version: number;
+  /** Roughly what the entry holds on the JS heap, in bytes. */
+  heapBytes: number;
+  /** The value, previewed: see {@linkcode previewValue}. */
+  value: unknown;
+}
+
+/** A page of a cache's entries, most recently used first. */
+export interface InspectedCacheEntries {
+  total: number;
+  offset: number;
+  entries: InspectedCacheEntry[];
+}
+
+type CacheSlot = { version: number; value: unknown };
 
 interface RegisteredCache {
   name: string;
@@ -50,7 +83,34 @@ interface RegisteredCache {
   kind: InspectedCacheKind;
   max: number;
   stats: CacheStats;
-  size: () => number;
+  table: BoundedLru<CacheSlot>;
+}
+
+/** What one entry costs the cache besides its value: its recency node, its map entry and its version slot. */
+const ENTRY_OVERHEAD_BYTES = 170;
+
+/** Each slot's estimate, kept with the slot, which a rebuild replaces: only a new or rebuilt entry is walked. */
+const slotBytes = new WeakMap<CacheSlot, { bytes: number; partial: boolean }>();
+
+function bytesOf(key: string, slot: CacheSlot): { bytes: number; partial: boolean } {
+  let known = slotBytes.get(slot);
+  if (!known) {
+    const estimate = estimateHeap(slot.value);
+    known = { bytes: estimate.bytes, partial: estimate.partial };
+    slotBytes.set(slot, known);
+  }
+  return { bytes: known.bytes + ENTRY_OVERHEAD_BYTES + 16 + key.length, partial: known.partial };
+}
+
+function heapOf(table: BoundedLru<CacheSlot>): { heapBytes: number; heapPartial: boolean } {
+  let heapBytes = 0;
+  let heapPartial = false;
+  for (const [key, slot] of table.entries()) {
+    const { bytes, partial } = bytesOf(key, slot);
+    heapBytes += bytes;
+    heapPartial ||= partial;
+  }
+  return { heapBytes, heapPartial };
 }
 
 const caches = new Map<string, RegisteredCache>();
@@ -60,16 +120,41 @@ export function registerInspectedCache(cache: RegisteredCache): void {
   if (__DEV__) caches.set(cache.name, cache);
 }
 
+/** Options for {@linkcode inspectedCaches}. */
+export interface InspectedCachesOptions {
+  /** Estimates what each cache holds on the JS heap; only entries built since the last estimate are walked. */
+  heap?: boolean;
+}
+
 /** Every listed cache, or the ones of `store` (its name with or without `_store`). */
-export function inspectedCaches(store?: string): InspectedCache[] {
+export function inspectedCaches(store?: string, options: InspectedCachesOptions = {}): InspectedCache[] {
   const prefix = store === undefined ? undefined : `${store.replace(/_store$/, '')}.`;
   const out: InspectedCache[] = [];
-  for (const { name, keyedBy, kind, max, stats, size } of caches.values()) {
+  for (const { name, keyedBy, kind, max, stats, table } of caches.values()) {
     if (prefix && !name.startsWith(prefix)) continue;
     const dot = name.indexOf('.');
-    out.push({ name, store: name.slice(0, dot), cache: name.slice(dot + 1), kind, keyedBy, max, entries: size(), ...stats });
+    out.push({ name, store: name.slice(0, dot), cache: name.slice(dot + 1), kind, keyedBy, max, entries: table.size, ...stats, ...(options.heap ? heapOf(table) : {}) });
   }
   return out;
+}
+
+/** A page of the cache `name`'s entries, most recently used first; looking doesn't count as using. */
+export function inspectedCacheEntries(name: string, page: { offset?: number; limit?: number } = {}): InspectedCacheEntries {
+  const cache = caches.get(name);
+  if (!cache) throw new Error(`Unknown cache "${name}".`);
+  const offset = Math.max(0, page.offset ?? 0);
+  const limit = Math.max(1, Math.min(page.limit ?? 50, 500));
+  const all = Array.from(cache.table.entries()).reverse();
+  return {
+    total: all.length,
+    offset,
+    entries: all.slice(offset, offset + limit).map(([key, slot]) => ({
+      key: key.split(new RegExp(`[${KEY_SEP}${GROUP_SEP}]`)),
+      version: slot.version,
+      heapBytes: bytesOf(key, slot).bytes,
+      value: previewValue(slot.value),
+    })),
+  };
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a

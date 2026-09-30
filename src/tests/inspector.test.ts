@@ -407,6 +407,43 @@ describe('the event log', () => {
     ]);
   });
 
+  itDev('estimates what each cache holds on the heap, and pages its entries newest first without using them', () => {
+    const store = defineSqliteStore({
+      name: 'heap_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      build: (cellar) => {
+        const { teams } = cellar.defineCaches({ teams: byPartition<{ names: string[] }>({ max: 4 }) });
+        return {
+          reads: {},
+          lifecycle: {
+            teamsOf: (season: Season, names: string[]) => teams.for(cellar.keyOf(season)).read(() => ({ names })),
+          },
+        };
+      },
+    });
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.teamsOf(NFL, ['KC', 'BUF']);
+    store.lifecycle.teamsOf(NBA, ['BOS']);
+    const inspected = inspectedStore('heap_store')!;
+
+    const [cache] = inspected.caches({ heap: true });
+    expect(cache.heapBytes).toBeGreaterThan(300);
+    expect(cache.heapPartial).toBe(false);
+    expect(inspected.caches()[0].heapBytes).toBeUndefined();
+
+    const page = inspected.cacheEntries('teams', { limit: 1 });
+    expect(page).toMatchObject({ total: 2, offset: 0, entries: [{ key: ['nba:2026'], version: 0, value: { names: ['BOS'] } }] });
+    expect(page.entries[0].heapBytes).toBeGreaterThan(0);
+    expect(inspected.cacheEntries('teams', { offset: 1 }).entries[0].key).toEqual(['nfl:2026']);
+  });
+
+  itDev("totals a store's caches in its summary", async () => {
+    const summary = await inspectedStore('heap_store')!.summary();
+    expect(summary.caches).toMatchObject({ count: 1, entries: 2 });
+    expect(summary.caches.heapBytes).toBeGreaterThan(300);
+  });
+
   itProd('lists no caches in a release build', () => {
     expect(inspectedStores().flatMap((store) => store.caches())).toEqual([]);
   });

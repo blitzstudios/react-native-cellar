@@ -3,6 +3,7 @@
  * entry, how often it had to build, and how often it lost an entry it was asked for again. Registered in development
  * builds only, by the watch each declared cache carries.
  */
+import type { BoundedLru } from '../caches';
 /** A {@linkcode byPartition} cache, which holds a value per partition, or a {@linkcode byEntity} one, per entity. */
 export type InspectedCacheKind = 'partition' | 'entity';
 /** What a cache has done since it was built, counted as it happens. */
@@ -39,18 +40,56 @@ export interface InspectedCache extends CacheStats {
     max: number;
     /** How many entries it holds now. */
     entries: number;
+    /**
+     * Roughly what its entries hold on the JS heap, in bytes, with what each entry costs the cache itself; present when
+     * asked for. Each entry is estimated on its own, so an object two entries share counts in both.
+     */
+    heapBytes?: number;
+    /** Whether some entry was too large to walk whole, so {@linkcode InspectedCache.heapBytes | heapBytes} is a floor. */
+    heapPartial?: boolean;
 }
+/** One cache entry, for a development tool to show. */
+export interface InspectedCacheEntry {
+    /** The entry's key, split into its parts: the partition's, then the entity's and any others; objects appear as `#n`. */
+    key: string[];
+    /** The version the entry was built at. */
+    version: number;
+    /** Roughly what the entry holds on the JS heap, in bytes. */
+    heapBytes: number;
+    /** The value, previewed: see {@linkcode previewValue}. */
+    value: unknown;
+}
+/** A page of a cache's entries, most recently used first. */
+export interface InspectedCacheEntries {
+    total: number;
+    offset: number;
+    entries: InspectedCacheEntry[];
+}
+type CacheSlot = {
+    version: number;
+    value: unknown;
+};
 interface RegisteredCache {
     name: string;
     keyedBy: string;
     kind: InspectedCacheKind;
     max: number;
     stats: CacheStats;
-    size: () => number;
+    table: BoundedLru<CacheSlot>;
 }
 /** Lists a cache, replacing one listed under its name before, as a store's move to another database rebuilds its caches. */
 export declare function registerInspectedCache(cache: RegisteredCache): void;
+/** Options for {@linkcode inspectedCaches}. */
+export interface InspectedCachesOptions {
+    /** Estimates what each cache holds on the JS heap; only entries built since the last estimate are walked. */
+    heap?: boolean;
+}
 /** Every listed cache, or the ones of `store` (its name with or without `_store`). */
-export declare function inspectedCaches(store?: string): InspectedCache[];
+export declare function inspectedCaches(store?: string, options?: InspectedCachesOptions): InspectedCache[];
+/** A page of the cache `name`'s entries, most recently used first; looking doesn't count as using. */
+export declare function inspectedCacheEntries(name: string, page?: {
+    offset?: number;
+    limit?: number;
+}): InspectedCacheEntries;
 export type { byEntity, byPartition } from '../caches';
 //# sourceMappingURL=caches.d.ts.map
