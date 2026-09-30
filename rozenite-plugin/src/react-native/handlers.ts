@@ -4,7 +4,7 @@ import { createRozeniteRpc } from '@rozenite/plugin-bridge';
 import type { RozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 import type { CellarEventMap, CellarMethods } from '../shared/protocol';
-import { clearPartitionEtag, defaultInspector, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, refetchPartition, runQuery, storeOf } from './operations';
 import type { CellarInspector } from './operations';
 
 /** How long events gather before they go to the panel in one message, in ms. */
@@ -18,6 +18,8 @@ export function registerCellarHandlers(client: RozeniteDevToolsClient<CellarEven
   const subscriptions = [
     rpc.handle('stores', () => listStores(inspector)),
     rpc.handle('partitions', ({ store }) => storeOf(inspector, store).partitions()),
+    rpc.handle('entityChanges', async ({ store, key, limit }) => storeOf(inspector, store).entityChanges(key, limit)),
+    rpc.handle('caches', async ({ store }) => listCaches(inspector, store)),
     rpc.handle('query', (params) => runQuery(inspector, params)),
     rpc.handle('refetch', async (params) => refetchPartition(inspector, params)),
     rpc.handle('clearEtag', async (params) => clearPartitionEtag(inspector, params)),

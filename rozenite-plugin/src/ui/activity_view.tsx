@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { InspectorEvent } from '../shared/protocol';
+import { Callsite, ExtraChips } from './callsite';
 import { Empty, KindBadge } from './components';
 import { formatClock, formatCount, formatFetchRows, formatMs, shortStoreName } from './format';
 
@@ -138,8 +139,9 @@ function EventRow({ event, showStore, open, onToggle }: { event: InspectorEvent;
               </div>
             ) : event.kind === 'degradation' ? (
               <div className="degradation-detail">
-                <div>{event.context}</div>
+                <div className="muted">{event.context}</div>
                 {event.error ? <pre className="json">{event.error}</pre> : null}
+                {event.callsite ? <Callsite stack={event.callsite} kind={event.callsiteKind} /> : null}
               </div>
             ) : null}
           </td>
@@ -181,9 +183,8 @@ function EventSummary({ event }: { event: InspectorEvent }) {
     case 'degradation':
       return (
         <span>
-          <code>{event.scope}</code> {event.severity === 'info' ? <span className="muted">(notice)</span> : null}
-          {event.first ? null : <span className="muted"> · repeat</span>}
-          <span className="muted"> · {event.context.length > 120 ? `${event.context.slice(0, 120)}…` : event.context}</span>
+          <code>{event.scope}</code> {event.severity === 'info' ? <span className="muted">notice</span> : null}
+          {event.count > 1 ? <span className="muted"> · ×{formatCount(event.count)}</span> : null} <ExtraChips extra={event.extra} />
         </span>
       );
   }

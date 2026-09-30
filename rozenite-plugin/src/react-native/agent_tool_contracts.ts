@@ -6,7 +6,7 @@
 import type { AgentTool } from '@rozenite/agent-bridge';
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 import type { PartitionRef, QueryRequest } from '../shared/protocol';
-import { clearPartitionEtag, filterEvents, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import { clearPartitionEtag, filterEvents, listCaches, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
 import type { CellarInspector } from './operations';
 
 const STORE = { type: 'string', description: 'The store name, from list-stores, such as "player_stats_store".' } as const;
@@ -57,11 +57,30 @@ export const cellarAgentTools = {
         sql: { type: 'string', description: 'One statement. Use ? placeholders for values.' },
         params: { type: 'array', items: { type: ['string', 'number', 'null'] }, description: 'Values for the ? placeholders, in order.' },
         limit: { type: 'number', description: 'The most rows to return; 500 by default, at most 10000.' },
+        offset: { type: 'number', description: 'How many rows to skip, for the next page when the last came back truncated.' },
       },
       required: ['store', 'sql'],
     },
     readOnly: true,
     idempotent: true,
+  },
+  entityChanges: {
+    name: 'entity-changes',
+    description:
+      "The entities (such as players) that changed lately in one partition, newest first, each with the partition version it changed at, and the epoch: the version at which every entity last counted as changed.",
+    inputSchema: {
+      type: 'object',
+      properties: { store: STORE, key: PARTITION_KEY, limit: { type: 'number', description: 'The most entities to list; 50 by default.' } },
+      required: ['store', 'key'],
+    },
+    readOnly: true,
+  },
+  listCaches: {
+    name: 'list-caches',
+    description:
+      "List the stores' caches (values kept on the JS heap, per partition or per entity) with their entries against their limit, hits, misses (stale after a write, or absent), evictions, re-reads of evicted keys (what a larger cache would have answered), builds and isEqual reuses. Development builds only.",
+    inputSchema: { type: 'object', properties: { store: { type: 'string', description: "Only this store's caches." } } },
+    readOnly: true,
   },
   recentEvents: {
     name: 'recent-events',
@@ -112,6 +131,8 @@ export const agentToolHandlers = (inspector: CellarInspector) => ({
     return { total: matching.length, partitions: matching.slice(0, limit) };
   },
   query: (request: QueryRequest) => runQuery(inspector, request),
+  entityChanges: async ({ store, key, limit }: PartitionRef & { limit?: number }) => storeOf(inspector, store).entityChanges(key, limit),
+  listCaches: async ({ store }: { store?: string }) => ({ caches: listCaches(inspector, store) }),
   recentEvents: async ({ store, kinds, limit = 100 }: { store?: string; kinds?: InspectorEvent['kind'][]; limit?: number }) => ({
     events: filterEvents(inspector.recentInspectorEvents(), { store, kinds, limit }),
   }),

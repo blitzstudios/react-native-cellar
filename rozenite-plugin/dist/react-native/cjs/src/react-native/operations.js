@@ -38,6 +38,7 @@ exports.defaultInspector = void 0;
 exports.storeOf = storeOf;
 exports.listStores = listStores;
 exports.runQuery = runQuery;
+exports.listCaches = listCaches;
 exports.refetchPartition = refetchPartition;
 exports.clearPartitionEtag = clearPartitionEtag;
 exports.ingestReport = ingestReport;
@@ -55,8 +56,11 @@ function storeOf(inspector, name) {
 async function listStores(inspector) {
     return Promise.all(inspector.inspectedStores().map(async (store) => ({ name: store.name, schema: store.schema(), summary: await store.summary() })));
 }
-function runQuery(inspector, { store, sql, params, limit }) {
-    return storeOf(inspector, store).query(sql, params ?? [], limit === undefined ? {} : { limit });
+function runQuery(inspector, { store, sql, params, limit, offset }) {
+    return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
+}
+function listCaches(inspector, store) {
+    return store ? storeOf(inspector, store).caches() : inspector.inspectedCaches();
 }
 function refetchPartition(inspector, { store, key }) {
     return storeOf(inspector, store).refetch(key);

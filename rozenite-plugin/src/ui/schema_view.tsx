@@ -18,7 +18,11 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
     rpc
       .method('query')
       .invoke({ store: store.name, sql: `SELECT type, name, sql FROM ${master} WHERE tbl_name IN (?, ?) ORDER BY type DESC, name`, params: [schema.table, schema.metaTable] })
-      .then((result) => setDefinitions(result.rows.map(([type, name, sql]) => ({ type: String(type), name: String(name), sql: sql as string | null }))))
+      .then((result) => {
+        const at = (column: string) => result.columns.indexOf(column);
+        const [type, name, sql] = [at('type'), at('name'), at('sql')];
+        setDefinitions(result.rows.map((row) => ({ type: String(row[type]), name: String(row[name]), sql: row[sql] as string | null })));
+      })
       .catch((caught) => setError(errorMessage(caught)));
   }, [rpc, store.name, master, schema.table, schema.metaTable]);
 
@@ -101,7 +105,8 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
         </table>
       </section>
       <section>
-        <h4>As SQLite holds it</h4>
+        <h4>CREATE statements</h4>
+        <p className="muted small">The SQL SQLite stored when Cellar created the store's tables and indexes, from {master}.</p>
         {error ? <ErrorBanner message={error} /> : null}
         {definitions?.map((definition) => (
           <pre key={definition.name} className="json">

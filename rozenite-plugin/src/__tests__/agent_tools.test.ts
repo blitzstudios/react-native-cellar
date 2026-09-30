@@ -64,6 +64,14 @@ describe('the agent tools', () => {
     expect(events).toEqual([expect.objectContaining({ kind: 'write', store: 'agent_events_store', partition: 'nba:2026' })]);
   });
 
+  it('pages a query, lists entity changes and caches', async () => {
+    const store = await gamesStore('agent_more_store');
+    store.lifecycle.put(NFL, NFL_GAMES);
+    expect(await tools.query({ store: 'agent_more_store', sql: 'SELECT team FROM games ORDER BY team', limit: 1, offset: 1 })).toMatchObject({ rows: [['KC']], truncated: true, offset: 1 });
+    expect(await tools.entityChanges({ store: 'agent_more_store', key: 'nfl:2026' })).toMatchObject({ version: 1, epoch: 1, count: 0 });
+    expect(await tools.listCaches({ store: 'agent_more_store' })).toEqual({ caches: [] });
+  });
+
   it('reports ingest timings with totals', async () => {
     expect(await tools.ingestTimings({})).toEqual({ timings: expect.any(Array), rollup: expect.any(Array) });
   });
