@@ -5,7 +5,7 @@
  */
 
 import type { defineSqliteStore } from '../define_sqlite_store';
-import type { SqliteConnection } from '../table/connection';
+import type { QueryExecResult, SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
@@ -170,13 +170,28 @@ function toBridgeValue(value: unknown): unknown {
  * Runs a read off the JS thread where the connection can (nitro runs `executeAsync` on its own thread), on the store's
  * dedicated reader when it has one, so counting a large table doesn't stall the app.
  */
-async function readResult<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null>): Promise<{ rows: T[]; columns?: string[] }> {
+async function readResult<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null>): Promise<{ rows: T[]; metadata?: QueryExecResult['metadata'] }> {
   const target = conn.reader ?? conn;
   const result = target.executeAsync ? await target.executeAsync(sql, params) : target.execute(sql, params);
   const rows = (result.rows?._array ?? []) as T[];
-  const columns = result.metadata && Object.entries(result.metadata).sort(([, a], [, b]) => a.index - b.index).map(([name]) => name);
+  const { metadata } = result;
   result.dispose?.();
-  return { rows, columns };
+  return { rows, metadata };
+}
+
+/**
+ * A result's columns in the statement's order where the driver keeps it, and otherwise the row's own keys with the
+ * table's columns first, in the table's order: nitro's rows don't keep the statement's order, and its metadata is only
+ * whole once its keying bug is fixed.
+ */
+function columnsOf(row: Record<string, unknown> | undefined, metadata: QueryExecResult['metadata'], tableOrder: ReadonlyMap<string, number>): string[] {
+  const keys = row ? Object.keys(row) : [];
+  // A driver without metadata, such as sql.js, builds each row in the statement's order.
+  if (!metadata) return keys;
+  const named = Object.entries(metadata).map(([key, column]) => ({ name: column.name ?? key, index: column.index }));
+  if (named.length === keys.length && named.every((column) => column.name in row!)) return named.sort((a, b) => a.index - b.index).map((column) => column.name);
+  const rank = (key: string): number => tableOrder.get(key) ?? tableOrder.size;
+  return keys.map((key, index) => ({ key, index })).sort((a, b) => rank(a.key) - rank(b.key) || a.index - b.index).map(({ key }) => key);
 }
 
 async function read<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null> = []): Promise<T[]> {
@@ -216,6 +231,8 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       return record;
     }
   };
+
+  const tableOrder = new Map([...Object.keys(schema.columns), meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])].map((column, index) => [column, index]));
 
   const unboundResult = (): InspectedQueryResult => ({ columns: [], rows: [], truncated: false, durationMs: 0 });
 
@@ -277,10 +294,10 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
       const text = isWrappable(statement) ? `SELECT * FROM (${statement.sql}) LIMIT ${limit + 1}` : statement.sql;
       const started = now();
-      const { rows: all, columns: ordered } = await readResult<Record<string, unknown>>(running.conn, text, params);
+      const { rows: all, metadata } = await readResult<Record<string, unknown>>(running.conn, text, params);
       const durationMs = now() - started;
       const kept = all.length > limit ? all.slice(0, limit) : all;
-      const columns = ordered?.length ? ordered : kept.length ? Object.keys(kept[0]) : [];
+      const columns = columnsOf(kept[0], metadata, tableOrder);
       return {
         columns,
         rows: kept.map((row) => columns.map((column) => toBridgeValue(row[column]))),

@@ -13,10 +13,11 @@ export interface QueryExecResult {
     _array?: unknown[];
   };
   /**
-   * Each result column by name, with its position in the statement. Nitro reports it, and its row objects don't keep
-   * the statement's column order, so this is the only way to know it there.
+   * Each result column, with its name and its position in the statement. Nitro reports it, and its row objects don't
+   * keep the statement's column order, so this is the only way to know it there. Nitro 1.1.5 keys every entry by an
+   * empty string, so only one survives; read the name from the entry.
    */
-  metadata?: Record<string, { index: number }>;
+  metadata?: Record<string, { index: number; name?: string }>;
   /** Frees the result's native memory. */
   dispose?: () => void;
 }

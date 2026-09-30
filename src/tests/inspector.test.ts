@@ -247,25 +247,40 @@ describe('queries', () => {
     expect(table().find({})).toHaveLength(3);
   });
 
-  it("orders columns by the result's metadata, as nitro's row objects lose the statement's order", async () => {
-    const { store } = gamesStore('metadata_store');
+  /** A connection that answers as nitro does: rows keyed in reverse, and the column metadata `metadataOf` builds. */
+  function nitroLike(metadataOf: (names: string[]) => Record<string, { index: number; name?: string }>): SqliteConnection {
     const sqljs = createSqlJsConnection();
-    const scrambled: SqliteConnection = {
+    return {
       execute: (sql, params) => {
         const result = sqljs.execute(sql, params);
         const rows = (result.rows?._array ?? []) as Array<Record<string, unknown>>;
         if (!rows.length) return result;
-        const names = Object.keys(rows[0]);
-        return {
-          rows: { _array: rows.map((row) => Object.fromEntries(Object.entries(row).reverse())) },
-          metadata: Object.fromEntries(names.map((name, index) => [name, { index }])),
-        };
+        return { rows: { _array: rows.map((row) => Object.fromEntries(Object.entries(row).reverse())) }, metadata: metadataOf(Object.keys(rows[0])) };
       },
     };
-    store.bindSqlite(scrambled);
+  }
+
+  it("orders columns as the statement does when the driver's metadata names every one", async () => {
+    const { store } = gamesStore('metadata_store');
+    store.bindSqlite(nitroLike((names) => Object.fromEntries(names.map((name, index) => [name, { name, index }]))));
     store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
-    const result = await inspectedStore('metadata_store')!.query('SELECT team, sport, score FROM inspected_games');
-    expect(result).toMatchObject({ columns: ['team', 'sport', 'score'], rows: [['KC', 'nfl', 27]] });
+    const result = await inspectedStore('metadata_store')!.query('SELECT score, team, sport FROM inspected_games');
+    expect(result).toMatchObject({ columns: ['score', 'team', 'sport'], rows: [[27, 'KC', 'nfl']] });
+  });
+
+  it("orders columns as the table does when the metadata is short, as nitro 1.1.5 keys every entry the same", async () => {
+    const { store } = gamesStore('short_metadata_store');
+    store.bindSqlite(nitroLike((names) => ({ '': { name: names[0], index: 0 } })));
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    const result = await inspectedStore('short_metadata_store')!.query('SELECT score * 2 AS doubled, score, partition_key, team FROM inspected_games');
+    expect(result).toMatchObject({ columns: ['partition_key', 'team', 'score', 'doubled'], rows: [['nfl:2026', 'KC', 27, 54]] });
+  });
+
+  it("keeps the row's own order for a driver without metadata", async () => {
+    const { store } = gamesStore('plain_order_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    expect((await inspectedStore('plain_order_store')!.query('SELECT score, team FROM inspected_games')).columns).toEqual(['score', 'team']);
   });
 
   it('answers nothing while the store is unbound, and still refuses a write', async () => {
