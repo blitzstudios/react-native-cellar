@@ -418,7 +418,8 @@ with nothing to compare against, its rows go straight in and every entity counts
 | `…/inspector` | every declared store (`inspectedStores`) with its schema, where it runs, its partitions and read-only SQL over its database, and a log of what the stores did — writes, moves between databases, fetches, degradation reports — with a listener for each new event (`onInspectorEvent`). What the DevTools plugin reads; the log is recorded in development builds only |
 | `…/redux` | `createReduxBridge(useStore)`: `useTrackedStores` and `withTrackedStores`, derivations over a Redux store and the Cellar stores together, which re-run on a dispatch that replaced the state or a write to what they read. Handed the app's `useStore`, so Cellar depends on neither Redux nor its React binding |
 
-The lint rules that go with these ship as [`@sleeperhq/eslint-plugin-cellar`](eslint-plugin/README.md).
+The lint rules that go with these ship as [`@sleeperhq/eslint-plugin-cellar`](eslint-plugin/README.md), and a
+React Native DevTools panel for watching the stores live as [`@sleeperhq/rozenite-plugin-cellar`](rozenite-plugin/README.md).
 
 The core entry runs anywhere React does. Each subpath is declared twice — in `exports`, and as a stub
 `package.json` beside `lib/` — because TypeScript and Metro still resolve the way Node did before `exports`

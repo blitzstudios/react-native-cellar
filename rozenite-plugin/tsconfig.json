@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@sleeperhq/react-native-cellar/inspector": ["../lib/typescript/module/inspector/index.d.ts"],
+      "@sleeperhq/react-native-cellar/sqljs": ["../lib/typescript/module/sqljs/index.d.ts"],
+      "@sleeperhq/react-native-cellar": ["../lib/typescript/module/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "react-native.ts", "rozenite.config.ts", "../types/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

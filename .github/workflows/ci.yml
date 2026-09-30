@@ -56,3 +56,39 @@ jobs:
             git diff --stat -- lib
             exit 1
           fi
+
+  rozenite-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rozenite-plugin
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - run: corepack enable
+
+      # Its tests import Cellar's source, which resolves Cellar's own dependencies from the root install.
+      - run: yarn install --immutable
+        working-directory: .
+
+      - run: yarn install --immutable
+
+      # The plugin typechecks against Cellar's committed declarations in lib/, which the job above keeps current.
+      - run: yarn typecheck
+      - run: yarn test
+      - run: yarn build
+
+      # Committed for the same reason as lib/: a git dependency is never built on the consumer's side.
+      - name: dist/ matches the source
+        run: |
+          git add --intent-to-add -A dist
+          if ! git diff --quiet -- dist; then
+            echo "::error::rozenite-plugin/dist does not match its source. Run 'yarn build' there and commit the result."
+            git diff --stat -- dist
+            exit 1
+          fi
