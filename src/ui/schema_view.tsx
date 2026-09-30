@@ -41,7 +41,7 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
             <code>{schema.entityColumn}</code>
           </dd>
           <dt>Primary key</dt>
-          <dd>{schema.primaryKey.length ? schema.primaryKey.map((column) => <code key={column}>{column}</code>) : <span className="muted">none: rows repeat</span>}</dd>
+          <dd className="chips">{schema.primaryKey.length ? schema.primaryKey.map((column) => <code key={column}>{column}</code>) : <span className="muted">none: rows repeat</span>}</dd>
           <dt>Writes rows</dt>
           <dd>{schema.nativeShred ? 'with the native shredder' : 'in JS'}</dd>
           <dt>Database</dt>

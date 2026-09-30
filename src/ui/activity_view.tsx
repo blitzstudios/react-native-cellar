@@ -21,8 +21,18 @@ function matchesText(event: InspectorEvent, needle: string): boolean {
 }
 
 /**
+ * Whether a degradation scope is about `store`: Cellar scopes a store's reports as `player_store.in_memory` or
+ * `player_store_ingest.…`, and its partition engine's as `partitions.intern_evicted.player`. A bare prefix won't do,
+ * since `player_stats_store.…` starts with `player`.
+ */
+export function scopeNamesStore(scope: string, store: string): boolean {
+  const short = store.replace(/_store$/, '');
+  return scope.startsWith(`${store}.`) || scope.startsWith(`${store}_ingest.`) || scope.endsWith(`.${short}`);
+}
+
+/**
  * What the stores did, newest first: every store's, or one store's (a store's view passes `store`). Degradation reports
- * name a scope rather than a store, so a store's view shows those whose scope starts with its name.
+ * name a scope rather than a store, so a store's view shows those whose scope names it.
  */
 export function ActivityView({ events, store }: { events: readonly InspectorEvent[]; store?: string }) {
   const [kinds, setKinds] = useState<Set<InspectorEvent['kind']>>(() => new Set(KINDS));
@@ -39,7 +49,7 @@ export function ActivityView({ events, store }: { events: readonly InspectorEven
       const event = source[i];
       if (event.id <= clearedAt) break;
       if (!kinds.has(event.kind)) continue;
-      if (store && ('store' in event ? event.store !== store : !event.scope.startsWith(store.replace(/_store$/, '')))) continue;
+      if (store && ('store' in event ? event.store !== store : !scopeNamesStore(event.scope, store))) continue;
       if (needle && !matchesText(event, needle)) continue;
       matching.push(event);
     }

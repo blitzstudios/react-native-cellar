@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatAgo, formatCell, formatFetchRows, parseJsonText, parseParams, toCsv, toJsonRows } from '../ui/format';
+import { scopeNamesStore } from '../ui/activity_view';
 import { mergeEvents } from '../ui/use_cellar';
 import type { InspectorEvent } from '../shared/protocol';
 
@@ -47,6 +48,16 @@ describe('times and fetches', () => {
     expect(formatFetchRows(-1)).toBe('304 not modified');
     expect(formatFetchRows(-2)).toBe('unchanged body');
     expect(formatFetchRows(1200)).toBe('1,200 rows');
+  });
+});
+
+describe('degradation scopes', () => {
+  it("match the store they name, and not a store whose name they merely start with", () => {
+    expect(scopeNamesStore('player_store.in_memory', 'player_store')).toBe(true);
+    expect(scopeNamesStore('player_store_ingest.oversized_prime.mlb', 'player_store')).toBe(true);
+    expect(scopeNamesStore('partitions.intern_evicted.player', 'player_store')).toBe(true);
+    expect(scopeNamesStore('player_stats_store_ingest.oversized_prime.week:proj', 'player_store')).toBe(false);
+    expect(scopeNamesStore('player_stats_store.reopened', 'player_store')).toBe(false);
   });
 });
 
