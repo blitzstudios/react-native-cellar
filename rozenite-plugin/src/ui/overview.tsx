@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { DatabaseDump, IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { Empty, ErrorBanner, StateBadge, Stat } from './components';
 import { heapLabel } from './caches_view';
 import { Degradations } from './degradations';
@@ -34,22 +34,6 @@ export function Overview({
   const now = useNow();
   const [timings, setTimings] = useState<IngestTiming[]>();
   const [error, setError] = useState<string>();
-  const [dump, setDump] = useState<DatabaseDump>();
-  const [dumping, setDumping] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const dumpDatabases = async () => {
-    if (!rpc) return;
-    setDumping(true);
-    try {
-      setDump(await rpc.method('dump', { timeoutMs: 120_000 }).invoke());
-      setError(undefined);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setDumping(false);
-    }
-  };
 
   const loadRollup = useCallback(async () => {
     if (!rpc) return;
@@ -99,33 +83,6 @@ export function Overview({
             <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold, a shared object counted once" />
             <Stat label="off their database" value={formatCount(offDatabase.length)} />
           </>
-        ) : null}
-        {mode === 'live' ? (
-          <div className="dump-action">
-            <button type="button" className="button" onClick={dumpDatabases} disabled={!rpc || dumping}>
-              {dumping ? 'Dumping…' : 'Dump DB'}
-            </button>
-            {dump ? (
-              <div className="dump-result">
-                <code title={dump.path}>{dump.path}</code>
-                <span className="muted">
-                  {formatBytes(dump.bytes)} · {dump.tables.length} tables
-                </span>
-                <button
-                  type="button"
-                  className="button button-small"
-                  onClick={() =>
-                    navigator.clipboard?.writeText(dump.path).then(() => {
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1200);
-                    })
-                  }
-                >
-                  {copied ? 'Copied' : 'Copy path'}
-                </button>
-              </div>
-            ) : null}
-          </div>
         ) : null}
       </div>
 

@@ -4,7 +4,7 @@ import type { StoreOverview } from '../shared/protocol';
 import { ActivityView } from './activity_view';
 import { CachesView, heapLabel } from './caches_view';
 import { EntitiesView } from './entities_view';
-import { Empty, StateBadge } from './components';
+import { Empty, OpenIcon, SaveIcon, StateBadge } from './components';
 import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
 import { Overview } from './overview';
 import type { OverviewCleared } from './overview';
@@ -14,6 +14,7 @@ import type { QueryDraft } from './query_view';
 import { SchemaView } from './schema_view';
 import { useCellarConnection, useLatestEventId } from './use_cellar';
 import { useDump } from './use_dump';
+import { useSaveDump } from './save_dump';
 
 /** Whether the panel is looking at the running app or at a database dump, which has rows but none of the app's memory. */
 export type PanelMode = 'live' | 'dump';
@@ -36,6 +37,7 @@ type View = 'overview' | 'activity';
 export default function CellarPanel() {
   const live = useCellarConnection();
   const dumpFile = useDump();
+  const saving = useSaveDump(live.rpc);
   const { dump } = dumpFile;
   const mode: PanelMode = dump ? 'dump' : 'live';
   const { state, problem, refreshStores } = live;
@@ -84,7 +86,44 @@ export default function CellarPanel() {
               {state === 'connected' ? 'live' : state === 'connecting' ? 'connecting' : 'waiting for app'}
             </span>
           )}
+          <span className="spacer" />
+          <button
+            type="button"
+            className="icon-button"
+            title={mode === 'dump' ? "Saving reads the running app's databases" : "Save the app's databases"}
+            aria-label="Save dump"
+            disabled={mode === 'dump' || !live.rpc || !!saving.progress}
+            onClick={() => live.rpc && saving.save(live.rpc)}
+          >
+            <SaveIcon />
+          </button>
+          <label className="icon-button file-button" title="Open a dump">
+            <OpenIcon />
+            <input
+              type="file"
+              accept=".db,.sqlite,.sqlite3,application/x-sqlite3"
+              aria-label="Open dump"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) dumpFile.openFile(file);
+                event.target.value = '';
+              }}
+            />
+          </label>
         </div>
+        {saving.progress ? (
+          <div className="file-status muted">
+            {saving.progress.size ? `Saving ${formatBytes(saving.progress.saved)} / ${formatBytes(saving.progress.size)}` : 'Dumping…'}
+          </div>
+        ) : saving.error ? (
+          <button type="button" className="file-status file-status-error" title="Dismiss" onClick={saving.dismiss}>
+            {saving.error}
+          </button>
+        ) : saving.saved ? (
+          <button type="button" className="file-status muted" title="Dismiss" onClick={saving.dismiss}>
+            Saved <code>{saving.saved.name}</code> {formatBytes(saving.saved.bytes)}
+          </button>
+        ) : null}
         {dump ? (
           <div className="dump-name" title={dump.name}>
             <code>{dump.name}</code> <span className="muted">{formatBytes(dump.bytes)}</span>
@@ -118,19 +157,6 @@ export default function CellarPanel() {
             Close dump
           </button>
         )}
-        <label className="button button-small nav-refresh file-button">
-          Open dump…
-          <input
-            type="file"
-            accept=".db,.sqlite,.sqlite3,application/x-sqlite3"
-            aria-label="Open dump"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) dumpFile.openFile(file);
-              event.target.value = '';
-            }}
-          />
-        </label>
       </nav>
 
       <main className="main">

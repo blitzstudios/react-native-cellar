@@ -86,7 +86,7 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
   expect(await screen.findByText('No caches')).toBeTruthy();
 });
 
-it('lists a store’s entities, each an id within a partition, and shows one with the other partitions using its id', async () => {
+it('lists one partition’s entities at a time, and moves to another partition using the same id', async () => {
   const store = await gamesStore('panel_entities_store');
   store.lifecycle.put(NFL, NFL_GAMES);
   store.lifecycle.put(NBA, [{ team: 'MIA', sport: 'nba', score: 1 }]);
@@ -94,9 +94,21 @@ it('lists a store’s entities, each an id within a partition, and shows one wit
 
   fireEvent.click(await within(await screen.findByRole('navigation')).findByTitle('panel_entities_store'));
   fireEvent.click(await screen.findByRole('tab', { name: 'Entities' }));
-  const rows = await screen.findAllByText('MIA');
-  expect(rows).toHaveLength(2);
-  fireEvent.click(rows[0]);
+  const partition = (await screen.findByLabelText('Partition')) as HTMLSelectElement;
+  await waitFor(() => expect(partition.value).toBe('nfl:2026'));
+  expect(await screen.findByText('KC')).toBeTruthy();
+  fireEvent.click(screen.getByText('MIA'));
   expect(await screen.findByRole('heading', { name: 'MIA' })).toBeTruthy();
-  expect(await screen.findByText('Same id in other partitions')).toBeTruthy();
+
+  fireEvent.click(await screen.findByRole('button', { name: 'nba:2026' }));
+  await waitFor(() => expect(partition.value).toBe('nba:2026'));
+  await waitFor(() => expect(screen.queryByText('KC')).toBeNull());
+  expect(screen.getAllByText('MIA').length).toBeGreaterThan(0);
+});
+
+it('has Save and Open in the sidebar, Save once the app is connected', async () => {
+  await renderPanel();
+  const sidebar = await screen.findByRole('navigation');
+  expect(within(sidebar).getByLabelText('Open dump')).toBeTruthy();
+  await waitFor(() => expect((within(sidebar).getByRole('button', { name: 'Save dump' }) as HTMLButtonElement).disabled).toBe(false));
 });

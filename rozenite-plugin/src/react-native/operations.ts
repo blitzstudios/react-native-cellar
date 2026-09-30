@@ -14,13 +14,44 @@ export const defaultInspector: CellarInspector = cellarInspector;
 
 declare const require: (id: string) => { dumpSqliteStores: (options: { name?: string }) => Promise<DatabaseDump> };
 
-/** Writes the dump; loaded when first asked for, since only a device running nitro can. */
-export type DumpDatabases = () => Promise<DatabaseDump>;
+/** Writes the dump, to a file named `fileName`. */
+export type DumpDatabases = (() => Promise<DatabaseDump>) & { fileName: string };
 
-export const nitroDump =
-  (name?: string): DumpDatabases =>
-  () =>
-    require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores(name ? { name } : {});
+/** Cellar's dump, loaded when first asked for, since only a device running nitro can write one. */
+export const nitroDump = (name = 'cellar-dump.db'): DumpDatabases =>
+  Object.assign(() => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores({ name }), { fileName: name });
+
+/** A file on the device, read in parts. */
+export interface DeviceFile {
+  size: number;
+  /** `length` bytes from `offset`, as base64. */
+  read(offset: number, length: number): Promise<string>;
+  close(): void;
+}
+
+export type OpenDeviceFile = (path: string) => Promise<DeviceFile>;
+
+/**
+ * Opens a file through React Native's networking, which reads `file://` URLs into a native blob on both platforms, so
+ * the whole file never enters JS: each part is sliced off the blob and read as a data URL.
+ */
+export const openDeviceFile: OpenDeviceFile = async (path) => {
+  const blob = await (await fetch(`file://${encodeURI(path)}`)).blob();
+  return {
+    size: blob.size,
+    read: (offset, length) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = String(reader.result ?? '');
+          resolve(url.slice(url.indexOf(',') + 1));
+        };
+        reader.onerror = () => reject(reader.error ?? new Error(`Couldn't read ${path}`));
+        reader.readAsDataURL(blob.slice(offset, Math.min(offset + length, blob.size)));
+      }),
+    close: () => (blob as Blob & { close?: () => void }).close?.(),
+  };
+};
 
 /** The store named `name`, or an error that lists the stores there are. */
 export function storeOf(inspector: CellarInspector, name: string): InspectedStore {

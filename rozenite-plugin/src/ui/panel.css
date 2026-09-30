@@ -1143,9 +1143,37 @@ tfoot td {
 
 /* Dumps */
 
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: inherit;
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.brand .icon-button + .icon-button {
+  margin-left: -6px;
+}
+
 .file-button {
   position: relative;
-  text-align: center;
+  overflow: hidden;
 }
 
 .file-button input {
@@ -1153,6 +1181,29 @@ tfoot td {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.file-status {
+  display: block;
+  width: 100%;
+  padding: 0 12px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.file-status {
+  cursor: pointer;
+}
+
+.file-status-error {
+  color: var(--bad);
+  white-space: normal;
 }
 
 .connection-dump {
@@ -1165,27 +1216,4 @@ tfoot td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dump-action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-.dump-result {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 560px;
-}
-
-.dump-result code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
 }

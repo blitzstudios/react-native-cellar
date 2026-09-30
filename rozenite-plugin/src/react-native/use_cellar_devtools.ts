@@ -8,7 +8,7 @@ import { defaultInspector, nitroDump } from './operations';
 
 /** Options for {@linkcode useCellarDevTools}. */
 export interface CellarDevToolsOptions {
-  /** The database file name the Dump button writes, in nitro's directory; `cellar-dump.db` by default. */
+  /** The database file name a dump writes, in nitro's directory; `cellar-dump.db` by default. */
   dumpName?: string;
 }
 

@@ -75,9 +75,11 @@ The app records events in development builds only, the latest 1000; the panel ke
 
 ## Database dumps
 
-**Dump DB** on the Overview copies every store's database into one SQLite file on the device (Cellar's
-`dumpSqliteStores`) and shows its path; on a simulator that is a path on your Mac. The `dump-databases` agent tool
-does the same. `useCellarDevTools({ dumpName })` names the file; the next dump replaces it.
+**Save** in the panel's sidebar asks where to save, then copies every store's database into one SQLite file on the
+device (Cellar's `dumpSqliteStores`) and brings it over in 1 MB parts, so it works with a physical device too. The
+`dump-databases` agent tool writes the same file and returns its path on the device; on a simulator that is a path on
+your Mac. `useCellarDevTools({ dumpName })` names the file (the panel suggests that name with the time added); the
+next dump replaces it.
 
 The same panel opens a dump without the app: in the browser, from a terminal,
 
@@ -85,7 +87,7 @@ The same panel opens a dump without the app: in the browser, from a terminal,
 node_modules/.bin/cellar-open-dump path/to/dump.db
 ```
 
-or with **Open dump…** in the panel's sidebar. It shows the stores, partitions, entities, queries and schema the
+or with **Open** in the panel's sidebar. It shows the stores, partitions, entities, queries and schema the
 file holds; what lived only in the app's memory (activity, caches, fetches, degradations, versions) isn't there.
 
 ## Agent tools
