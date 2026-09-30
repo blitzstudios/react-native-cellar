@@ -75,8 +75,8 @@ export type CellarMethods = {
 
 /** What the app sends without being asked. */
 export type CellarEventMap = {
-  /** Events as they are recorded, batched. */
-  'cellar:events': { events: InspectorEvent[] };
+  /** Events as they are recorded, batched, as the JSON text of an `InspectorEvent[]`: see `wire.ts`. */
+  'cellar:events': { json: string };
 };
 
 export type { InspectedCache, InspectedCacheEntries, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };

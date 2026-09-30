@@ -5,7 +5,9 @@ import { clearInspectorEvents } from '@sleeperhq/react-native-cellar/inspector';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerCellarHandlers } from '../react-native/handlers';
 import { PLUGIN_ID } from '../shared/protocol';
-import type { CellarEventMap, CellarMethods } from '../shared/protocol';
+import type { CellarEventMap, InspectorEvent } from '../shared/protocol';
+import { parsingRpc } from '../shared/wire';
+import type { CellarWireMethods } from '../shared/wire';
 import { NBA, NFL, NFL_GAMES, cachedStore, gamesStore } from './fixtures';
 
 async function connect() {
@@ -13,12 +15,13 @@ async function connect() {
   const deviceClient = await getRozeniteDevToolsClient<CellarEventMap>(PLUGIN_ID, { channel: device });
   const panelClient = await getRozeniteDevToolsClient<CellarEventMap>(PLUGIN_ID, { channel: panel });
   const unregister = registerCellarHandlers(deviceClient);
-  const rpc = createRozeniteRpc<CellarMethods>(panelClient as unknown as RozeniteDevToolsClient);
+  const wire = createRozeniteRpc<CellarWireMethods>(panelClient as unknown as RozeniteDevToolsClient);
+  const rpc = parsingRpc(wire);
   return {
     rpc,
     panelClient,
     close: () => {
-      rpc.close();
+      wire.close();
       unregister();
       deviceClient.close();
       panelClient.close();
@@ -137,11 +140,11 @@ describe('the calls the panel makes', () => {
 describe('events', () => {
   it('pushes writes to the panel in one batch, and answers the backlog', async () => {
     const store = await gamesStore('protocol_events_store');
-    const pushed = waitForMessage<CellarEventMap, 'cellar:events'>(session.panelClient, 'cellar:events', { timeoutMs: 1000 }, ({ events }) => events.some((event) => event.kind === 'write'));
+    const pushed = waitForMessage<CellarEventMap, 'cellar:events'>(session.panelClient, 'cellar:events', { timeoutMs: 1000 }, ({ json }) => (JSON.parse(json) as InspectorEvent[]).some((event) => event.kind === 'write'));
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
 
-    const { events } = await pushed;
+    const events = JSON.parse((await pushed).json) as InspectorEvent[];
     expect(events.filter((event) => event.kind === 'write').map((event) => event.kind === 'write' && event.partition)).toEqual(['nfl:2026', 'nba:2026']);
 
     const backlog = await session.rpc.method('events').invoke({});
