@@ -15,6 +15,7 @@ export type {
   InspectedQueryOptions,
   InspectedQueryResult,
   InspectedBlob,
+  InspectedEntity,
   InspectedEntityChanges,
   InspectedSchema,
   InspectedStore,

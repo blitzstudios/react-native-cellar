@@ -9,8 +9,8 @@ import type { QueryExecResult, SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
-import { inspectedCacheEntries, inspectedCaches } from './caches';
-import type { InspectedCache, InspectedCacheEntries, InspectedCachesOptions } from './caches';
+import { inspectedCacheEntries, inspectedCaches, inspectedEntityCacheEntries } from './caches';
+import type { InspectedCache, InspectedCacheEntries, InspectedCacheEntry, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
 
 /** A column of a store's table. */
@@ -58,6 +58,15 @@ export interface InspectedPartition {
   etag: string | null;
   /** When its rows last landed from a fetch this session, as a `Date.now()` timestamp, or `null`. */
   fetchedAt: number | null;
+}
+
+/** One entity across a store: where its rows are, the version it changed at in each partition, and its cache entries. */
+export interface InspectedEntity {
+  id: string;
+  /** Each partition holding its rows, with how many, and the partition version at which the entity last changed. */
+  partitions: Array<{ key: string; rows: number; version: number }>;
+  /** Its entries in the store's per-entity caches, each with the cache's name. */
+  cacheEntries: Array<InspectedCacheEntry & { cache: string }>;
 }
 
 /** A store at a glance. */
@@ -134,6 +143,8 @@ export interface InspectedStore {
   partitions(): Promise<InspectedPartition[]>;
   /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
   entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
+  /** One entity across the store's partitions and caches. */
+  entity(entityId: string): Promise<InspectedEntity>;
   /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
   caches(options?: InspectedCachesOptions): InspectedCache[];
   /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */
@@ -172,6 +183,8 @@ export interface RunningStore {
   describe: (key: string) => unknown;
   versionOf: (key: string) => number;
   entityChanges: (key: string) => EntityChanges;
+  /** The partition version at which the entity last changed, read untracked. */
+  entityVersionOf: (key: string, entityId: string) => number;
   fetchedAt: (key: string) => number | undefined;
   refetch?: (key: string) => void;
   clearEtag: (key: string) => void;
@@ -367,6 +380,21 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const { epoch, changed } = running.entityChanges(partitionKey);
       const newest = changed.sort((a, b) => b.version - a.version);
       return { version: running.versionOf(partitionKey), epoch, count: newest.length, changed: newest.slice(0, limit) };
+    },
+    entity: async (entityId) => {
+      const running = source.running();
+      const cacheEntries = inspectedEntityCacheEntries(source.name, entityId);
+      if (!running) return { id: entityId, partitions: [], cacheEntries };
+      const rows = await read<{ key: string; rows: number }>(
+        running.conn,
+        `SELECT ${keyColumn} AS key, COUNT(*) AS rows FROM ${table} WHERE ${quote(schema.entityId)} = ? GROUP BY ${keyColumn} ORDER BY ${keyColumn};`,
+        [entityId],
+      );
+      return {
+        id: entityId,
+        partitions: rows.map((row) => ({ key: row.key, rows: Number(row.rows), version: running.entityVersionOf(row.key, entityId) })),
+        cacheEntries,
+      };
     },
     caches: (options) => inspectedCaches(source.name, options),
     cacheEntries: (cache, page) => inspectedCacheEntries(`${source.name.replace(/_store$/, '')}.${cache}`, page),

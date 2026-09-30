@@ -548,6 +548,7 @@ export function defineSqliteStore<
       describe: partitions.partitionOf,
       versionOf: partitions.versionOf,
       entityChanges: (key) => entityChangesOf(atom, [key]),
+      entityVersionOf: (key, entityId) => atom.getEntity([key], entityId),
       fetchedAt: partitions.inspect.fetchedAt,
       refetch: partitions.inspect.refetch,
       clearEtag: partitions.clearEtag,

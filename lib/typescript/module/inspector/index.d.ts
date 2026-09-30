@@ -8,7 +8,7 @@
  * Nothing here changes a store's rows: a query that would write is refused, and the only actions are refetching a
  * partition and clearing its ETag, which a store does on its own anyway.
  */
-export type { InspectedColumn, InspectedPartition, InspectedQueryOptions, InspectedQueryResult, InspectedBlob, InspectedEntityChanges, InspectedSchema, InspectedStore, InspectedSummary, } from './store';
+export type { InspectedColumn, InspectedPartition, InspectedQueryOptions, InspectedQueryResult, InspectedBlob, InspectedEntity, InspectedEntityChanges, InspectedSchema, InspectedStore, InspectedSummary, } from './store';
 export type { InspectedBinding, InspectedBindingState, InspectorBindingEvent, InspectorDegradationEvent, InspectorEvent, InspectorFetchEvent, InspectorWriteEvent, } from './events';
 export { EVENT_CAPACITY, MAX_EVENT_ENTITIES, clearInspectorEvents, onInspectorEvent, recentInspectorEvents } from './events';
 export { inspectedStore, inspectedStores } from './registry';

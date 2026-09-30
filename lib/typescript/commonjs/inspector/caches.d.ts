@@ -86,6 +86,10 @@ export interface InspectedCachesOptions {
 }
 /** Every listed cache, or the ones of `store` (its name with or without `_store`). */
 export declare function inspectedCaches(store?: string, options?: InspectedCachesOptions): InspectedCache[];
+/** The entries of `store`'s per-entity caches that hold `entityId`, in any partition; looking doesn't count as using. */
+export declare function inspectedEntityCacheEntries(store: string, entityId: string): Array<InspectedCacheEntry & {
+    cache: string;
+}>;
 /** A page of the cache `name`'s entries, most recently used first; looking doesn't count as using. */
 export declare function inspectedCacheEntries(name: string, page?: {
     offset?: number;

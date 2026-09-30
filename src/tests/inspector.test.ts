@@ -178,6 +178,22 @@ describe('partitions', () => {
     });
   });
 
+  it('finds one entity across partitions, with its rows and the version it last changed at in each', async () => {
+    const { store } = gamesStore('entity_lookup_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }, { team: 'BUF', sport: 'nfl', score: 24 }]);
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }, { team: 'BUF', sport: 'nfl', score: 21 }]);
+    store.lifecycle.put(NBA, [{ team: 'BUF', sport: 'nba', score: 99 }]);
+    expect(await inspectedStore('entity_lookup_store')!.entity('BUF')).toEqual({
+      id: 'BUF',
+      partitions: [
+        { key: 'nba:2026', rows: 1, version: 1 },
+        { key: 'nfl:2026', rows: 1, version: 2 },
+      ],
+      cacheEntries: [],
+    });
+  });
+
   it('clears a partition ETag, and says a store without fetches cannot refetch', async () => {
     const { store } = gamesStore('etag_store');
     store.bindSqlite(createSqlJsConnection());

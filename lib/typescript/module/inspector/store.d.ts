@@ -7,7 +7,7 @@ import type { defineSqliteStore } from '../define_sqlite_store';
 import type { SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
-import type { InspectedCache, InspectedCacheEntries, InspectedCachesOptions } from './caches';
+import type { InspectedCache, InspectedCacheEntries, InspectedCacheEntry, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
 /** A column of a store's table. */
 export interface InspectedColumn {
@@ -55,6 +55,20 @@ export interface InspectedPartition {
     etag: string | null;
     /** When its rows last landed from a fetch this session, as a `Date.now()` timestamp, or `null`. */
     fetchedAt: number | null;
+}
+/** One entity across a store: where its rows are, the version it changed at in each partition, and its cache entries. */
+export interface InspectedEntity {
+    id: string;
+    /** Each partition holding its rows, with how many, and the partition version at which the entity last changed. */
+    partitions: Array<{
+        key: string;
+        rows: number;
+        version: number;
+    }>;
+    /** Its entries in the store's per-entity caches, each with the cache's name. */
+    cacheEntries: Array<InspectedCacheEntry & {
+        cache: string;
+    }>;
 }
 /** A store at a glance. */
 export interface InspectedSummary {
@@ -132,6 +146,8 @@ export interface InspectedStore {
     partitions(): Promise<InspectedPartition[]>;
     /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
     entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
+    /** One entity across the store's partitions and caches. */
+    entity(entityId: string): Promise<InspectedEntity>;
     /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
     caches(options?: InspectedCachesOptions): InspectedCache[];
     /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */
@@ -171,6 +187,8 @@ export interface RunningStore {
     describe: (key: string) => unknown;
     versionOf: (key: string) => number;
     entityChanges: (key: string) => EntityChanges;
+    /** The partition version at which the entity last changed, read untracked. */
+    entityVersionOf: (key: string, entityId: string) => number;
     fetchedAt: (key: string) => number | undefined;
     refetch?: (key: string) => void;
     clearEtag: (key: string) => void;
