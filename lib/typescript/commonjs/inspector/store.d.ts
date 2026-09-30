@@ -56,19 +56,23 @@ export interface InspectedPartition {
     /** When its rows last landed from a fetch this session, as a `Date.now()` timestamp, or `null`. */
     fetchedAt: number | null;
 }
-/** One entity across a store: where its rows are, the version it changed at in each partition, and its cache entries. */
+/**
+ * One entity: an id within one partition. The same id in another partition is another entity, which is how Cellar
+ * tracks change and keys its caches: a player id can name different players in different sports' partitions.
+ */
 export interface InspectedEntity {
+    partition: string;
     id: string;
-    /** Each partition holding its rows, with how many, and the partition version at which the entity last changed. */
-    partitions: Array<{
-        key: string;
-        rows: number;
-        version: number;
-    }>;
+    /** Its rows, previewed, at most 50. */
+    rows: unknown[];
+    /** The partition version at which it last changed; 0 if it hasn't this session. */
+    version: number;
     /** Its entries in the store's per-entity caches, each with the cache's name. */
     cacheEntries: Array<InspectedCacheEntry & {
         cache: string;
     }>;
+    /** The other partitions with rows under the same id: other entities, whether or not they name the same thing. */
+    sameIdIn: string[];
 }
 /** A store at a glance. */
 export interface InspectedSummary {
@@ -146,8 +150,8 @@ export interface InspectedStore {
     partitions(): Promise<InspectedPartition[]>;
     /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
     entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
-    /** One entity across the store's partitions and caches. */
-    entity(entityId: string): Promise<InspectedEntity>;
+    /** One entity: an id within one partition, with its rows, version and cache entries. */
+    entity(partitionKey: string, entityId: string): Promise<InspectedEntity>;
     /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
     caches(options?: InspectedCachesOptions): InspectedCache[];
     /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */

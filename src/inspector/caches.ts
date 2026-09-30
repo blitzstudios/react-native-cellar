@@ -138,8 +138,8 @@ export function inspectedCaches(store?: string, options: InspectedCachesOptions 
   return out;
 }
 
-/** The entries of `store`'s per-entity caches that hold `entityId`, in any partition; looking doesn't count as using. */
-export function inspectedEntityCacheEntries(store: string, entityId: string): Array<InspectedCacheEntry & { cache: string }> {
+/** The entries of `store`'s per-entity caches for one entity of one partition; looking doesn't count as using. */
+export function inspectedEntityCacheEntries(store: string, partitionKey: string, entityId: string): Array<InspectedCacheEntry & { cache: string }> {
   const prefix = `${store.replace(/_store$/, '')}.`;
   const split = new RegExp(`[${KEY_SEP}${GROUP_SEP}]`);
   const out: Array<InspectedCacheEntry & { cache: string }> = [];
@@ -148,7 +148,7 @@ export function inspectedEntityCacheEntries(store: string, entityId: string): Ar
     for (const [key, slot] of table.entries()) {
       const parts = key.split(split);
       // An entity cache's key is the partition, then the entity, then any other parts.
-      if (parts[1] !== entityId) continue;
+      if (parts[0] !== partitionKey || parts[1] !== entityId) continue;
       out.push({ cache: name.slice(prefix.length), key: parts, version: slot.version, heapBytes: bytesOf(key, slot).bytes, value: previewValue(slot.value) });
     }
   }

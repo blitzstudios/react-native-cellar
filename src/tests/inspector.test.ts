@@ -178,20 +178,22 @@ describe('partitions', () => {
     });
   });
 
-  it('finds one entity across partitions, with its rows and the version it last changed at in each', async () => {
+  it('reads one entity as an id within one partition, and lists the other partitions using the id', async () => {
     const { store } = gamesStore('entity_lookup_store');
     store.bindSqlite(createSqlJsConnection());
-    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }, { team: 'BUF', sport: 'nfl', score: 24 }]);
-    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }, { team: 'BUF', sport: 'nfl', score: 21 }]);
+    store.lifecycle.put(NFL, [{ team: 'BUF', sport: 'nfl', score: 24 }, { team: 'KC', sport: 'nfl', score: 27 }]);
+    store.lifecycle.put(NFL, [{ team: 'BUF', sport: 'nfl', score: 21 }, { team: 'KC', sport: 'nfl', score: 27 }]);
     store.lifecycle.put(NBA, [{ team: 'BUF', sport: 'nba', score: 99 }]);
-    expect(await inspectedStore('entity_lookup_store')!.entity('BUF')).toEqual({
+    const inspected = inspectedStore('entity_lookup_store')!;
+    expect(await inspected.entity('nfl:2026', 'BUF')).toEqual({
+      partition: 'nfl:2026',
       id: 'BUF',
-      partitions: [
-        { key: 'nba:2026', rows: 1, version: 1 },
-        { key: 'nfl:2026', rows: 1, version: 2 },
-      ],
+      rows: [{ partition_key: 'nfl:2026', team: 'BUF', sport: 'nfl', score: 21 }],
+      version: 2,
       cacheEntries: [],
+      sameIdIn: ['nba:2026'],
     });
+    expect(await inspected.entity('nba:2026', 'BUF')).toMatchObject({ rows: [{ sport: 'nba', score: 99 }], version: 1, sameIdIn: ['nfl:2026'] });
   });
 
   it('clears a partition ETag, and says a store without fetches cannot refetch', async () => {

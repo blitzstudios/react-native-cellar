@@ -9,6 +9,7 @@ import type { QueryExecResult, SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
+import { previewValue } from './heap';
 import { inspectedCacheEntries, inspectedCaches, inspectedEntityCacheEntries } from './caches';
 import type { InspectedCache, InspectedCacheEntries, InspectedCacheEntry, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
@@ -60,13 +61,21 @@ export interface InspectedPartition {
   fetchedAt: number | null;
 }
 
-/** One entity across a store: where its rows are, the version it changed at in each partition, and its cache entries. */
+/**
+ * One entity: an id within one partition. The same id in another partition is another entity, which is how Cellar
+ * tracks change and keys its caches: a player id can name different players in different sports' partitions.
+ */
 export interface InspectedEntity {
+  partition: string;
   id: string;
-  /** Each partition holding its rows, with how many, and the partition version at which the entity last changed. */
-  partitions: Array<{ key: string; rows: number; version: number }>;
+  /** Its rows, previewed, at most 50. */
+  rows: unknown[];
+  /** The partition version at which it last changed; 0 if it hasn't this session. */
+  version: number;
   /** Its entries in the store's per-entity caches, each with the cache's name. */
   cacheEntries: Array<InspectedCacheEntry & { cache: string }>;
+  /** The other partitions with rows under the same id: other entities, whether or not they name the same thing. */
+  sameIdIn: string[];
 }
 
 /** A store at a glance. */
@@ -143,8 +152,8 @@ export interface InspectedStore {
   partitions(): Promise<InspectedPartition[]>;
   /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
   entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
-  /** One entity across the store's partitions and caches. */
-  entity(entityId: string): Promise<InspectedEntity>;
+  /** One entity: an id within one partition, with its rows, version and cache entries. */
+  entity(partitionKey: string, entityId: string): Promise<InspectedEntity>;
   /** The store's caches and what each has done, with what each holds on the heap when asked; empty in a release build. */
   caches(options?: InspectedCachesOptions): InspectedCache[];
   /** A page of one of the store's caches' entries, by the cache's own name, such as `statRows`. */
@@ -381,19 +390,25 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const newest = changed.sort((a, b) => b.version - a.version);
       return { version: running.versionOf(partitionKey), epoch, count: newest.length, changed: newest.slice(0, limit) };
     },
-    entity: async (entityId) => {
+    entity: async (partitionKey, entityId) => {
       const running = source.running();
-      const cacheEntries = inspectedEntityCacheEntries(source.name, entityId);
-      if (!running) return { id: entityId, partitions: [], cacheEntries };
-      const rows = await read<{ key: string; rows: number }>(
-        running.conn,
-        `SELECT ${keyColumn} AS key, COUNT(*) AS rows FROM ${table} WHERE ${quote(schema.entityId)} = ? GROUP BY ${keyColumn} ORDER BY ${keyColumn};`,
-        [entityId],
-      );
+      const cacheEntries = inspectedEntityCacheEntries(source.name, partitionKey, entityId);
+      if (!running) return { partition: partitionKey, id: entityId, rows: [], version: 0, cacheEntries, sameIdIn: [] };
+      const entity = quote(schema.entityId);
+      const [rows, others] = await Promise.all([
+        read<Record<string, unknown>>(running.conn, `SELECT * FROM ${table} WHERE ${keyColumn} = ? AND ${entity} = ? LIMIT 50;`, [partitionKey, entityId]),
+        read<{ key: string }>(running.conn, `SELECT DISTINCT ${keyColumn} AS key FROM ${table} WHERE ${entity} = ? AND ${keyColumn} <> ? ORDER BY ${keyColumn};`, [
+          entityId,
+          partitionKey,
+        ]),
+      ]);
       return {
+        partition: partitionKey,
         id: entityId,
-        partitions: rows.map((row) => ({ key: row.key, rows: Number(row.rows), version: running.entityVersionOf(row.key, entityId) })),
+        rows: rows.map((row) => previewValue(row)),
+        version: running.entityVersionOf(partitionKey, entityId),
         cacheEntries,
+        sameIdIn: others.map((other) => other.key),
       };
     },
     caches: (options) => inspectedCaches(source.name, options),
