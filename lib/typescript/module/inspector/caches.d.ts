@@ -79,6 +79,20 @@ interface RegisteredCache {
 }
 /** Lists a cache, replacing one listed under its name before, as a store's move to another database rebuilds its caches. */
 export declare function registerInspectedCache(cache: RegisteredCache): void;
+/** What a store's caches hold on the heap together. */
+export interface InspectedCachesHeap {
+    /** Roughly what they hold, counting an object that two entries or two caches share once. */
+    heapBytes: number;
+    /** How much of the caches' own estimates is objects they share: their sum less {@linkcode heapBytes}. */
+    sharedBytes: number;
+    /** Whether the walk stopped at its limit, so the figures are floors. */
+    partial: boolean;
+}
+/**
+ * What `store`'s caches hold on the heap together, walked with one set of seen objects so that a row one cache hands
+ * back and another indexes counts once. The walk visits every entry, so it is kept until a cache changes.
+ */
+export declare function inspectedCachesHeap(store: string): InspectedCachesHeap;
 /** Options for {@linkcode inspectedCaches}. */
 export interface InspectedCachesOptions {
     /** Estimates what each cache holds on the JS heap; only entries built since the last estimate are walked. */

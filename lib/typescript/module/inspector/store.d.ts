@@ -84,11 +84,15 @@ export interface InspectedSummary {
     partitions: number;
     /** The size of the store's own database, in bytes; absent on the in-memory fallback and unbound. */
     databaseBytes?: number;
-    /** The store's caches: how many, their entries, and roughly what they hold on the JS heap. Dev builds only. */
+    /**
+     * The store's caches: how many, their entries, roughly what they hold on the JS heap together (an object two caches
+     * share counted once), and how much of the caches' separate estimates is such sharing. Dev builds only.
+     */
     caches: {
         count: number;
         entries: number;
         heapBytes: number;
+        sharedBytes: number;
     };
 }
 /** A value from a query result that JSON can't carry as it is. */

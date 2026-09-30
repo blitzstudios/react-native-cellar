@@ -32,8 +32,16 @@ export type {
 } from './events';
 export { EVENT_CAPACITY, MAX_EVENT_ENTITIES, clearInspectorEvents, onInspectorEvent, recentInspectorEvents } from './events';
 export { inspectedStore, inspectedStores } from './registry';
-export { inspectedCacheEntries, inspectedCaches } from './caches';
-export type { CacheStats, InspectedCache, InspectedCacheEntries, InspectedCacheEntry, InspectedCacheKind, InspectedCachesOptions } from './caches';
+export { inspectedCacheEntries, inspectedCaches, inspectedCachesHeap } from './caches';
+export type {
+  CacheStats,
+  InspectedCache,
+  InspectedCacheEntries,
+  InspectedCacheEntry,
+  InspectedCacheKind,
+  InspectedCachesHeap,
+  InspectedCachesOptions,
+} from './caches';
 export { estimateHeap, previewValue } from './heap';
 export type { HeapEstimate } from './heap';
 export { ReadOnlyViolation } from './read_only';

@@ -57,8 +57,8 @@ describe('the core entry point', () => {
 });
 
 describe('the nitro entry point', () => {
-  it('exports only the on-device wiring', () => {
-    expect(exportedFrom('nitro/index.ts')).toEqual(['BindSqliteStoreOptions', 'bindSqliteStore', 'getOpenSqliteConnections', 'openNitroConnection', 'retrySqliteStores']);
+  it('exports only the on-device wiring, and the dump a developer opens in a desktop SQLite browser', () => {
+    expect(exportedFrom('nitro/index.ts')).toEqual(['BindSqliteStoreOptions', 'SqliteDump', 'bindSqliteStore', 'dumpSqliteStores', 'getOpenSqliteConnections', 'openNitroConnection', 'retrySqliteStores']);
   });
 });
 

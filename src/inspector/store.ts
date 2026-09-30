@@ -10,7 +10,7 @@ import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
 import { previewValue } from './heap';
-import { inspectedCacheEntries, inspectedCaches, inspectedEntityCacheEntries } from './caches';
+import { inspectedCacheEntries, inspectedCaches, inspectedCachesHeap, inspectedEntityCacheEntries } from './caches';
 import type { InspectedCache, InspectedCacheEntries, InspectedCacheEntry, InspectedCachesOptions } from './caches';
 import type { EntityChanges } from '../reactivity/version_atom';
 
@@ -88,8 +88,11 @@ export interface InspectedSummary {
   partitions: number;
   /** The size of the store's own database, in bytes; absent on the in-memory fallback and unbound. */
   databaseBytes?: number;
-  /** The store's caches: how many, their entries, and roughly what they hold on the JS heap. Dev builds only. */
-  caches: { count: number; entries: number; heapBytes: number };
+  /**
+   * The store's caches: how many, their entries, roughly what they hold on the JS heap together (an object two caches
+   * share counted once), and how much of the caches' separate estimates is such sharing. Dev builds only.
+   */
+  caches: { count: number; entries: number; heapBytes: number; sharedBytes: number };
 }
 
 /** A value from a query result that JSON can't carry as it is. */
@@ -298,11 +301,13 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
   let totals: { at: number; value: InspectedSummary['caches'] } | undefined;
   const cacheTotals = (): InspectedSummary['caches'] => {
     if (totals && Date.now() - totals.at < CACHE_TOTALS_MS) return totals.value;
-    const list = inspectedCaches(source.name, { heap: true });
+    const list = inspectedCaches(source.name);
+    const heap = inspectedCachesHeap(source.name);
     const value = {
       count: list.length,
       entries: list.reduce((sum, cache) => sum + cache.entries, 0),
-      heapBytes: list.reduce((sum, cache) => sum + (cache.heapBytes ?? 0), 0),
+      heapBytes: heap.heapBytes,
+      sharedBytes: heap.sharedBytes,
     };
     totals = { at: Date.now(), value };
     return value;

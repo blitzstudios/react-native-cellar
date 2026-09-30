@@ -1,1 +1,1 @@
-{"version":3,"names":["_nitro_connection","require"],"sourceRoot":"../../../src","sources":["nitro/index.ts"],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAKA,IAAAA,iBAAA,GAAAC,OAAA","ignoreList":[]}
+{"version":3,"names":["_nitro_connection","require","_dump"],"sourceRoot":"../../../src","sources":["nitro/index.ts"],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAKA,IAAAA,iBAAA,GAAAC,OAAA;AAEA,IAAAC,KAAA,GAAAD,OAAA","ignoreList":[]}

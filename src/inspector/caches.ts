@@ -7,7 +7,8 @@
 import type { BoundedLru } from '../caches';
 import { KEY_SEP } from '../key';
 import { GROUP_SEP } from '../args_key';
-import { estimateHeap, previewValue } from './heap';
+import { estimateHeap, estimateInto, previewValue } from './heap';
+import type { HeapEstimate } from './heap';
 
 /** A {@linkcode byPartition} cache, which holds a value per partition, or a {@linkcode byEntity} one, per entity. */
 export type InspectedCacheKind = 'partition' | 'entity';
@@ -118,6 +119,45 @@ const caches = new Map<string, RegisteredCache>();
 /** Lists a cache, replacing one listed under its name before, as a store's move to another database rebuilds its caches. */
 export function registerInspectedCache(cache: RegisteredCache): void {
   if (__DEV__) caches.set(cache.name, cache);
+}
+
+/** What a store's caches hold on the heap together. */
+export interface InspectedCachesHeap {
+  /** Roughly what they hold, counting an object that two entries or two caches share once. */
+  heapBytes: number;
+  /** How much of the caches' own estimates is objects they share: their sum less {@linkcode heapBytes}. */
+  sharedBytes: number;
+  /** Whether the walk stopped at its limit, so the figures are floors. */
+  partial: boolean;
+}
+
+/** A store walk counts at most this many objects. */
+const STORE_WALK_OBJECTS = 1_000_000;
+const storeHeaps = new Map<string, { signature: string; heap: InspectedCachesHeap }>();
+
+/**
+ * What `store`'s caches hold on the heap together, walked with one set of seen objects so that a row one cache hands
+ * back and another indexes counts once. The walk visits every entry, so it is kept until a cache changes.
+ */
+export function inspectedCachesHeap(store: string): InspectedCachesHeap {
+  const prefix = `${store.replace(/_store$/, '')}.`;
+  const list = Array.from(caches.values()).filter((cache) => cache.name.startsWith(prefix));
+  const signature = list.map(({ name, stats, table }) => `${name}:${stats.builds}:${stats.evictions}:${table.size}`).join('|');
+  const known = storeHeaps.get(prefix);
+  if (known?.signature === signature) return known.heap;
+  const estimate: HeapEstimate = { bytes: 0, objects: 0, partial: false };
+  const seen = new Set<object>();
+  let separate = 0;
+  for (const { table } of list) {
+    for (const [key, slot] of table.entries()) {
+      estimate.bytes += ENTRY_OVERHEAD_BYTES + 16 + key.length;
+      estimateInto(slot.value, estimate, seen, STORE_WALK_OBJECTS);
+      separate += bytesOf(key, slot).bytes;
+    }
+  }
+  const heap = { heapBytes: estimate.bytes, sharedBytes: Math.max(0, separate - estimate.bytes), partial: estimate.partial };
+  storeHeaps.set(prefix, { signature, heap });
+  return heap;
 }
 
 /** Options for {@linkcode inspectedCaches}. */

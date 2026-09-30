@@ -28,8 +28,11 @@ export interface HeapEstimate {
 
 const WIDE = /[^\u0000-\u00ff]/;
 
-/** Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`. */
-export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>): void {
+/**
+ * Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`, and
+ * stopping once the estimate has counted `maxObjects`.
+ */
+export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>, maxObjects = MAX_OBJECTS): void {
   const stack: unknown[] = [value];
   while (stack.length) {
     const next = stack.pop();
@@ -45,7 +48,7 @@ export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<o
     }
     if (next === null || typeof next !== 'object') continue;
     if (seen.has(next)) continue;
-    if (estimate.objects >= MAX_OBJECTS) {
+    if (estimate.objects >= maxObjects) {
       estimate.partial = true;
       return;
     }

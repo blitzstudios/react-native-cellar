@@ -13,8 +13,11 @@ export interface HeapEstimate {
     /** Whether the walk stopped at its limit before counting everything, so `bytes` is a floor. */
     partial: boolean;
 }
-/** Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`. */
-export declare function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>): void;
+/**
+ * Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`, and
+ * stopping once the estimate has counted `maxObjects`.
+ */
+export declare function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>, maxObjects?: number): void;
 /** A fresh estimate of `value` on its own. */
 export declare function estimateHeap(value: unknown): HeapEstimate;
 /**

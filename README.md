@@ -411,7 +411,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 | entry | holds |
 | --- | --- |
 | `@sleeperhq/react-native-cellar` | everything above: what a store, a service or a screen writes against |
-| `…/nitro` | `openNitroConnection`, `bindSqliteStore` and `retrySqliteStores`, over `react-native-nitro-sqlite` — the only part that touches native code |
+| `…/nitro` | `openNitroConnection`, `bindSqliteStore` and `retrySqliteStores`, over `react-native-nitro-sqlite` — the only part that touches native code — and `dumpSqliteStores`, which copies every store's database into one file for a desktop SQLite browser |
 | `…/sqljs` | `bindSqlJsStore` and `openSqlJsConnection`, over a sql.js module the app loads — what the web runs on |
 | `…/testing` | sql.js off-device (`createTestRowTable`, `createSqlJsConnection`), an in-process version atom, the host services as spies, and the internals only a test reaches for |
 | `…/diagnostics` | `getIngestTimings` and `rollupIngestTimings`, for a developer surface; no shipping screen reads these |

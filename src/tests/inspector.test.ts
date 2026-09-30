@@ -462,6 +462,35 @@ describe('the event log', () => {
     expect(summary.caches.heapBytes).toBeGreaterThan(300);
   });
 
+  itDev("counts rows two caches share once in the store's total, and says how much was shared", async () => {
+    const store = defineSqliteStore({
+      name: 'shared_heap_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      build: (cellar) => {
+        const { ranking, rowById } = cellar.defineCaches({
+          ranking: byPartition<Array<{ team: string; note: string }>>({ max: 2 }),
+          rowById: byPartition<{ team: string; note: string }, [team: string]>({ max: 64 }),
+        });
+        const rank = (season: Season) => {
+          const key = cellar.keyOf(season);
+          return ranking.for(key).read(() =>
+            Array.from({ length: 20 }, (_, i) => ({ team: `T${i}`, note: 'x'.repeat(200) })).map((row) => rowById.for(key).set(row.team, row)),
+          );
+        };
+        return { reads: {}, lifecycle: { rank } };
+      },
+    });
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.rank(NFL);
+    const inspected = inspectedStore('shared_heap_store')!;
+    const separate = inspected.caches({ heap: true }).reduce((sum, cache) => sum + (cache.heapBytes ?? 0), 0);
+    const { caches } = await inspected.summary();
+    expect(caches.heapBytes).toBeLessThan(separate);
+    expect(caches.sharedBytes).toBe(separate - caches.heapBytes);
+    expect(caches.sharedBytes).toBeGreaterThan(20 * 200);
+  });
+
   itProd('lists no caches in a release build', () => {
     expect(inspectedStores().flatMap((store) => store.caches())).toEqual([]);
   });
