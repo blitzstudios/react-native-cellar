@@ -569,7 +569,15 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     },
     inspect: {
       fetchedAt: (key) => fetchedAt.get(cacheKeyOf(toParts(key))),
-      ...(ingest && { refetch: ingest.refetch }),
+      // Fetched outright rather than invalidated: an invalidation refetches only a query something is observing, and
+      // the partition asked about may have no reader mounted.
+      ...(ingest && {
+        refetch: (key: Key) => {
+          ingest.prefetch(key, { staleTime: 0 }).catch(() => {
+            /* a failed fetch is the store's to report, as any other */
+          });
+        },
+      }),
     },
   };
 }
