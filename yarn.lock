@@ -1858,7 +1858,7 @@ __metadata:
     react: ">=17"
     react-native: ">=0.70"
     react-native-nitro-modules: ">=0.35"
-    react-native-nitro-sqlite: ">=1.1.4"
+    react-native-nitro-sqlite: ">=1.1.5"
     use-sync-external-store: ">=1.2.0"
   peerDependenciesMeta:
     react-native:
