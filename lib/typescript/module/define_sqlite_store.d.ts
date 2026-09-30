@@ -257,6 +257,8 @@ export interface BindOptions {
      * comes after a read is reported.
      */
     startup?: boolean;
+    /** The database's name, such as `player_stats.db`, for the inspector to show where the store runs. */
+    database?: string;
 }
 /**
  * A store declared with {@linkcode defineSqliteStore}. Until it is bound to a database, it runs on nothing, and every

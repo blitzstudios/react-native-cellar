@@ -348,6 +348,13 @@ export interface Partitions<Row extends RowShape, Key, Args, Descriptor> {
    * to publish as-is.
    */
   lifecycle: PartitionLifecycle<Args>;
+  /** What Cellar's inspector reads and does by key rather than by args. */
+  inspect: {
+    /** When the partition's rows last landed from a fetch, or `undefined` if they haven't this session. Untracked. */
+    fetchedAt: (key: Key) => number | undefined;
+    /** Fetches the partition again, sending its ETag; absent for partitions that don't fetch. */
+    refetch?: (key: Key) => void;
+  };
 }
 
 const INTERN_MAX = 512;
@@ -559,6 +566,10 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
       refetch: (args) => ingest?.refetch(keyOfArgs(args)),
       invalidate: (args) => ingest?.invalidate(keyOfArgs(args)),
       forget: () => ingest?.forget(),
+    },
+    inspect: {
+      fetchedAt: (key) => fetchedAt.get(cacheKeyOf(toParts(key))),
+      ...(ingest && { refetch: ingest.refetch }),
     },
   };
 }

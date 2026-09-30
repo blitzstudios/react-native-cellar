@@ -323,7 +323,7 @@ export interface BindSqliteStoreOptions extends NitroConnectionOptions {
 export function bindSqliteStore(label: string, dbName: string, store: BindableStore, opts: BindSqliteStoreOptions = {}): void {
   const binding: StoreBinding = { label, dbName, store, opts: { dedicatedReader: opts.dedicatedReader, shredInJs: opts.shredInJs } };
   const recovery = recoveryFor(binding);
-  const bindInMemory = () => store.bindSqlite(openNitroMemoryFallback(dbName, binding.opts), { temporary: true, startup: true, recovery: { reopen: recovery.reopen } });
+  const bindInMemory = () => store.bindSqlite(openNitroMemoryFallback(dbName, binding.opts), { temporary: true, startup: true, database: dbName, recovery: { reopen: recovery.reopen } });
 
   if (opts.inMemory) {
     const error = attemptBind(bindInMemory);
@@ -338,7 +338,7 @@ export function bindSqliteStore(label: string, dbName: string, store: BindableSt
     return;
   }
 
-  const bind = () => store.bindSqlite(openNitroConnection(dbName, binding.opts), { recovery, startup: true });
+  const bind = () => store.bindSqlite(openNitroConnection(dbName, binding.opts), { recovery, startup: true, database: dbName });
   const firstError = attemptBind(bind);
   if (firstError === undefined) return;
 
@@ -378,7 +378,7 @@ export function retrySqliteStores(): void {
     const retries = (retriesByDb.get(dbName) ?? 0) + 1;
     if (retries > MAX_RETRIES) continue;
     retriesByDb.set(dbName, retries);
-    const error = attemptBind(() => binding.store.bindSqlite(openNitroConnection(dbName, binding.opts), { recovery: recoveryFor(binding) }));
+    const error = attemptBind(() => binding.store.bindSqlite(openNitroConnection(dbName, binding.opts), { recovery: recoveryFor(binding), database: dbName }));
     if (error !== undefined) continue;
     offFile.delete(dbName);
     reportStoreDegradation({

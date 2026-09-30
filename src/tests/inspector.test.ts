@@ -1,0 +1,315 @@
+import { defineSqliteStore } from '../define_sqlite_store';
+import { recordIngestTiming } from '../diagnostics/ingest_timing';
+import { resetOnceGuards } from '../diagnostics/once_guard';
+import { reportStoreDegradation } from '../diagnostics/telemetry';
+import { clearInspectorEvents, inspectedStore, inspectedStores, onInspectorEvent, recentInspectorEvents, ReadOnlyViolation } from '../inspector';
+import type { InspectorEvent } from '../inspector';
+import type { Loose } from '../read/facade';
+import type { PartitionKeyColumn, StoreTableSchema } from '../table/partitioned';
+import type { RowTable } from '../table/types';
+import { itDev, itProd } from '../testing/dev_mode';
+import { installTestRuntime } from '../testing/runtime';
+import { createSqlJsConnection } from '../testing/sqljs_connection';
+
+installTestRuntime();
+
+type Game = { team: string; sport: string; score: number | null };
+type Season = { sport: string; season: string };
+
+const SCHEMA: StoreTableSchema<Game> = {
+  table: 'inspected_games',
+  columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true }, score: { type: 'INTEGER' } },
+  primaryKey: ['team'],
+  entityId: 'team',
+  indexes: [{ name: 'idx_inspected_games_sport', columns: ['sport'] }],
+};
+
+function gamesStore(name = 'inspected_games_store') {
+  let table: RowTable<Game & PartitionKeyColumn> | undefined;
+  const store = defineSqliteStore({
+    name,
+    schema: SCHEMA,
+    partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+    build: (cellar) => {
+      table = cellar.table;
+      const put = (season: Season, games: Game[]): number => {
+        const key = cellar.keyOf(season);
+        const result = cellar.table.overwrite(cellar.where(key), games.map((game) => ({ ...game, partition_key: key })));
+        return cellar.bump(key, result.changes);
+      };
+      return {
+        reads: { teams: cellar.defineRead<Season, string[]>({ empty: [], select: (_args, key) => cellar.rows(key).map((row) => row.team, []) }) },
+        lifecycle: { put, setEtag: (season: Season, etag: string) => cellar.table.setMeta(cellar.where(cellar.keyOf(season)), etag) },
+      };
+    },
+  });
+  return { store, table: () => table! };
+}
+
+const NFL: Season = { sport: 'nfl', season: '2026' };
+const NBA: Season = { sport: 'nba', season: '2026' };
+
+beforeEach(() => {
+  clearInspectorEvents();
+  resetOnceGuards();
+});
+
+describe('the store list', () => {
+  it('lists every declared store by name, with its table as declared', () => {
+    gamesStore('listed_store');
+    const inspected = inspectedStore('listed_store')!;
+    expect(inspectedStores().map((store) => store.name)).toContain('listed_store');
+    expect(inspected.schema()).toEqual({
+      table: 'inspected_games',
+      metaTable: 'inspected_games_meta',
+      columns: [
+        { name: 'partition_key', type: 'TEXT', notNull: true },
+        { name: 'team', type: 'TEXT', notNull: true },
+        { name: 'sport', type: 'TEXT', notNull: true },
+        { name: 'score', type: 'INTEGER', notNull: false },
+      ],
+      primaryKey: ['partition_key', 'team'],
+      entityColumn: 'team',
+      indexes: [
+        { name: 'idx_inspected_games_partition', columns: ['partition_key', 'team'] },
+        { name: 'idx_inspected_games_sport', columns: ['sport'] },
+      ],
+      reads: [],
+      nativeShred: false,
+    });
+  });
+
+  it('keeps one entry per name, the latest declaration, as a Fast Refresh re-declares a store', () => {
+    gamesStore('refreshed_store');
+    const { store } = gamesStore('refreshed_store');
+    store.bindSqlite(createSqlJsConnection());
+    expect(inspectedStores().filter((inspected) => inspected.name === 'refreshed_store')).toHaveLength(1);
+    expect(inspectedStore('refreshed_store')!.binding().state).toBe('database');
+  });
+});
+
+describe('where a store runs', () => {
+  it('is unbound until the bind, then on the database the bind named, with its reads listed', () => {
+    const { store } = gamesStore('bound_store');
+    const inspected = inspectedStore('bound_store')!;
+    expect(inspected.binding()).toMatchObject({ state: 'unbound', reopens: 0 });
+
+    store.bindSqlite(createSqlJsConnection(), { database: 'games.db' });
+    expect(inspected.binding()).toMatchObject({ state: 'database', database: 'games.db', reopens: 0 });
+    expect(inspected.schema().reads).toEqual(['teams']);
+  });
+
+  it('is on the in-memory database after a temporary bind', () => {
+    const { store } = gamesStore('memory_store');
+    store.bindSqlite(createSqlJsConnection(), { temporary: true, database: 'games.db' });
+    expect(inspectedStore('memory_store')!.binding()).toMatchObject({ state: 'memory', database: 'games.db' });
+  });
+
+  it('does not count as a read, so looking before the startup bind reports no late bind', async () => {
+    const { store } = gamesStore('looked_at_store');
+    const inspected = inspectedStore('looked_at_store')!;
+    await inspected.partitions();
+    await inspected.summary();
+    await inspected.query('SELECT 1 AS one');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    store.bindSqlite(createSqlJsConnection(), { startup: true });
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('store.late_bind'))).toEqual([]);
+    warn.mockRestore();
+  });
+
+  itDev('records each move as an event', () => {
+    const { store } = gamesStore('moving_store');
+    store.bindSqlite(createSqlJsConnection(), { database: 'games.db' });
+    store.bindSqlite(createSqlJsConnection(), { temporary: true, database: 'games.db' });
+    const moves = recentInspectorEvents().filter((event) => event.kind === 'binding' && event.store === 'moving_store');
+    expect(moves.map((event) => event.kind === 'binding' && event.binding.state)).toEqual(['database', 'memory']);
+  });
+});
+
+describe('partitions', () => {
+  it('lists each partition with its rows, version, ETag and description, sorted by key', async () => {
+    const { store } = gamesStore('partitioned_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 27 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 30 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
+    store.lifecycle.setEtag(NFL, 'W/"7"');
+
+    const inspected = inspectedStore('partitioned_store')!;
+    expect(await inspected.partitions()).toEqual([
+      { key: 'nba:2026', partition: NBA, rows: 1, version: 1, etag: null, fetchedAt: null },
+      { key: 'nfl:2026', partition: NFL, rows: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
+    ]);
+    expect(await inspected.summary()).toMatchObject({ binding: { state: 'database' }, rows: 3, partitions: 2 });
+    expect((await inspected.summary()).databaseBytes).toBeGreaterThan(0);
+  });
+
+  it('clears a partition ETag, and says a store without fetches cannot refetch', async () => {
+    const { store } = gamesStore('etag_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    store.lifecycle.setEtag(NFL, 'W/"7"');
+    const inspected = inspectedStore('etag_store')!;
+
+    inspected.clearEtag('nfl:2026');
+    expect((await inspected.partitions())[0].etag).toBeNull();
+    expect(inspected.refetch('nfl:2026')).toBe(false);
+  });
+
+  it('is empty while the store is unbound', async () => {
+    gamesStore('empty_store');
+    const inspected = inspectedStore('empty_store')!;
+    expect(await inspected.partitions()).toEqual([]);
+    expect(await inspected.summary()).toMatchObject({ binding: { state: 'unbound' }, rows: 0, partitions: 0 });
+  });
+});
+
+describe('queries', () => {
+  function seeded(name: string) {
+    const { store, table } = gamesStore(name);
+    const reopen = jest.fn(() => createSqlJsConnection());
+    store.bindSqlite(createSqlJsConnection(), { recovery: { reopen } });
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 27 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+      { team: 'MIA', sport: 'nfl', score: null },
+    ]);
+    return { table, reopen, inspected: inspectedStore(name)! };
+  }
+
+  it('returns the columns and each row as values in column order, blobs described', async () => {
+    const { inspected } = seeded('query_store');
+    const result = await inspected.query("SELECT team, score, CASE team WHEN 'KC' THEN x'deadbeef' END AS logo FROM inspected_games WHERE partition_key = ? ORDER BY team", ['nfl:2026']);
+    expect(result).toMatchObject({
+      columns: ['team', 'score', 'logo'],
+      rows: [
+        ['BUF', 24, null],
+        ['KC', 27, { $blob: true, bytes: 4, hex: 'deadbeef' }],
+        ['MIA', null, null],
+      ],
+      truncated: false,
+    });
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('stops at the limit and says so, keeping the order the query asked for', async () => {
+    const { inspected } = seeded('limited_store');
+    const result = await inspected.query('SELECT team FROM inspected_games ORDER BY team DESC', [], { limit: 2 });
+    expect(result).toMatchObject({ rows: [['MIA'], ['KC']], truncated: true });
+  });
+
+  it('runs a CTE, VALUES, EXPLAIN and the reading pragmas', async () => {
+    const { inspected } = seeded('reading_store');
+    expect((await inspected.query('WITH t AS (SELECT team FROM inspected_games) SELECT COUNT(*) AS n FROM t')).rows).toEqual([[3]]);
+    expect((await inspected.query('VALUES (1, 2)')).rows).toEqual([[1, 2]]);
+    expect((await inspected.query('EXPLAIN QUERY PLAN SELECT * FROM inspected_games WHERE sport = ?', ['nfl'])).columns).toContain('detail');
+    expect((await inspected.query("PRAGMA table_info('inspected_games')")).rows.map((row) => row[1])).toEqual(['partition_key', 'team', 'sport', 'score']);
+    expect((await inspected.query('PRAGMA user_version;')).columns).toEqual(['user_version']);
+    expect((await inspected.query('-- the teams\nSELECT team FROM inspected_games /* all */ ORDER BY team;  ')).rows).toHaveLength(3);
+  });
+
+  it.each([
+    ['DELETE FROM inspected_games', 'this is a DELETE statement'],
+    ['UPDATE inspected_games SET score = 0', 'this is an UPDATE statement'],
+    ['DROP TABLE inspected_games', 'this is a DROP statement'],
+    ["ATTACH ':memory:' AS other", 'this is an ATTACH statement'],
+    ['WITH t AS (SELECT 1) DELETE FROM inspected_games', 'writes to the database'],
+    ['WITH t AS (SELECT 1) INSERT INTO inspected_games (partition_key, team, sport) VALUES (1, 2, 3)', 'writes to the database'],
+    ['SELECT 1; DELETE FROM inspected_games', 'one statement at a time'],
+    ['PRAGMA user_version = 3', 'sets a value'],
+    ['PRAGMA journal_mode(DELETE)', 'sets a value'],
+    ['   ', 'empty'],
+  ])('refuses %j', async (sql, reason) => {
+    const { inspected } = seeded(`refusing_store_${sql.length}`);
+    await expect(inspected.query(sql)).rejects.toThrow(ReadOnlyViolation);
+    await expect(inspected.query(sql)).rejects.toThrow(reason);
+    expect((await inspected.query('SELECT COUNT(*) AS n FROM inspected_games')).rows).toEqual([[3]]);
+  });
+
+  it('keeps a semicolon inside a string or a quoted name as part of the one statement', async () => {
+    const { inspected } = seeded('quoted_store');
+    expect((await inspected.query("SELECT 'a;b' AS \"x;y\"")).rows).toEqual([['a;b']]);
+  });
+
+  it('rejects SQL that SQLite cannot compile without tripping the store into recovery', async () => {
+    const { table, reopen, inspected } = seeded('broken_query_store');
+    await expect(inspected.query('SELECT nope FROM inspected_games')).rejects.toThrow(/no such column/);
+    await Promise.resolve();
+    expect(reopen).not.toHaveBeenCalled();
+    expect(inspected.binding().state).toBe('database');
+    expect(table().find({})).toHaveLength(3);
+  });
+
+  it('answers nothing while the store is unbound, and still refuses a write', async () => {
+    gamesStore('unbound_query_store');
+    const inspected = inspectedStore('unbound_query_store')!;
+    expect(await inspected.query('SELECT 1 AS one')).toEqual({ columns: [], rows: [], truncated: false, durationMs: 0 });
+    await expect(inspected.query('DELETE FROM inspected_games')).rejects.toThrow(ReadOnlyViolation);
+  });
+});
+
+describe('the event log', () => {
+  itDev('records each write with the entities it changed, and hands it to listeners as it happens', () => {
+    const { store } = gamesStore('logged_store');
+    store.bindSqlite(createSqlJsConnection());
+    const heard: InspectorEvent[] = [];
+    const stop = onInspectorEvent((event) => heard.push(event));
+
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 27 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 27 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    stop();
+    store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
+
+    const writes = heard.filter((event) => event.kind === 'write');
+    expect(writes).toEqual([
+      expect.objectContaining({ store: 'logged_store', partition: 'nfl:2026', version: 1, entities: ['KC'], entityCount: 1 }),
+      expect.objectContaining({ store: 'logged_store', partition: 'nfl:2026', version: 2, entities: ['BUF'], entityCount: 1 }),
+    ]);
+    const logged = recentInspectorEvents().filter((event) => event.kind === 'write');
+    expect(logged).toHaveLength(3);
+    expect(recentInspectorEvents(writes[1].id).map((event) => event.kind === 'write' && event.partition)).toEqual(['nba:2026']);
+  });
+
+  itDev('records every degradation report, marking the first of each scope', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    reportStoreDegradation({ scope: 'inspected.scope', context: 'went wrong', error: new Error('boom') });
+    reportStoreDegradation({ scope: 'inspected.scope', context: 'went wrong', severity: 'info' });
+    expect(recentInspectorEvents().filter((event) => event.kind === 'degradation')).toEqual([
+      expect.objectContaining({ scope: 'inspected.scope', context: 'went wrong', severity: 'error', error: 'boom', first: true }),
+      expect.objectContaining({ scope: 'inspected.scope', severity: 'info', first: false }),
+    ]);
+    (console.warn as jest.Mock).mockRestore();
+  });
+
+  itDev('records each fetch under the store name', () => {
+    recordIngestTiming({ store: 'players_store_ingest', partition: 'nfl', fetchMs: 120, ingestMs: 30, chars: 4096, rows: 12, at: 1000 });
+    expect(recentInspectorEvents()).toEqual([
+      expect.objectContaining({ kind: 'fetch', store: 'players_store', partition: 'nfl', fetchMs: 120, ingestMs: 30, chars: 4096, rows: 12, at: 1000 }),
+    ]);
+  });
+
+  itProd('records nothing in a release build', () => {
+    const { store } = gamesStore('silent_store');
+    const heard = jest.fn();
+    const stop = onInspectorEvent(heard);
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    recordIngestTiming({ store: 'players_store_ingest', partition: 'nfl', fetchMs: 1, ingestMs: 1, chars: 1, rows: 1, at: 1 });
+    stop();
+    expect(heard).not.toHaveBeenCalled();
+    expect(recentInspectorEvents()).toEqual([]);
+  });
+});

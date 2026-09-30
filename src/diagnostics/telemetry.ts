@@ -7,8 +7,10 @@
 import { errorSink } from '../runtime';
 import { shouldLog } from './log_level';
 import { createOnceGuard } from './once_guard';
+import { recordInspectorEvent } from '../inspector/events';
 
 const reportedScopes = createOnceGuard();
+const messageOf = (error: unknown): string => String((error as { message?: unknown })?.message ?? error);
 
 
 /** Reports that a store lost a benefit it should have had, at most once per `scope` per session. */
@@ -28,7 +30,11 @@ export function reportStoreDegradation(args: {
 }): void {
   const { scope, context, error, extra, severity = 'error', sampleRate = 1 } = args;
 
-  if (reportedScopes.seen(scope)) return;
+  const first = !reportedScopes.seen(scope);
+  if (__DEV__) {
+    recordInspectorEvent({ kind: 'degradation', scope, context, severity, first, ...(error === undefined ? {} : { error: messageOf(error) }) });
+  }
+  if (!first) return;
 
   if (__DEV__ && shouldLog(severity === 'info' ? 'info' : 'error')) {
     // An `info` report is something that was always going to happen, not a path that lost the win it exists for, and

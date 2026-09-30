@@ -1,5 +1,7 @@
 /** Timings of the most recent partition fetches, each split into network time and write time. */
 
+import { recordInspectorEvent } from '../inspector/events';
+
 const CAPACITY = 128;
 
 /** The timing of one partition fetch, which shows whether a slow load was the network or the write. */
@@ -42,6 +44,7 @@ const ring: IngestTiming[] = [];
 export function recordIngestTiming(timing: IngestTiming): void {
   ring.push(timing);
   if (ring.length > CAPACITY) ring.shift();
+  recordInspectorEvent({ kind: 'fetch', ...timing, store: timing.store.replace(/_ingest$/, '') });
 }
 
 /**

@@ -25,6 +25,12 @@ import { createPushIngest } from './write/push_ingest';
 import type { PushIngest, PushIngestConfig } from './write/push_ingest';
 import { createEtagRetirement } from './write/etag_retirement';
 import type { bindSqliteStore } from './nitro/nitro_connection';
+import { MAX_EVENT_ENTITIES, recordInspectorEvent } from './inspector/events';
+import type { InspectedBinding } from './inspector/events';
+import { registerInspectedStore } from './inspector/registry';
+import { createInspectedStore } from './inspector/store';
+import type { RunningStore } from './inspector/store';
+import { ALL_ENTITIES } from './table/change_set';
 
 /**
  * Objects a store builds from its database connection besides its row table, such as a ranker that runs its own SQL
@@ -287,6 +293,8 @@ export interface BindOptions {
    * comes after a read is reported.
    */
   startup?: boolean;
+  /** The database's name, such as `player_stats.db`, for the inspector to show where the store runs. */
+  database?: string;
 }
 
 /**
@@ -432,8 +440,17 @@ export function defineSqliteStore<
   const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
   const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
 
-  /** Declares the partitions over `table` and hands the store its context. */
-  const buildOn = (table: RowTable<StoredRow>, atom: VersionAtom, caps: Caps): Functions => {
+  /** Logs a write that changed a partition, for the inspector. Wired in development builds only. */
+  const recordWrite = (partition: string, next: number, changes: ChangeSet): void => {
+    const entities = changes === ALL_ENTITIES ? ALL_ENTITIES : Array.from(changes).slice(0, MAX_EVENT_ENTITIES);
+    recordInspectorEvent({ kind: 'write', store: config.name, partition, version: next, entities, entityCount: changes === ALL_ENTITIES ? null : changes.size });
+  };
+
+  /** What the inspector looks into for each surface the store builds: the connection under it, and its partitions. */
+  const inspectable = new WeakMap<Functions, RunningStore>();
+
+  /** Declares the partitions over `table` and hands the store its context. `raw` is the connection before its guard. */
+  const buildOn = (table: RowTable<StoredRow>, atom: VersionAtom, caps: Caps, raw: SqliteConnection): Functions => {
     table.init();
     const pushSpec = config.push;
     let ingest: PushIngest<Item, string> | undefined;
@@ -458,6 +475,7 @@ export function defineSqliteStore<
         const rowsWhere = where(key);
         if (table.getMetaRecord(rowsWhere) === undefined) table.setMeta(rowsWhere, table.getMeta(rowsWhere), JSON.stringify(partition));
       },
+      ...(__DEV__ && { onChanged: recordWrite }),
     });
     const surface = config.build({
       defineRead: partitions.defineRead,
@@ -522,7 +540,18 @@ export function defineSqliteStore<
           own.forget!();
         }
       : partitions.lifecycle.forget;
-    return { ...surface, ...(push && { push }), lifecycle: { ...partitions.lifecycle, ...own, forget } } as unknown as Functions;
+    const functions = { ...surface, ...(push && { push }), lifecycle: { ...partitions.lifecycle, ...own, forget } } as unknown as Functions;
+    inspectable.set(functions, {
+      conn: raw,
+      reads: Object.keys(surface.reads),
+      internedKeys: partitions.internedKeys,
+      describe: partitions.partitionOf,
+      versionOf: partitions.versionOf,
+      fetchedAt: partitions.inspect.fetchedAt,
+      refetch: partitions.inspect.refetch,
+      clearEtag: partitions.clearEtag,
+    });
+    return functions;
   };
 
   let running: Functions | undefined;
@@ -531,9 +560,20 @@ export function defineSqliteStore<
   // What each surface the store has run on primed, so leaving it can have the next one fetch for itself.
   let resets: Array<() => void> = [];
 
-  const buildOver = (conn: SqliteConnection, temporary: boolean, atom: VersionAtom = version): { surface: Functions; table: RowTable<StoredRow> } => {
+  const buildOver = (
+    conn: SqliteConnection,
+    temporary: boolean,
+    atom: VersionAtom = version,
+    raw: SqliteConnection = conn,
+  ): { surface: Functions; table: RowTable<StoredRow> } => {
     const table = createSqliteRowTable(schema, conn, config.nativeShredSpec as NativeShredSpec | undefined, { temporary });
-    return { surface: buildOn(table, atom, capabilitiesOf(conn)), table };
+    return { surface: buildOn(table, atom, capabilitiesOf(conn), raw), table };
+  };
+
+  let binding: InspectedBinding = { state: 'unbound', since: Date.now(), reopens: 0 };
+  const moveBinding = (state: InspectedBinding['state'], database = binding.database): void => {
+    binding = { state, ...(database === undefined ? {} : { database }), since: Date.now(), reopens };
+    recordInspectorEvent({ kind: 'binding', store: config.name, binding });
   };
 
   const install = (surface: Functions): Functions => {
@@ -584,7 +624,7 @@ export function defineSqliteStore<
         });
       },
     );
-    return buildOver(guarded, !!options.temporary).surface;
+    return buildOver(guarded, !!options.temporary, version, conn).surface;
   };
 
   /**
@@ -594,6 +634,7 @@ export function defineSqliteStore<
   const leaveUnbound = (context: string, error: unknown, options: BindOptions, more?: Record<string, unknown>): void => {
     reportStoreDegradation({ scope: `${config.name}.unbound`, context, error, extra: extra(more) });
     replaceRunning(buildOver(NULL_CONNECTION, false).surface);
+    moveBinding('unbound');
     options.recovery?.onLeftFile?.();
   };
 
@@ -607,6 +648,7 @@ export function defineSqliteStore<
     try {
       const fallbackOptions: BindOptions = { temporary: true, recovery: { reopen: options.recovery!.reopen, onLeftFile: options.recovery!.onLeftFile } };
       replaceRunning(buildGuarded(fallback(), fallbackOptions));
+      moveBinding('memory');
       options.recovery?.onLeftFile?.();
       reportStoreDegradation({
         scope: `${config.name}.in_memory`,
@@ -648,6 +690,7 @@ export function defineSqliteStore<
           }
         }
         replaceRunning(buildGuarded(conn, options));
+        moveBinding('database');
         reportStoreDegradation({
           scope: `${config.name}.reopened`,
           context: `SQLite \`${op}\` failed mid-session; the store reopened its database${discard ? ', deleting it first,' : ''} and will refetch into it`,
@@ -675,7 +718,20 @@ export function defineSqliteStore<
     }
     if (!options.temporary) reopens = 0;
     replaceRunning(surface);
+    moveBinding(options.temporary ? 'memory' : 'database', options.database);
   };
+
+  // Looks at `running` rather than calling `current()`: looking isn't a read, and must not build the unbound surface or
+  // count as one for the late-bind check.
+  registerInspectedStore(
+    createInspectedStore({
+      name: config.name,
+      schema,
+      nativeShred: !!config.nativeShredSpec,
+      binding: () => binding,
+      running: () => (running ? inspectable.get(running) : undefined),
+    }),
+  );
 
   return {
     reads: delegate(() => current().reads, `${config.name}.reads`),
@@ -692,6 +748,7 @@ export function defineSqliteStore<
         hasBeenRead = false;
         reopens = 0;
         resets = [];
+        binding = { state: 'unbound', since: Date.now(), reopens: 0 };
       },
     },
   };

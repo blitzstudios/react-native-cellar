@@ -444,6 +444,13 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | `ingest_timing.ts`                               | per-ingest timings, rolled up for the dev overlay — the `./diagnostics` entry, which no shipping screen reads |
 | `once_guard.ts`                                  | warn-once guards that a test can reset                                   |
 
+| `inspector/` — what a development tool sees      |                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `registry.ts`                                    | every declared store by name; `defineSqliteStore` registers each, and a re-declaration under the same name replaces it |
+| `store.ts`                                       | one store as the tool sees it: schema, binding, partitions (rows, version, ETag, last fetch) and read-only SQL, all looked up on the running surface without counting as a read |
+| `read_only.ts`                                   | what lets a typed query through: one statement, a reading verb, a pragma in its reading form, and a compiled program that opens no write transaction |
+| `events.ts`                                      | the bounded log of writes, binding moves, fetches and degradation reports, with listeners; dev builds only |
+
 | `nitro/` — the device                            |                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------ |
 | `nitro_connection.ts`                            | the `SqliteConnection` over `react-native-nitro-sqlite`: pragmas, param coercion, the native shred sentinel, and the binds that degrade rather than throw |

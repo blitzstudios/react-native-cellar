@@ -82,7 +82,7 @@ export function openSqlJsConnection(SQL: SqlJsModule): SqliteConnection {
  */
 export function bindSqlJsStore(label: string, SQL: SqlJsModule, store: BindableStore): void {
   try {
-    store.bindSqlite(openSqlJsConnection(SQL));
+    store.bindSqlite(openSqlJsConnection(SQL), { database: `sql.js:${label}` });
   } catch (error) {
     reportStoreDegradation({
       scope: `sqljs.bind.${label}`,
