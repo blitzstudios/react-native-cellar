@@ -16,6 +16,7 @@ function registerCellarHandlers(client, inspector = operations_1.defaultInspecto
     const subscriptions = [
         rpc.handle('stores', () => json((0, operations_1.listStores)(inspector))),
         rpc.handle('partitions', ({ store }) => json((0, operations_1.storeOf)(inspector, store).partitions())),
+        rpc.handle('entity', ({ store, id }) => json((0, operations_1.storeOf)(inspector, store).entity(id))),
         rpc.handle('entityChanges', ({ store, key, limit }) => json((0, operations_1.storeOf)(inspector, store).entityChanges(key, limit))),
         rpc.handle('caches', ({ store, heap }) => json((0, operations_1.listCaches)(inspector, store, heap))),
         rpc.handle('cacheEntries', ({ store, cache, offset, limit }) => json((0, operations_1.storeOf)(inspector, store).cacheEntries(cache, { offset, limit }))),

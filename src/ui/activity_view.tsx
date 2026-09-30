@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { InspectorEvent } from '../shared/protocol';
 import { Callsite, ExtraChips } from './callsite';
+import { reportNumbers } from './degradations';
 import { Empty, KindBadge } from './components';
 import { formatClock, formatCount, formatFetchRows, formatMs, shortStoreName } from './format';
 
@@ -182,7 +183,7 @@ function EventSummary({ event }: { event: InspectorEvent }) {
       return (
         <span>
           <code>{event.scope}</code> {event.severity === 'info' ? <span className="muted">notice</span> : null}
-          {event.count > 1 ? <span className="muted"> · ×{formatCount(event.count)}</span> : null} <ExtraChips extra={event.extra} />
+ <ExtraChips extra={reportNumbers(event)} />
         </span>
       );
   }

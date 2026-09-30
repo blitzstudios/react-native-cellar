@@ -3,18 +3,21 @@ import { useEffect, useMemo, useState } from 'react';
 import type { StoreOverview } from '../shared/protocol';
 import { ActivityView } from './activity_view';
 import { CachesView, heapLabel } from './caches_view';
+import { EntitiesView } from './entities_view';
 import { Empty, StateBadge } from './components';
 import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
 import { Overview } from './overview';
+import type { OverviewCleared } from './overview';
 import { PartitionsView } from './partitions_view';
 import { QueryView, defaultDraft } from './query_view';
 import type { QueryDraft } from './query_view';
 import { SchemaView } from './schema_view';
 import { useCellarConnection, useLatestEventId } from './use_cellar';
 
-type Tab = 'partitions' | 'query' | 'activity' | 'caches' | 'schema';
+type Tab = 'partitions' | 'entities' | 'query' | 'activity' | 'caches' | 'schema';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'partitions', label: 'Partitions' },
+  { id: 'entities', label: 'Entities' },
   { id: 'query', label: 'Query' },
   { id: 'activity', label: 'Activity' },
   { id: 'caches', label: 'Caches' },
@@ -31,6 +34,7 @@ export default function CellarPanel() {
   const [tab, setTab] = useState<Tab>('partitions');
   const [drafts, setDrafts] = useState<Record<string, QueryDraft>>({});
   const [runTokens, setRunTokens] = useState<Record<string, number>>({});
+  const [cleared, setCleared] = useState<OverviewCleared>({ degradationsThrough: 0, fetchesBefore: 0 });
 
   const store = stores.find((candidate) => candidate.name === selected);
   useEffect(() => {
@@ -40,11 +44,13 @@ export default function CellarPanel() {
   const draftOf = (target: StoreOverview) => drafts[target.name] ?? defaultDraft(target);
   const setDraft = (target: StoreOverview, draft: QueryDraft) => setDrafts((current) => ({ ...current, [target.name]: draft }));
 
-  const queryPartition = (target: StoreOverview, key: string) => {
-    setDraft(target, { ...draftOf(target), sql: `SELECT *\nFROM ${quoteName(target.schema.table)}\nWHERE partition_key = ?`, params: JSON.stringify([key]) });
+  const openQuery = (target: StoreOverview, sql: string, params: string) => {
+    setDraft(target, { ...draftOf(target), sql, params });
     setRunTokens((current) => ({ ...current, [target.name]: (current[target.name] ?? 0) + 1 }));
     setTab('query');
   };
+  const queryPartition = (target: StoreOverview, key: string) =>
+    openQuery(target, `SELECT *\nFROM ${quoteName(target.schema.table)}\nWHERE partition_key = ?`, JSON.stringify([key]));
 
   return (
     <div className="panel">
@@ -90,7 +96,7 @@ export default function CellarPanel() {
             <ActivityView events={events} />
           </div>
         ) : !store ? (
-          <Overview rpc={rpc} stores={stores} events={events} onSelect={(name) => setSelected(name)} />
+          <Overview rpc={rpc} stores={stores} events={events} onSelect={(name) => setSelected(name)} cleared={cleared} onClear={setCleared} />
         ) : (
           <div className="store">
             <header className="store-header">
@@ -112,6 +118,8 @@ export default function CellarPanel() {
             <div className="tab-body">
               {tab === 'partitions' ? (
                 <PartitionsView rpc={rpc} store={store} events={events} onQueryPartition={(key) => queryPartition(store, key)} />
+              ) : tab === 'entities' ? (
+                <EntitiesView key={store.name} rpc={rpc} store={store} events={events} onQuery={(sql, params) => openQuery(store, sql, params)} />
               ) : tab === 'query' ? (
                 <QueryView
                   key={store.name}

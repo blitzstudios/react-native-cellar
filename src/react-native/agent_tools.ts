@@ -20,6 +20,7 @@ export function useCellarAgentTools(inspector: CellarInspector = defaultInspecto
     handler: handlers.listPartitions,
   });
   useRozenitePluginAgentTool<QueryRequest>({ pluginId: PLUGIN_ID, tool: cellarAgentTools.query, handler: handlers.query });
+  useRozenitePluginAgentTool<{ store: string; id: string }>({ pluginId: PLUGIN_ID, tool: cellarAgentTools.entity, handler: handlers.entity });
   useRozenitePluginAgentTool<PartitionRef & { limit?: number }>({ pluginId: PLUGIN_ID, tool: cellarAgentTools.entityChanges, handler: handlers.entityChanges });
   useRozenitePluginAgentTool<{ store?: string; heap?: boolean }>({ pluginId: PLUGIN_ID, tool: cellarAgentTools.listCaches, handler: handlers.listCaches });
   useRozenitePluginAgentTool<{ store: string; cache: string; offset?: number; limit?: number }>({

@@ -18,6 +18,7 @@ function useCellarAgentTools(inspector = operations_1.defaultInspector) {
         handler: handlers.listPartitions,
     });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.query, handler: handlers.query });
+    (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.entity, handler: handlers.entity });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.entityChanges, handler: handlers.entityChanges });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.listCaches, handler: handlers.listCaches });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({

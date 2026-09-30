@@ -38,6 +38,17 @@ export function shortPath(file: string): string {
 
 const symbolicated = new Map<string, Promise<SourceFrame[]>>();
 
+/** Opens the frame's file at its line in the editor Metro finds (`REACT_EDITOR`, or a running one), as LogBox does. */
+export function openInEditor(frame: { file: string; line: number }): void {
+  fetch('/open-stack-frame', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: frame.file, lineNumber: frame.line }),
+  }).catch(() => {
+    /* Metro is not reachable from here, as in a test */
+  });
+}
+
 /**
  * The frames at their places in the source, through Metro's `/symbolicate`, which serves this panel and so is its own
  * origin. Falls back to the bundle locations when Metro can't be reached, as in a test.
@@ -100,9 +111,15 @@ export function Callsite({ stack, kind }: { stack: string; kind?: 'component' | 
         {shown.map((frame, index) => (
           <li key={index} className={frame.library ? 'frame frame-library' : 'frame'}>
             <code className="frame-method">{frame.method}</code>
-            <span className="frame-file" title={frame.file}>
-              {shortPath(frame.file)}:{frame.line}
-            </span>
+            {frame.file.startsWith('/') ? (
+              <button type="button" className="frame-file link" title={`Open ${frame.file}:${frame.line} in your editor`} onClick={() => openInEditor(frame)}>
+                {shortPath(frame.file)}:{frame.line}
+              </button>
+            ) : (
+              <span className="frame-file" title={frame.file}>
+                {shortPath(frame.file)}:{frame.line}
+              </span>
+            )}
           </li>
         ))}
       </ol>

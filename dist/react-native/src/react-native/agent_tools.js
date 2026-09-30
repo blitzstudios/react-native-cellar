@@ -15,6 +15,7 @@ export function useCellarAgentTools(inspector = defaultInspector) {
         handler: handlers.listPartitions,
     });
     useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.query, handler: handlers.query });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.entity, handler: handlers.entity });
     useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.entityChanges, handler: handlers.entityChanges });
     useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.listCaches, handler: handlers.listCaches });
     useRozenitePluginAgentTool({

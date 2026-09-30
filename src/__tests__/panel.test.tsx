@@ -85,3 +85,15 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
   fireEvent.click(await screen.findByRole('tab', { name: 'Caches' }));
   expect(await screen.findByText('No caches')).toBeTruthy();
 });
+
+it('lists a store’s entities and shows one across its partitions', async () => {
+  const store = await gamesStore('panel_entities_store');
+  store.lifecycle.put(NFL, NFL_GAMES);
+  await renderPanel();
+
+  fireEvent.click(await within(await screen.findByRole('navigation')).findByTitle('panel_entities_store'));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Entities' }));
+  fireEvent.click(await screen.findByText('MIA'));
+  expect(await screen.findByRole('heading', { name: 'MIA' })).toBeTruthy();
+  expect((await screen.findAllByText('nfl:2026')).length).toBeGreaterThan(0);
+});
