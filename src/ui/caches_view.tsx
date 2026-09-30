@@ -68,7 +68,9 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
                 <th>Per</th>
                 <th>Keyed by</th>
                 <th>Entries</th>
-                <th className="num">Heap</th>
+                <th className="num" title="What this cache holds, including objects it shares with another cache">
+                  Heap
+                </th>
                 <th className="num">Hit rate</th>
                 <th className="num">Hits</th>
                 <th className="num" title="Built at an older version, before a write">
@@ -130,7 +132,10 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
                 <tr>
                   <td colSpan={3}>Total</td>
                   <td className="small">{formatCount(totals.entries)}</td>
-                  <td className="num">{heapLabel(totals.heap, totals.partial)}</td>
+                  <td className="num" title="A row two caches share is counted once">
+                    {heapLabel(store.summary.caches?.heapBytes ?? totals.heap, totals.partial)}
+                    {store.summary.caches?.sharedBytes ? <div className="muted small">{formatBytes(store.summary.caches.sharedBytes)} shared</div> : null}
+                  </td>
                   <td colSpan={9} />
                 </tr>
               </tfoot>

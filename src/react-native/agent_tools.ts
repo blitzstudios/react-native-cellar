@@ -7,11 +7,12 @@ import { PLUGIN_ID } from '../shared/protocol';
 import type { PartitionRef, QueryRequest } from '../shared/protocol';
 import { agentToolHandlers, cellarAgentTools } from './agent_tool_contracts';
 import { defaultInspector } from './operations';
-import type { CellarInspector } from './operations';
+import type { CellarInspector, DumpDatabases } from './operations';
 
 /** Registers every Cellar agent tool while the calling component is mounted. */
-export function useCellarAgentTools(inspector: CellarInspector = defaultInspector): void {
-  const handlers = useMemo(() => agentToolHandlers(inspector), [inspector]);
+export function useCellarAgentTools(inspector: CellarInspector = defaultInspector, dump?: DumpDatabases): void {
+  const handlers = useMemo(() => agentToolHandlers(inspector, dump), [inspector, dump]);
+  useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.dumpDatabases, handler: handlers.dumpDatabases });
   useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.listStores, handler: handlers.listStores });
   useRozenitePluginAgentTool<{ store: string }>({ pluginId: PLUGIN_ID, tool: cellarAgentTools.describeStore, handler: handlers.describeStore });
   useRozenitePluginAgentTool<{ store: string; match?: string; limit?: number }>({

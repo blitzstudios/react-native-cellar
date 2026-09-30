@@ -10,7 +10,7 @@ exports.EVENT_FLUSH_MS = 100;
 /** The most events one message carries; a busier interval goes out as several. */
 exports.EVENTS_PER_MESSAGE = 250;
 /** Wires `client` up to answer the panel, and returns a function that unwires it. */
-function registerCellarHandlers(client, inspector = operations_1.defaultInspector) {
+function registerCellarHandlers(client, inspector = operations_1.defaultInspector, dump = (0, operations_1.nitroDump)()) {
     const rpc = (0, plugin_bridge_1.createRozeniteRpc)(client);
     const json = async (result) => JSON.stringify((await result) ?? null);
     const subscriptions = [
@@ -25,6 +25,7 @@ function registerCellarHandlers(client, inspector = operations_1.defaultInspecto
         rpc.handle('clearEtag', (params) => json((0, operations_1.clearPartitionEtag)(inspector, params))),
         rpc.handle('events', ({ afterId }) => json(inspector.recentInspectorEvents(afterId))),
         rpc.handle('ingest', () => json((0, operations_1.ingestReport)(inspector))),
+        rpc.handle('dump', () => json(dump())),
     ];
     let pending = [];
     let timer;

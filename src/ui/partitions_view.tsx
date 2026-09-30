@@ -26,6 +26,7 @@ function partitionEvents(events: readonly InspectorEvent[], store: string, key: 
 }
 
 export function PartitionsView({
+  mode = 'live',
   rpc,
   store,
   events,
@@ -35,6 +36,7 @@ export function PartitionsView({
   store: StoreOverview;
   events: readonly InspectorEvent[];
   onQueryPartition: (key: string) => void;
+  mode?: 'live' | 'dump';
 }) {
   const [partitions, setPartitions] = useState<InspectedPartition[]>();
   const [error, setError] = useState<string>();
@@ -110,9 +112,9 @@ export function PartitionsView({
                 <SortHeader label="Partition" sortKey="key" sort={sort} onSort={onSort} />
                 <SortHeader label="Rows" sortKey="rows" sort={sort} onSort={onSort} align="right" />
                 <SortHeader label="Entities" sortKey="entities" sort={sort} onSort={onSort} align="right" />
-                <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" />
+                {mode === 'live' ? <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" /> : null}
                 <th>ETag</th>
-                <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} />
+                {mode === 'live' ? <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} /> : null}
                 <th />
               </tr>
             </thead>
@@ -130,17 +132,21 @@ export function PartitionsView({
                       </td>
                       <td className="num">{formatCount(partition.rows)}</td>
                       <td className="num">{formatCount(partition.entities)}</td>
-                      <td className="num">{partition.version}</td>
+                      {mode === 'live' ? <td className="num">{partition.version}</td> : null}
                       <td className="etag" title={partition.etag ?? undefined}>
                         {partition.etag ?? <span className="muted">none</span>}
                       </td>
-                      <td title={partition.fetchedAt ? new Date(partition.fetchedAt).toLocaleString() : 'Not fetched this session'}>
-                        {partition.fetchedAt ? formatAgo(partition.fetchedAt, now) : <span className="muted">not this session</span>}
-                      </td>
+                      {mode === 'live' ? (
+                        <td title={partition.fetchedAt ? new Date(partition.fetchedAt).toLocaleString() : 'Not fetched this session'}>
+                          {partition.fetchedAt ? formatAgo(partition.fetchedAt, now) : <span className="muted">not this session</span>}
+                        </td>
+                      ) : null}
                       <td className="actions">
                         <button type="button" className="button button-small" onClick={() => onQueryPartition(partition.key)} title="Query this partition's rows">
                           Rows
                         </button>
+                        {mode === 'live' ? (
+                          <>
                         <button
                           type="button"
                           className="button button-small"
@@ -163,11 +169,13 @@ export function PartitionsView({
                         >
                           Clear ETag
                         </button>
+                          </>
+                        ) : null}
                       </td>
                     </tr>
                     {open ? (
                       <tr className="row-detail">
-                        <td colSpan={7}>
+                        <td colSpan={mode === 'live' ? 7 : 5}>
                           <div className="partition-detail">
                             <section>
                               <h4>Description</h4>

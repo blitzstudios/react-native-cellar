@@ -1181,9 +1181,11 @@ __metadata:
     vite: "npm:^7.3.1"
     vitest: "npm:^3.2.4"
   peerDependencies:
-    "@sleeperhq/react-native-cellar": ">=1.2.15"
+    "@sleeperhq/react-native-cellar": ">=1.2.17"
     react: ">=18"
     react-native: ">=0.76"
+  bin:
+    cellar-open-dump: bin/open-dump.mjs
   languageName: unknown
   linkType: soft
 

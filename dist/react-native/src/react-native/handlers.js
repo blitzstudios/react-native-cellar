@@ -1,12 +1,12 @@
 /** Answers the panel's calls, and pushes the stores' events to it as they are recorded. */
 import { createRozeniteRpc } from '@rozenite/plugin-bridge';
-import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, refetchPartition, runQuery, storeOf } from './operations';
 /** How long events gather before they go to the panel in one message, in ms. */
 export const EVENT_FLUSH_MS = 100;
 /** The most events one message carries; a busier interval goes out as several. */
 export const EVENTS_PER_MESSAGE = 250;
 /** Wires `client` up to answer the panel, and returns a function that unwires it. */
-export function registerCellarHandlers(client, inspector = defaultInspector) {
+export function registerCellarHandlers(client, inspector = defaultInspector, dump = nitroDump()) {
     const rpc = createRozeniteRpc(client);
     const json = async (result) => JSON.stringify((await result) ?? null);
     const subscriptions = [
@@ -21,6 +21,7 @@ export function registerCellarHandlers(client, inspector = defaultInspector) {
         rpc.handle('clearEtag', (params) => json(clearPartitionEtag(inspector, params))),
         rpc.handle('events', ({ afterId }) => json(inspector.recentInspectorEvents(afterId))),
         rpc.handle('ingest', () => json(ingestReport(inspector))),
+        rpc.handle('dump', () => json(dump())),
     ];
     let pending = [];
     let timer;

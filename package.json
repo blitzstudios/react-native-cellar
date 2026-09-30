@@ -1,6 +1,6 @@
 {
   "name": "@sleeperhq/rozenite-plugin-cellar",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A React Native DevTools panel for @sleeperhq/react-native-cellar: every store, its partitions, live read-only SQL over its database, and what the stores are doing as they do it.",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,7 @@
   },
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "scripts": {
@@ -42,7 +43,7 @@
     "@rozenite/plugin-bridge": "2.4.0"
   },
   "peerDependencies": {
-    "@sleeperhq/react-native-cellar": ">=1.2.15",
+    "@sleeperhq/react-native-cellar": ">=1.2.17",
     "react": ">=18",
     "react-native": ">=0.76"
   },
@@ -65,5 +66,8 @@
     "vite": "^7.3.1",
     "vitest": "^3.2.4"
   },
-  "packageManager": "yarn@4.14.1"
+  "packageManager": "yarn@4.14.1",
+  "bin": {
+    "cellar-open-dump": "bin/open-dump.mjs"
+  }
 }

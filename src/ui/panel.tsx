@@ -13,6 +13,12 @@ import { QueryView, defaultDraft } from './query_view';
 import type { QueryDraft } from './query_view';
 import { SchemaView } from './schema_view';
 import { useCellarConnection, useLatestEventId } from './use_cellar';
+import { useDump } from './use_dump';
+
+/** Whether the panel is looking at the running app or at a database dump, which has rows but none of the app's memory. */
+export type PanelMode = 'live' | 'dump';
+const LIVE_ONLY_TABS: ReadonlySet<Tab> = new Set(['activity', 'caches']);
+const NO_EVENTS: never[] = [];
 
 type Tab = 'partitions' | 'entities' | 'query' | 'activity' | 'caches' | 'schema';
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -28,7 +34,15 @@ const TABS: Array<{ id: Tab; label: string }> = [
 type View = 'overview' | 'activity';
 
 export default function CellarPanel() {
-  const { state, problem, rpc, stores, events, refreshStores } = useCellarConnection();
+  const live = useCellarConnection();
+  const dumpFile = useDump();
+  const { dump } = dumpFile;
+  const mode: PanelMode = dump ? 'dump' : 'live';
+  const { state, problem, refreshStores } = live;
+  const rpc = dump ? dump.rpc : live.rpc;
+  const stores = dump ? dump.stores : live.stores;
+  const events = dump ? NO_EVENTS : live.events;
+  const tabs = TABS.filter((item) => mode === 'live' || !LIVE_ONLY_TABS.has(item.id));
   const [selected, setSelected] = useState<string>();
   const [view, setView] = useState<View>('overview');
   const [tab, setTab] = useState<Tab>('partitions');
@@ -40,6 +54,10 @@ export default function CellarPanel() {
   useEffect(() => {
     if (selected && stores.length && !store) setSelected(undefined);
   }, [selected, stores, store]);
+  useEffect(() => {
+    if (mode === 'dump' && LIVE_ONLY_TABS.has(tab)) setTab('partitions');
+    if (mode === 'dump' && view === 'activity') setView('overview');
+  }, [mode, tab, view]);
 
   const draftOf = (target: StoreOverview) => drafts[target.name] ?? defaultDraft(target);
   const setDraft = (target: StoreOverview, draft: QueryDraft) => setDrafts((current) => ({ ...current, [target.name]: draft }));
@@ -57,11 +75,22 @@ export default function CellarPanel() {
       <nav className="sidebar">
         <div className="brand">
           <span className="brand-name">Cellar</span>
-          <span className={`connection connection-${state}`} title={problem ?? state}>
-            {state === 'connected' ? 'live' : state === 'connecting' ? 'connecting' : 'waiting for app'}
-          </span>
+          {dump ? (
+            <span className="connection connection-dump" title={dump.name}>
+              dump
+            </span>
+          ) : (
+            <span className={`connection connection-${state}`} title={problem ?? state}>
+              {state === 'connected' ? 'live' : state === 'connecting' ? 'connecting' : 'waiting for app'}
+            </span>
+          )}
         </div>
-        {(['overview', 'activity'] as const).map((item) => (
+        {dump ? (
+          <div className="dump-name" title={dump.name}>
+            <code>{dump.name}</code> <span className="muted">{formatBytes(dump.bytes)}</span>
+          </div>
+        ) : null}
+        {(mode === 'live' ? (['overview', 'activity'] as const) : (['overview'] as const)).map((item) => (
           <button
             key={item}
             type="button"
@@ -80,13 +109,38 @@ export default function CellarPanel() {
           <StoreNavItem key={candidate.name} store={candidate} events={events} active={candidate.name === selected} onSelect={() => setSelected(candidate.name)} />
         ))}
         <span className="spacer" />
-        <button type="button" className="button button-small nav-refresh" onClick={refreshStores} disabled={!rpc}>
-          Refresh stores
-        </button>
+        {mode === 'live' ? (
+          <button type="button" className="button button-small nav-refresh" onClick={refreshStores} disabled={!rpc}>
+            Refresh stores
+          </button>
+        ) : (
+          <button type="button" className="button button-small nav-refresh" onClick={dumpFile.close}>
+            Close dump
+          </button>
+        )}
+        <label className="button button-small nav-refresh file-button">
+          Open dump…
+          <input
+            type="file"
+            accept=".db,.sqlite,.sqlite3,application/x-sqlite3"
+            aria-label="Open dump"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) dumpFile.openFile(file);
+              event.target.value = '';
+            }}
+          />
+        </label>
       </nav>
 
       <main className="main">
-        {state !== 'connected' && !stores.length ? (
+        {dumpFile.loading ? (
+          <Empty title="Opening dump…" />
+        ) : dumpFile.error ? (
+          <Empty title="Couldn't open the dump">
+            <p>{dumpFile.error}</p>
+          </Empty>
+        ) : mode === 'live' && state !== 'connected' && !stores.length ? (
           <Empty title={state === 'connecting' ? 'Connecting…' : 'Waiting for the app'}>{problem ? <p>{problem}</p> : null}</Empty>
         ) : !store && view === 'activity' ? (
           <div className="store">
@@ -96,12 +150,12 @@ export default function CellarPanel() {
             <ActivityView events={events} />
           </div>
         ) : !store ? (
-          <Overview rpc={rpc} stores={stores} events={events} onSelect={(name) => setSelected(name)} cleared={cleared} onClear={setCleared} />
+          <Overview mode={mode} dumpBytes={dump?.bytes} rpc={rpc} stores={stores} events={events} onSelect={(name) => setSelected(name)} cleared={cleared} onClear={setCleared} />
         ) : (
           <div className="store">
             <header className="store-header">
               <h2>{shortStoreName(store.name)}</h2>
-              <StateBadge state={store.summary.binding.state} />
+              {mode === 'live' ? <StateBadge state={store.summary.binding.state} /> : null}
               <span className="muted">
                 <code>{store.schema.table}</code> · {formatCount(store.summary.rows)} rows · {formatCount(store.summary.partitions)} partitions
                 {store.summary.databaseBytes !== undefined ? ` · ${formatBytes(store.summary.databaseBytes)} on disk` : ''}
@@ -109,7 +163,7 @@ export default function CellarPanel() {
               </span>
             </header>
             <div className="tabs" role="tablist">
-              {TABS.map((item) => (
+              {tabs.map((item) => (
                 <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={`tab${tab === item.id ? ' tab-active' : ''}`} onClick={() => setTab(item.id)}>
                   {item.label}
                 </button>
@@ -117,12 +171,13 @@ export default function CellarPanel() {
             </div>
             <div className="tab-body">
               {tab === 'partitions' ? (
-                <PartitionsView rpc={rpc} store={store} events={events} onQueryPartition={(key) => queryPartition(store, key)} />
+                <PartitionsView mode={mode} rpc={rpc} store={store} events={events} onQueryPartition={(key) => queryPartition(store, key)} />
               ) : tab === 'entities' ? (
-                <EntitiesView key={store.name} rpc={rpc} store={store} events={events} onQuery={(sql, params) => openQuery(store, sql, params)} />
+                <EntitiesView key={`${mode}:${store.name}`} mode={mode} rpc={rpc} store={store} events={events} onQuery={(sql, params) => openQuery(store, sql, params)} />
               ) : tab === 'query' ? (
                 <QueryView
-                  key={store.name}
+                  key={`${mode}:${store.name}`}
+                  mode={mode}
                   rpc={rpc}
                   store={store}
                   events={events}

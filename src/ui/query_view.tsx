@@ -71,6 +71,7 @@ function remember(entry: HistoryEntry): HistoryEntry[] {
 }
 
 export function QueryView({
+  mode = 'live',
   rpc,
   store,
   events,
@@ -85,6 +86,7 @@ export function QueryView({
   onDraftChange: (draft: QueryDraft) => void;
   /** Changes when another view asks for the draft to run now, such as a partition's "Rows" action. */
   runToken: number;
+  mode?: 'live' | 'dump';
 }) {
   const [result, setResult] = useState<InspectedQueryResult>();
   const [error, setError] = useState<string>();
@@ -202,10 +204,12 @@ export function QueryView({
               ))}
             </select>
           </label>
-          <label className="toggle" title="Run again whenever this store writes">
-            <input type="checkbox" checked={draft.live} onChange={(event) => set({ live: event.target.checked })} />
-            <span>Live</span>
-          </label>
+          {mode === 'live' ? (
+            <label className="toggle" title="Run again whenever this store writes">
+              <input type="checkbox" checked={draft.live} onChange={(event) => set({ live: event.target.checked })} />
+              <span>Live</span>
+            </label>
+          ) : null}
           <span className="spacer" />
           <select
             className="menu"

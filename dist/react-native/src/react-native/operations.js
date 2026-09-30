@@ -1,6 +1,7 @@
 /** What the app answers the panel and agents with, over Cellar's inspector. */
 import * as cellarInspector from '@sleeperhq/react-native-cellar/inspector';
 export const defaultInspector = cellarInspector;
+export const nitroDump = (name) => () => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores(name ? { name } : {});
 /** The store named `name`, or an error that lists the stores there are. */
 export function storeOf(inspector, name) {
     const store = inspector.inspectedStore(name);

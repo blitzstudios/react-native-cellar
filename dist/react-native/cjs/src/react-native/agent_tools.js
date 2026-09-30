@@ -8,8 +8,9 @@ const protocol_1 = require("../shared/protocol");
 const agent_tool_contracts_1 = require("./agent_tool_contracts");
 const operations_1 = require("./operations");
 /** Registers every Cellar agent tool while the calling component is mounted. */
-function useCellarAgentTools(inspector = operations_1.defaultInspector) {
-    const handlers = (0, react_1.useMemo)(() => (0, agent_tool_contracts_1.agentToolHandlers)(inspector), [inspector]);
+function useCellarAgentTools(inspector = operations_1.defaultInspector, dump) {
+    const handlers = (0, react_1.useMemo)(() => (0, agent_tool_contracts_1.agentToolHandlers)(inspector, dump), [inspector, dump]);
+    (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.dumpDatabases, handler: handlers.dumpDatabases });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.listStores, handler: handlers.listStores });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.describeStore, handler: handlers.describeStore });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({

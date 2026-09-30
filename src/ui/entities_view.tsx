@@ -22,6 +22,7 @@ const sameRef = (a: EntityRef | undefined, b: EntityRef) => !!a && a.partition =
 
 /** A store's entities, each an id within one partition, by how many rows it has; and one of them in full. */
 export function EntitiesView({
+  mode = 'live',
   rpc,
   store,
   events,
@@ -31,6 +32,7 @@ export function EntitiesView({
   store: StoreOverview;
   events: readonly InspectorEvent[];
   onQuery: (sql: string, params: string) => void;
+  mode?: 'live' | 'dump';
 }) {
   const [search, setSearch] = useState('');
   const [list, setList] = useState<{ rows: EntityRow[]; truncated: boolean }>();
@@ -109,6 +111,7 @@ export function EntitiesView({
               rpc={rpc}
               store={store}
               entityRef={selected}
+              mode={mode}
               events={events}
               onSelect={setSelected}
               onRows={() =>
@@ -125,6 +128,7 @@ export function EntitiesView({
 }
 
 function EntityDetail({
+  mode,
   rpc,
   store,
   entityRef,
@@ -138,6 +142,7 @@ function EntityDetail({
   events: readonly InspectorEvent[];
   onSelect: (ref: EntityRef) => void;
   onRows: () => void;
+  mode: 'live' | 'dump';
 }) {
   const [entity, setEntity] = useState<InspectedEntity>();
   const [open, setOpen] = useState<number>();
@@ -177,16 +182,19 @@ function EntityDetail({
           <code>{id}</code>
         </h3>
         <span className="muted">
-          in <code>{partition}</code> · {entity.version ? `changed at v${entity.version}` : 'unchanged this session'}
+          in <code>{partition}</code>
+          {mode === 'live' ? ` · ${entity.version ? `changed at v${entity.version}` : 'unchanged this session'}` : null}
         </span>
-        <button type="button" className="button button-small" onClick={onRows}>
-          Query
+        <button type="button" className="button button-small" onClick={onRows} title="Query this entity's rows">
+          Rows
         </button>
       </header>
       <section>
         <h4>Rows</h4>
         {entity.rows.length ? <JsonView value={entity.rows.length === 1 ? entity.rows[0] : entity.rows} /> : <div className="muted">None</div>}
       </section>
+      {mode === 'live' ? (
+        <>
       <section>
         <h4>Cache entries</h4>
         {entity.cacheEntries.length ? (
@@ -243,6 +251,8 @@ function EntityDetail({
           <div className="muted">None</div>
         )}
       </section>
+        </>
+      ) : null}
       {entity.sameIdIn.length ? (
         <section>
           <h4 title="Other entities: the same id in another partition may name something else">Same id in other partitions</h4>
