@@ -19,7 +19,7 @@ export const LIMITS = [100, 500, 2000, 10000];
 const HISTORY_KEY = 'cellar-plugin:history';
 const HISTORY_MAX = 30;
 /** How often a live query re-runs while its store keeps writing, at most, in ms. */
-const LIVE_INTERVAL_MS = 500;
+const LIVE_INTERVAL_MS = 1000;
 
 export function defaultDraft(store: StoreOverview): QueryDraft {
   return { sql: `SELECT *\nFROM ${quoteName(store.schema.table)}\nLIMIT 100`, params: '', limit: 500, live: false };
