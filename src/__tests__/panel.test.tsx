@@ -6,7 +6,7 @@ import { registerCellarHandlers } from '../react-native/handlers';
 import { PLUGIN_ID } from '../shared/protocol';
 import type { CellarEventMap } from '../shared/protocol';
 import CellarPanel from '../ui/panel';
-import { NFL, NFL_GAMES, gamesStore } from './fixtures';
+import { NBA, NFL, NFL_GAMES, gamesStore } from './fixtures';
 
 const closers: Array<() => void> = [];
 
@@ -86,14 +86,17 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
   expect(await screen.findByText('No caches')).toBeTruthy();
 });
 
-it('lists a store’s entities and shows one across its partitions', async () => {
+it('lists a store’s entities, each an id within a partition, and shows one with the other partitions using its id', async () => {
   const store = await gamesStore('panel_entities_store');
   store.lifecycle.put(NFL, NFL_GAMES);
+  store.lifecycle.put(NBA, [{ team: 'MIA', sport: 'nba', score: 1 }]);
   await renderPanel();
 
   fireEvent.click(await within(await screen.findByRole('navigation')).findByTitle('panel_entities_store'));
   fireEvent.click(await screen.findByRole('tab', { name: 'Entities' }));
-  fireEvent.click(await screen.findByText('MIA'));
+  const rows = await screen.findAllByText('MIA');
+  expect(rows).toHaveLength(2);
+  fireEvent.click(rows[0]);
   expect(await screen.findByRole('heading', { name: 'MIA' })).toBeTruthy();
-  expect((await screen.findAllByText('nfl:2026')).length).toBeGreaterThan(0);
+  expect(await screen.findByText('Same id in other partitions')).toBeTruthy();
 });
