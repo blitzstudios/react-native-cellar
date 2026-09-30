@@ -98,7 +98,7 @@ export function QueryView({
   const now = useNow();
 
   const run = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, page?: number) => {
       if (!rpc || inFlight.current) return;
       const parsed = parseParams(draft.params);
       if ('error' in parsed) {
@@ -108,15 +108,17 @@ export function QueryView({
       inFlight.current = true;
       setRunning(true);
       try {
-        const next = await rpc.method('query', { timeoutMs: 60_000 }).invoke({ store: store.name, sql: draft.sql, params: parsed.params, limit: draft.limit });
+        // A fresh run starts at the first page; a live re-run keeps the page it is on.
+        const offset = page ?? (quiet ? (result?.offset ?? 0) : 0);
+        const next = await rpc
+          .method('query', { timeoutMs: 60_000 })
+          .invoke({ store: store.name, sql: draft.sql, params: parsed.params, limit: draft.limit, offset });
         setResult(next);
         setError(undefined);
         setRanAt(Date.now());
         setRuns((count) => count + 1);
-        if (!quiet) {
-          setSelected(undefined);
-          setHistory(remember({ store: store.name, sql: draft.sql, params: draft.params }));
-        }
+        if (!quiet) setSelected(undefined);
+        if (!quiet && page === undefined) setHistory(remember({ store: store.name, sql: draft.sql, params: draft.params }));
       } catch (caught) {
         setError(errorMessage(caught));
         if (!quiet) setResult(undefined);
@@ -125,7 +127,7 @@ export function QueryView({
         setRunning(false);
       }
     },
-    [rpc, store.name, draft],
+    [rpc, store.name, draft, result?.offset],
   );
 
   useEffect(() => {
@@ -247,9 +249,17 @@ export function QueryView({
         <div className="result">
           <div className="result-bar">
             <span>
-              {formatCount(result.rows.length)} {result.rows.length === 1 ? 'row' : 'rows'}
-              {result.truncated ? <span className="warning"> · stopped at the limit</span> : null}
+              {result.offset || result.truncated
+                ? `Rows ${formatCount(result.offset + 1)}–${formatCount(result.offset + result.rows.length)}`
+                : `${formatCount(result.rows.length)} ${result.rows.length === 1 ? 'row' : 'rows'}`}
+              {result.truncated ? <span className="muted"> · more follow</span> : null}
             </span>
+            <button type="button" className="button button-small" disabled={running || !result.offset} onClick={() => run(false, Math.max(0, result.offset - draft.limit))}>
+              ‹ Prev
+            </button>
+            <button type="button" className="button button-small" disabled={running || !result.truncated} onClick={() => run(false, result.offset + draft.limit)}>
+              Next ›
+            </button>
             <span className="muted">· {formatMs(result.durationMs)}</span>
             {ranAt ? <span className="muted">· {draft.live ? `live, ran ${formatAgo(ranAt, now)}` : `ran ${formatAgo(ranAt, now)}`}</span> : null}
             <span className="spacer" />
@@ -262,7 +272,7 @@ export function QueryView({
           </div>
           <div className="result-body">
             {result.rows.length ? (
-              <ResultGrid columns={result.columns} rows={result.rows} selected={selected} onSelect={setSelected} />
+              <ResultGrid columns={result.columns} rows={result.rows} selected={selected} onSelect={setSelected} firstRow={result.offset + 1} />
             ) : (
               <div className="muted pad">No rows.</div>
             )}

@@ -68,3 +68,20 @@ it('shows a refused write as an error, and re-runs a live query when the store w
   store.lifecycle.put(NFL, [...NFL_GAMES, { team: 'NYJ', sport: 'nfl', score: 3 }]);
   await waitFor(() => expect(screen.getByText('NYJ')).toBeTruthy(), { timeout: 3000 });
 });
+
+it('shows every store’s writes in the global activity feed, and a store’s caches in its own tab', async () => {
+  const store = await gamesStore('panel_activity_store');
+  await renderPanel();
+  const sidebar = await screen.findByRole('navigation');
+  await within(sidebar).findByTitle('panel_activity_store');
+  store.lifecycle.put(NFL, NFL_GAMES);
+
+  fireEvent.click(within(sidebar).getByText('Activity'));
+  expect(await screen.findByRole('heading', { name: 'Activity' })).toBeTruthy();
+  await waitFor(() => expect(screen.getAllByText('nfl:2026').length).toBeGreaterThan(0), { timeout: 3000 });
+  expect(screen.getAllByText('panel_activity').length).toBeGreaterThan(0);
+
+  fireEvent.click(within(sidebar).getByTitle('panel_activity_store'));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Caches' }));
+  expect(await screen.findByText('No caches')).toBeTruthy();
+});

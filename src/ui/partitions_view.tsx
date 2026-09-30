@@ -1,15 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import type { InspectedPartition, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { InspectedEntityChanges, InspectedPartition, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { Empty, ErrorBanner, JsonView, KindBadge, SortHeader } from './components';
 import { formatAgo, formatClock, formatCount, formatFetchRows, formatMs } from './format';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
-type SortKey = 'key' | 'rows' | 'version' | 'fetchedAt';
+type SortKey = 'key' | 'rows' | 'entities' | 'version' | 'fetchedAt';
 
 const compare: Record<SortKey, (a: InspectedPartition, b: InspectedPartition) => number> = {
   key: (a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }),
   rows: (a, b) => a.rows - b.rows,
+  entities: (a, b) => a.entities - b.entities,
   version: (a, b) => a.version - b.version,
   fetchedAt: (a, b) => (a.fetchedAt ?? 0) - (b.fetchedAt ?? 0),
 };
@@ -108,6 +109,7 @@ export function PartitionsView({
               <tr>
                 <SortHeader label="Partition" sortKey="key" sort={sort} onSort={onSort} />
                 <SortHeader label="Rows" sortKey="rows" sort={sort} onSort={onSort} align="right" />
+                <SortHeader label={shortEntity(store)} sortKey="entities" sort={sort} onSort={onSort} align="right" />
                 <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" />
                 <th>ETag</th>
                 <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} />
@@ -127,6 +129,7 @@ export function PartitionsView({
                         </button>
                       </td>
                       <td className="num">{formatCount(partition.rows)}</td>
+                      <td className="num">{formatCount(partition.entities)}</td>
                       <td className="num">{partition.version}</td>
                       <td className="etag" title={partition.etag ?? undefined}>
                         {partition.etag ?? <span className="muted">none</span>}
@@ -164,7 +167,7 @@ export function PartitionsView({
                     </tr>
                     {open ? (
                       <tr className="row-detail">
-                        <td colSpan={6}>
+                        <td colSpan={7}>
                           <div className="partition-detail">
                             <section>
                               <h4>Description</h4>
@@ -173,6 +176,10 @@ export function PartitionsView({
                             <section>
                               <h4>Recent activity</h4>
                               <PartitionTimeline events={partitionEvents(events, store.name, partition.key)} />
+                            </section>
+                            <section>
+                              <h4>Recently changed {shortEntity(store).toLowerCase()}</h4>
+                              <EntityChanges rpc={rpc} store={store} partitionKey={partition.key} version={partition.version} />
                             </section>
                           </div>
                         </td>
@@ -209,5 +216,46 @@ function PartitionTimeline({ events }: { events: InspectorEvent[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The entity column's name as a heading, such as `player_id` → `Players`. */
+function shortEntity(store: StoreOverview): string {
+  const name = store.schema.entityColumn.replace(/_id$/, '');
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}s`;
+}
+
+/** The entities a partition changed since its epoch, newest first, read again whenever its version moves. */
+function EntityChanges({ rpc, store, partitionKey, version }: { rpc: CellarRpc | null; store: StoreOverview; partitionKey: string; version: number }) {
+  const [changes, setChanges] = useState<InspectedEntityChanges>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!rpc) return;
+    rpc
+      .method('entityChanges')
+      .invoke({ store: store.name, key: partitionKey, limit: 40 })
+      .then(setChanges, (caught) => setError(errorMessage(caught)));
+  }, [rpc, store.name, partitionKey, version]);
+  if (error) return <div className="error-text">{error}</div>;
+  if (!changes) return <div className="muted">Loading…</div>;
+  if (!changes.version) return <div className="muted">Not written this session.</div>;
+  return (
+    <div>
+      <div className="muted small">
+        {changes.epoch === changes.version
+          ? `The last write (v${changes.version}) counted every entity as changed.`
+          : `${formatCount(changes.count)} changed since v${changes.epoch}, when every entity last counted as changed.`}
+      </div>
+      {changes.changed.length ? (
+        <div className="entities">
+          {changes.changed.map((entity) => (
+            <code key={entity.id} title={`changed at v${entity.version}`}>
+              {entity.id} <span className="muted">v{entity.version}</span>
+            </code>
+          ))}
+          {changes.count > changes.changed.length ? <span className="muted">and {formatCount(changes.count - changes.changed.length)} more</span> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -2,7 +2,7 @@
  * What the app and the panel say to each other. The panel calls the app's methods over Rozenite's RPC; the app pushes
  * what the stores do, in batches, as `cellar:events`.
  */
-import type { IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
+import type { InspectedCache, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 export declare const PLUGIN_ID = "@sleeperhq/rozenite-plugin-cellar";
 /** A value a query binds to a `?`. */
 export type SqlParam = string | number | null;
@@ -23,6 +23,7 @@ export interface QueryRequest {
     sql: string;
     params?: SqlParam[];
     limit?: number;
+    offset?: number;
 }
 /** The recent fetches, and their totals per store. */
 export interface IngestReport {
@@ -37,6 +38,14 @@ export type CellarMethods = {
     partitions: (params: {
         store: string;
     }) => Promise<InspectedPartition[]>;
+    /** A partition's recently changed entities. */
+    entityChanges: (params: PartitionRef & {
+        limit?: number;
+    }) => Promise<InspectedEntityChanges>;
+    /** A store's caches, or every store's, with what each has done. */
+    caches: (params: {
+        store?: string;
+    }) => Promise<InspectedCache[]>;
     /** One read-only statement over a store's database. */
     query: (params: QueryRequest) => Promise<InspectedQueryResult>;
     /** Fetches a partition again; false for a store that doesn't fetch. */
@@ -57,4 +66,4 @@ export type CellarEventMap = {
         events: InspectorEvent[];
     };
 };
-export type { IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };
+export type { InspectedCache, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };

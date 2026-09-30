@@ -2,6 +2,7 @@ import './panel.css';
 import { useEffect, useMemo, useState } from 'react';
 import type { StoreOverview } from '../shared/protocol';
 import { ActivityView } from './activity_view';
+import { CachesView } from './caches_view';
 import { Empty, StateBadge } from './components';
 import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
 import { Overview } from './overview';
@@ -11,17 +12,22 @@ import type { QueryDraft } from './query_view';
 import { SchemaView } from './schema_view';
 import { useCellarConnection, useLatestEventId } from './use_cellar';
 
-type Tab = 'partitions' | 'query' | 'activity' | 'schema';
+type Tab = 'partitions' | 'query' | 'activity' | 'caches' | 'schema';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'partitions', label: 'Partitions' },
   { id: 'query', label: 'Query' },
   { id: 'activity', label: 'Activity' },
+  { id: 'caches', label: 'Caches' },
   { id: 'schema', label: 'Schema' },
 ];
+
+/** What the main area shows when no store is selected. */
+type View = 'overview' | 'activity';
 
 export default function CellarPanel() {
   const { state, problem, rpc, stores, events, refreshStores } = useCellarConnection();
   const [selected, setSelected] = useState<string>();
+  const [view, setView] = useState<View>('overview');
   const [tab, setTab] = useState<Tab>('partitions');
   const [drafts, setDrafts] = useState<Record<string, QueryDraft>>({});
   const [runTokens, setRunTokens] = useState<Record<string, number>>({});
@@ -49,9 +55,20 @@ export default function CellarPanel() {
             {state === 'connected' ? 'live' : state === 'connecting' ? 'connecting' : 'waiting for app'}
           </span>
         </div>
-        <button type="button" className={`nav-item${store ? '' : ' nav-item-active'}`} onClick={() => setSelected(undefined)}>
-          <span className="nav-name">Overview</span>
-        </button>
+        {(['overview', 'activity'] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={`nav-item${!store && view === item ? ' nav-item-active' : ''}`}
+            onClick={() => {
+              setSelected(undefined);
+              setView(item);
+            }}
+          >
+            <span className="nav-name">{item === 'overview' ? 'Overview' : 'Activity'}</span>
+            {item === 'activity' ? <span className="nav-meta">{formatCount(events.length)}</span> : null}
+          </button>
+        ))}
         <div className="nav-heading">Stores</div>
         {stores.map((candidate) => (
           <StoreNavItem key={candidate.name} store={candidate} events={events} active={candidate.name === selected} onSelect={() => setSelected(candidate.name)} />
@@ -70,6 +87,14 @@ export default function CellarPanel() {
               The app calls <code>useCellarDevTools()</code> from <code>@sleeperhq/rozenite-plugin-cellar</code> once, near its root, in a development build.
             </p>
           </Empty>
+        ) : !store && view === 'activity' ? (
+          <div className="store">
+            <header className="store-header">
+              <h2>Activity</h2>
+              <span className="muted">what every store did, newest first</span>
+            </header>
+            <ActivityView events={events} />
+          </div>
         ) : !store ? (
           <Overview rpc={rpc} stores={stores} events={events} onSelect={(name) => setSelected(name)} />
         ) : (
@@ -104,6 +129,8 @@ export default function CellarPanel() {
                 />
               ) : tab === 'activity' ? (
                 <ActivityView events={events} store={store.name} />
+              ) : tab === 'caches' ? (
+                <CachesView rpc={rpc} store={store} />
               ) : (
                 <SchemaView rpc={rpc} store={store} />
               )}

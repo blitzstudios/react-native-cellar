@@ -55,8 +55,8 @@ describe('the calls the panel makes', () => {
     store.lifecycle.setEtag(NFL, 'W/"3"');
 
     expect(await session.rpc.method('partitions').invoke({ store: 'protocol_partitions_store' })).toEqual([
-      { key: 'nba:2026', partition: NBA, rows: 1, version: 1, etag: null, fetchedAt: null },
-      { key: 'nfl:2026', partition: NFL, rows: 3, version: 1, etag: 'W/"3"', fetchedAt: null },
+      { key: 'nba:2026', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
+      { key: 'nfl:2026', partition: NFL, rows: 3, entities: 3, version: 1, etag: 'W/"3"', fetchedAt: null },
     ]);
   });
 
@@ -68,6 +68,31 @@ describe('the calls the panel makes', () => {
       .method('query')
       .invoke({ store: 'protocol_query_store', sql: 'SELECT team, score FROM games WHERE partition_key = ? ORDER BY team', params: ['nfl:2026'], limit: 2 });
     expect(result).toMatchObject({ columns: ['team', 'score'], rows: [['BUF', 24], ['KC', 27]], truncated: true });
+  });
+
+  it('pages a query with an offset', async () => {
+    const store = await gamesStore('protocol_paged_store');
+    store.lifecycle.put(NFL, NFL_GAMES);
+    const page = await session.rpc.method('query').invoke({ store: 'protocol_paged_store', sql: 'SELECT team FROM games ORDER BY team', limit: 2, offset: 2 });
+    expect(page).toMatchObject({ rows: [['MIA']], truncated: false, offset: 2 });
+  });
+
+  it("reads a partition's recently changed entities", async () => {
+    const store = await gamesStore('protocol_entities_store');
+    store.lifecycle.put(NFL, NFL_GAMES);
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 31 }, ...NFL_GAMES.slice(1)]);
+    expect(await session.rpc.method('entityChanges').invoke({ store: 'protocol_entities_store', key: 'nfl:2026' })).toEqual({
+      version: 2,
+      epoch: 1,
+      count: 1,
+      changed: [{ id: 'KC', version: 2 }],
+    });
+  });
+
+  it("lists caches, all or one store's", async () => {
+    await gamesStore('protocol_caches_store');
+    expect(await session.rpc.method('caches').invoke({ store: 'protocol_caches_store' })).toEqual([]);
+    expect(Array.isArray(await session.rpc.method('caches').invoke({}))).toBe(true);
   });
 
   it("sends a refused write back as the handler's error", async () => {

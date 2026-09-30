@@ -7,7 +7,7 @@ import type { IngestReport, PartitionRef, QueryRequest, StoreOverview } from '..
 /** The part of Cellar's inspector the plugin reads; a test hands in its own. */
 export type CellarInspector = Pick<
   typeof cellarInspector,
-  'inspectedStores' | 'inspectedStore' | 'recentInspectorEvents' | 'onInspectorEvent' | 'getIngestTimings' | 'rollupIngestTimings'
+  'inspectedStores' | 'inspectedStore' | 'inspectedCaches' | 'recentInspectorEvents' | 'onInspectorEvent' | 'getIngestTimings' | 'rollupIngestTimings'
 >;
 
 export const defaultInspector: CellarInspector = cellarInspector;
@@ -24,8 +24,12 @@ export async function listStores(inspector: CellarInspector): Promise<StoreOverv
   return Promise.all(inspector.inspectedStores().map(async (store) => ({ name: store.name, schema: store.schema(), summary: await store.summary() })));
 }
 
-export function runQuery(inspector: CellarInspector, { store, sql, params, limit }: QueryRequest) {
-  return storeOf(inspector, store).query(sql, params ?? [], limit === undefined ? {} : { limit });
+export function runQuery(inspector: CellarInspector, { store, sql, params, limit, offset }: QueryRequest) {
+  return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
+}
+
+export function listCaches(inspector: CellarInspector, store?: string) {
+  return store ? storeOf(inspector, store).caches() : inspector.inspectedCaches();
 }
 
 export function refetchPartition(inspector: CellarInspector, { store, key }: PartitionRef): boolean {

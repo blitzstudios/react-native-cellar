@@ -11,7 +11,9 @@ export function ResultGrid({
   rows,
   selected,
   onSelect,
+  firstRow = 1,
 }: {
+  firstRow?: number;
   columns: readonly string[];
   rows: readonly unknown[][];
   selected?: SelectedCell;
@@ -31,7 +33,7 @@ export function ResultGrid({
         <tbody>
           {rows.map((row, rowIndex) => (
             <tr key={rowIndex}>
-              <td className="rownum">{rowIndex + 1}</td>
+              <td className="rownum">{rowIndex + firstRow}</td>
               {row.map((value, columnIndex) => {
                 const isSelected = selected?.row === rowIndex && selected.column === columnIndex;
                 const kind =

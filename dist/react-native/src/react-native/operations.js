@@ -12,8 +12,11 @@ export function storeOf(inspector, name) {
 export async function listStores(inspector) {
     return Promise.all(inspector.inspectedStores().map(async (store) => ({ name: store.name, schema: store.schema(), summary: await store.summary() })));
 }
-export function runQuery(inspector, { store, sql, params, limit }) {
-    return storeOf(inspector, store).query(sql, params ?? [], limit === undefined ? {} : { limit });
+export function runQuery(inspector, { store, sql, params, limit, offset }) {
+    return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
+}
+export function listCaches(inspector, store) {
+    return store ? storeOf(inspector, store).caches() : inspector.inspectedCaches();
 }
 export function refetchPartition(inspector, { store, key }) {
     return storeOf(inspector, store).refetch(key);

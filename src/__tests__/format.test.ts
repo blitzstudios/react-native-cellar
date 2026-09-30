@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { formatAgo, formatCell, formatFetchRows, parseJsonText, parseParams, toCsv, toJsonRows } from '../ui/format';
 import { scopeNamesStore } from '../ui/activity_view';
+import { parseFrames, shortPath } from '../ui/callsite';
+import { groupDegradations, splitScope } from '../ui/degradations';
+import { fetchStatsOf } from '../ui/overview';
 import { mergeEvents } from '../ui/use_cellar';
 import type { InspectorEvent } from '../shared/protocol';
 
@@ -67,5 +70,56 @@ describe('the event log', () => {
   it('appends in order, and merges a backlog that races a push by id', () => {
     expect(mergeEvents([write(1)], [write(2), write(3)]).map((event) => event.id)).toEqual([1, 2, 3]);
     expect(mergeEvents([write(3), write(4)], [write(1), write(2), write(3)]).map((event) => event.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('callsites', () => {
+  it('parses JS stack lines and React owner stack lines, skipping the rest', () => {
+    const stack = [
+      'Error',
+      '    at reportStoreDegradation (http://127.0.0.1:8081/index.bundle?platform=ios:1200:17)',
+      '    at StatsScreen (http://127.0.0.1:8081/index.bundle?platform=ios:88:5)',
+      '    at anonymous (address at http://127.0.0.1:8081/index.bundle?platform=ios:9:1)',
+      '    at http://127.0.0.1:8081/index.bundle?platform=ios:3:4',
+    ].join('\n');
+    expect(parseFrames(stack)).toEqual([
+      { method: 'reportStoreDegradation', file: 'http://127.0.0.1:8081/index.bundle?platform=ios', line: 1200, column: 17 },
+      { method: 'StatsScreen', file: 'http://127.0.0.1:8081/index.bundle?platform=ios', line: 88, column: 5 },
+      { method: 'anonymous', file: 'http://127.0.0.1:8081/index.bundle?platform=ios', line: 9, column: 1 },
+      { method: '(anonymous)', file: 'http://127.0.0.1:8081/index.bundle?platform=ios', line: 3, column: 4 },
+    ]);
+  });
+
+  it('shortens a source path to the repo', () => {
+    expect(shortPath('/Users/me/projects/sleeperbot/clients/app-mobile/src/v2/stats/screen.tsx')).toBe('app-mobile/src/v2/stats/screen.tsx');
+    expect(shortPath('/x/y/z/w.ts')).toBe('y/z/w.ts');
+  });
+});
+
+describe('degradation groups', () => {
+  const report = (id: number, scope: string, count: number): InspectorEvent => ({ kind: 'degradation', id, at: id, scope, context: 'c', severity: 'info', first: count === 1, count });
+
+  it('groups reports by scope, newest first, counting every report', () => {
+    const groups = groupDegradations([report(1, 'a.rule.x', 1), report(2, 'b.rule', 1), report(3, 'a.rule.x', 2)]);
+    expect(groups.map((group) => [group.scope, group.count, group.latest.id])).toEqual([
+      ['a.rule.x', 2, 3],
+      ['b.rule', 1, 2],
+    ]);
+  });
+
+  it('splits a scope into its rule and subject', () => {
+    expect(splitScope('player_store_ingest.oversized_prime.mlb')).toEqual({ rule: 'oversized_prime', subject: 'mlb' });
+    expect(splitScope('memo.undersized.player.byTeam')).toEqual({ rule: 'undersized', subject: 'player.byTeam' });
+    expect(splitScope('player_stats_store.in_memory')).toEqual({ rule: 'in_memory', subject: 'player_stats_store' });
+  });
+});
+
+describe('fetch stats', () => {
+  it('totals each store, counts unchanged bodies, and names the slowest', () => {
+    const at = (store: string, partition: string, fetchMs: number, ingestMs: number, rows: number) => ({ store, partition, fetchMs, ingestMs, rows, chars: 1, at: 0 });
+    expect(fetchStatsOf([at('p', 'nfl', 100, 20, 10), at('p', 'nba', 50, 0, -1), at('s', 'w=1', 10, 5, 3)])).toEqual([
+      { store: 'p', fetches: 2, unchanged: 1, fetchMs: 150, ingestMs: 20, rows: 10, slowest: { ms: 120, partition: 'nfl' } },
+      { store: 's', fetches: 1, unchanged: 0, fetchMs: 10, ingestMs: 5, rows: 3, slowest: { ms: 15, partition: 'w=1' } },
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 /** Answers the panel's calls, and pushes the stores' events to it as they are recorded. */
 import { createRozeniteRpc } from '@rozenite/plugin-bridge';
-import { clearPartitionEtag, defaultInspector, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, refetchPartition, runQuery, storeOf } from './operations';
 /** How long events gather before they go to the panel in one message, in ms. */
 export const EVENT_FLUSH_MS = 100;
 /** The most events one message carries; a busier interval goes out as several. */
@@ -11,6 +11,8 @@ export function registerCellarHandlers(client, inspector = defaultInspector) {
     const subscriptions = [
         rpc.handle('stores', () => listStores(inspector)),
         rpc.handle('partitions', ({ store }) => storeOf(inspector, store).partitions()),
+        rpc.handle('entityChanges', async ({ store, key, limit }) => storeOf(inspector, store).entityChanges(key, limit)),
+        rpc.handle('caches', async ({ store }) => listCaches(inspector, store)),
         rpc.handle('query', (params) => runQuery(inspector, params)),
         rpc.handle('refetch', async (params) => refetchPartition(inspector, params)),
         rpc.handle('clearEtag', async (params) => clearPartitionEtag(inspector, params)),

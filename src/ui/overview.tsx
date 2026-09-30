@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { IngestRollup, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { Empty, ErrorBanner, StateBadge, Stat } from './components';
-import { formatAgo, formatBytes, formatClock, formatCount, formatMs, shortStoreName } from './format';
+import { Degradations } from './degradations';
+import { formatAgo, formatBytes, formatCount, formatMs, shortStoreName } from './format';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
@@ -20,13 +21,13 @@ export function Overview({
   onSelect: (store: string) => void;
 }) {
   const now = useNow();
-  const [rollup, setRollup] = useState<IngestRollup[]>();
+  const [timings, setTimings] = useState<IngestTiming[]>();
   const [error, setError] = useState<string>();
 
   const loadRollup = useCallback(async () => {
     if (!rpc) return;
     try {
-      setRollup((await rpc.method('ingest').invoke()).rollup);
+      setTimings((await rpc.method('ingest').invoke()).timings);
     } catch (caught) {
       setError(errorMessage(caught));
     }
@@ -47,7 +48,7 @@ export function Overview({
     return byStore;
   }, [events, now]);
 
-  const degradations = useMemo(() => events.filter((event) => event.kind === 'degradation').slice(-50).reverse(), [events]);
+  const fetchStats = useMemo(() => fetchStatsOf(timings ?? []), [timings]);
   const totals = stores.reduce(
     (sum, store) => ({ rows: sum.rows + store.summary.rows, partitions: sum.partitions + store.summary.partitions, bytes: sum.bytes + (store.summary.databaseBytes ?? 0) }),
     { rows: 0, partitions: 0, bytes: 0 },
@@ -108,29 +109,40 @@ export function Overview({
       </section>
 
       <section>
-        <h3>Fetch time by store</h3>
-        <p className="muted">The latest 128 partition fetches, split into the request and writing the rows, to tell a slow network from a slow write.</p>
-        {rollup?.length ? (
+        <h3>Fetches by store</h3>
+        <p className="muted">
+          The latest 128 partition fetches. Each splits into the request and writing its rows, which tells a slow network from a slow write; the averages are
+          per fetch, the totals over all of them.
+        </p>
+        {fetchStats.length ? (
           <table className="table">
             <thead>
               <tr>
                 <th>Store</th>
                 <th className="num">Fetches</th>
-                <th className="num">Request</th>
-                <th className="num">Write</th>
-                <th className="num">Rows</th>
-                <th className="num">Characters</th>
+                <th className="num" title="304 Not Modified, or a body identical to the last">Unchanged</th>
+                <th className="num">Avg request</th>
+                <th className="num">Avg write</th>
+                <th className="num">Slowest</th>
+                <th className="num">Total request</th>
+                <th className="num">Total write</th>
+                <th className="num">Rows written</th>
               </tr>
             </thead>
             <tbody>
-              {rollup.map((roll) => (
-                <tr key={roll.store}>
-                  <td>{shortStoreName(roll.store)}</td>
-                  <td className="num">{formatCount(roll.fetches)}</td>
-                  <td className="num">{formatMs(roll.fetchMs)}</td>
-                  <td className="num">{formatMs(roll.ingestMs)}</td>
-                  <td className="num">{formatCount(roll.rows)}</td>
-                  <td className="num">{formatCount(roll.chars)}</td>
+              {fetchStats.map((stat) => (
+                <tr key={stat.store}>
+                  <td>{shortStoreName(stat.store)}</td>
+                  <td className="num">{formatCount(stat.fetches)}</td>
+                  <td className="num">{formatCount(stat.unchanged)}</td>
+                  <td className="num">{formatMs(stat.fetchMs / stat.fetches)}</td>
+                  <td className="num">{formatMs(stat.ingestMs / stat.fetches)}</td>
+                  <td className="num" title={stat.slowest.partition}>
+                    {formatMs(stat.slowest.ms)}
+                  </td>
+                  <td className="num">{formatMs(stat.fetchMs)}</td>
+                  <td className="num">{formatMs(stat.ingestMs)}</td>
+                  <td className="num">{formatCount(stat.rows)}</td>
                 </tr>
               ))}
             </tbody>
@@ -142,26 +154,35 @@ export function Overview({
 
       <section>
         <h3>Degradations</h3>
-        {degradations.length ? (
-          <ul className="degradations">
-            {degradations.map((event) =>
-              event.kind === 'degradation' ? (
-                <li key={event.id} className={event.severity === 'error' ? 'degradation-error' : 'degradation-info'}>
-                  <div>
-                    <span className="time">{formatClock(event.at)}</span> <code>{event.scope}</code>
-                    {event.severity === 'info' ? <span className="muted"> (notice)</span> : null}
-                    {event.first ? null : <span className="muted"> · repeat</span>}
-                  </div>
-                  <div className="muted">{event.context}</div>
-                  {event.error ? <div className="error-text">{event.error}</div> : null}
-                </li>
-              ) : null,
-            )}
-          </ul>
-        ) : (
-          <div className="muted">None reported. Each is a store losing a benefit it should have had, such as the native shredder or its own database.</div>
-        )}
+        <Degradations events={events} now={now} />
       </section>
     </div>
   );
+}
+
+interface FetchStats {
+  store: string;
+  fetches: number;
+  unchanged: number;
+  fetchMs: number;
+  ingestMs: number;
+  rows: number;
+  slowest: { ms: number; partition: string };
+}
+
+/** Each store's fetches totalled, with the slowest one; most total time first. */
+export function fetchStatsOf(timings: readonly IngestTiming[]): FetchStats[] {
+  const byStore = new Map<string, FetchStats>();
+  for (const timing of timings) {
+    const stat = byStore.get(timing.store) ?? { store: timing.store, fetches: 0, unchanged: 0, fetchMs: 0, ingestMs: 0, rows: 0, slowest: { ms: 0, partition: '' } };
+    stat.fetches += 1;
+    if (timing.rows < 0) stat.unchanged += 1;
+    else stat.rows += timing.rows;
+    stat.fetchMs += timing.fetchMs;
+    stat.ingestMs += timing.ingestMs;
+    const ms = timing.fetchMs + timing.ingestMs;
+    if (ms > stat.slowest.ms) stat.slowest = { ms, partition: timing.partition };
+    byStore.set(timing.store, stat);
+  }
+  return Array.from(byStore.values()).sort((a, b) => b.fetchMs + b.ingestMs - (a.fetchMs + a.ingestMs));
 }
