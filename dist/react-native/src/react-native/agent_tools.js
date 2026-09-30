@@ -1,0 +1,26 @@
+/** Registers the Cellar agent tools with Rozenite while the calling component is mounted. */
+import { useRozenitePluginAgentTool } from '@rozenite/agent-bridge';
+import { useMemo } from 'react';
+import { PLUGIN_ID } from '../shared/protocol';
+import { agentToolHandlers, cellarAgentTools } from './agent_tool_contracts';
+import { defaultInspector } from './operations';
+/** Registers every Cellar agent tool while the calling component is mounted. */
+export function useCellarAgentTools(inspector = defaultInspector) {
+    const handlers = useMemo(() => agentToolHandlers(inspector), [inspector]);
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.listStores, handler: handlers.listStores });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.describeStore, handler: handlers.describeStore });
+    useRozenitePluginAgentTool({
+        pluginId: PLUGIN_ID,
+        tool: cellarAgentTools.listPartitions,
+        handler: handlers.listPartitions,
+    });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.query, handler: handlers.query });
+    useRozenitePluginAgentTool({
+        pluginId: PLUGIN_ID,
+        tool: cellarAgentTools.recentEvents,
+        handler: handlers.recentEvents,
+    });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.ingestTimings, handler: handlers.ingestTimings });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.refetchPartition, handler: handlers.refetchPartition });
+    useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.clearEtag, handler: handlers.clearEtag });
+}

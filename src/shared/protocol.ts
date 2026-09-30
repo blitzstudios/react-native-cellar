@@ -1,0 +1,72 @@
+/**
+ * What the app and the panel say to each other. The panel calls the app's methods over Rozenite's RPC; the app pushes
+ * what the stores do, in batches, as `cellar:events`.
+ */
+
+import type {
+  IngestRollup,
+  IngestTiming,
+  InspectedPartition,
+  InspectedQueryResult,
+  InspectedSchema,
+  InspectedSummary,
+  InspectorEvent,
+} from '@sleeperhq/react-native-cellar/inspector';
+
+export const PLUGIN_ID = '@sleeperhq/rozenite-plugin-cellar';
+
+/** A value a query binds to a `?`. */
+export type SqlParam = string | number | null;
+
+/** A store in the store list: its name, its table as declared, and its totals. */
+export interface StoreOverview {
+  name: string;
+  schema: InspectedSchema;
+  summary: InspectedSummary;
+}
+
+/** A store's name and one of its partitions, for the actions on a partition. */
+export interface PartitionRef {
+  store: string;
+  key: string;
+}
+
+/** A query from the panel's editor, or from an agent. */
+export interface QueryRequest {
+  store: string;
+  sql: string;
+  params?: SqlParam[];
+  limit?: number;
+}
+
+/** The recent fetches, and their totals per store. */
+export interface IngestReport {
+  timings: IngestTiming[];
+  rollup: IngestRollup[];
+}
+
+/** The methods the app answers. */
+export type CellarMethods = {
+  /** Every declared store, with its schema and totals. */
+  stores: () => Promise<StoreOverview[]>;
+  /** One store's partitions. */
+  partitions: (params: { store: string }) => Promise<InspectedPartition[]>;
+  /** One read-only statement over a store's database. */
+  query: (params: QueryRequest) => Promise<InspectedQueryResult>;
+  /** Fetches a partition again; false for a store that doesn't fetch. */
+  refetch: (params: PartitionRef) => Promise<boolean>;
+  /** Deletes a partition's ETag, so its next fetch brings the whole body. */
+  clearEtag: (params: PartitionRef) => Promise<void>;
+  /** The events the app has recorded, after `afterId` when it is given. */
+  events: (params: { afterId?: number }) => Promise<InspectorEvent[]>;
+  /** The recent fetch timings, and their totals per store. */
+  ingest: () => Promise<IngestReport>;
+};
+
+/** What the app sends without being asked. */
+export type CellarEventMap = {
+  /** Events as they are recorded, batched. */
+  'cellar:events': { events: InspectorEvent[] };
+};
+
+export type { IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };
