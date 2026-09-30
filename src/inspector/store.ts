@@ -178,6 +178,7 @@ export interface RunningStore {
 }
 
 const DEFAULT_LIMIT = 500;
+const CACHE_TOTALS_MS = 5000;
 const MAX_LIMIT = 10_000;
 const HEX_PREVIEW_BYTES = 64;
 
@@ -271,6 +272,20 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
 
   const tableOrder = new Map([...Object.keys(schema.columns), meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])].map((column, index) => [column, index]));
 
+  /** The caches' totals, estimated at most every {@linkcode CACHE_TOTALS_MS}, since a summary is asked for after every burst of writes. */
+  let totals: { at: number; value: InspectedSummary['caches'] } | undefined;
+  const cacheTotals = (): InspectedSummary['caches'] => {
+    if (totals && Date.now() - totals.at < CACHE_TOTALS_MS) return totals.value;
+    const list = inspectedCaches(source.name, { heap: true });
+    const value = {
+      count: list.length,
+      entries: list.reduce((sum, cache) => sum + cache.entries, 0),
+      heapBytes: list.reduce((sum, cache) => sum + (cache.heapBytes ?? 0), 0),
+    };
+    totals = { at: Date.now(), value };
+    return value;
+  };
+
   const unboundResult = (offset: number): InspectedQueryResult => ({ columns: [], rows: [], truncated: false, offset, durationMs: 0 });
 
   return {
@@ -289,12 +304,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
     summary: async () => {
       const binding = source.binding();
       const running = source.running();
-      const cacheList = inspectedCaches(source.name, { heap: true });
-      const caches = {
-        count: cacheList.length,
-        entries: cacheList.reduce((sum, cache) => sum + cache.entries, 0),
-        heapBytes: cacheList.reduce((sum, cache) => sum + (cache.heapBytes ?? 0), 0),
-      };
+      const caches = cacheTotals();
       if (!running) return { binding, rows: 0, partitions: 0, caches };
       const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
       const keys = new Set([...counts.keys(), ...records.keys()]);
