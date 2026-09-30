@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { defineSqliteStore } from '@sleeperhq/react-native-cellar';
+import { byPartition, defineSqliteStore } from '@sleeperhq/react-native-cellar';
 import type { Loose, StoreTableSchema } from '@sleeperhq/react-native-cellar';
 import { bindSqlJsStore } from '@sleeperhq/react-native-cellar/sqljs';
 import type { SqlJsModule } from '@sleeperhq/react-native-cellar/sqljs';
@@ -57,3 +57,23 @@ export const NFL_GAMES: Game[] = [
   { team: 'BUF', sport: 'nfl', score: 24 },
   { team: 'MIA', sport: 'nfl', score: null },
 ];
+
+/** A store with one `byPartition` cache of each season's teams, filled by `teamsOf`. */
+export async function cachedStore(name: string) {
+  const store = defineSqliteStore({
+    name,
+    schema: SCHEMA,
+    partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+    build: (cellar) => {
+      const { teams } = cellar.defineCaches({ teams: byPartition<string[]>({ max: 8 }) });
+      return {
+        reads: {},
+        lifecycle: {
+          teamsOf: (season: Season, names: string[]) => teams.for(cellar.keyOf(season)).read(() => names),
+        },
+      };
+    },
+  });
+  bindSqlJsStore(name, await loadSqlJs(), store);
+  return store;
+}

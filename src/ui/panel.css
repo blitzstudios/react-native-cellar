@@ -1048,3 +1048,38 @@ h4 {
   height: 100%;
   background: var(--accent);
 }
+
+/* Cache contents */
+
+.toolbar.compact {
+  padding: 4px 0 6px;
+  border-bottom: 0;
+}
+
+.cache-entries-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1.4fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.entries-table {
+  background: var(--bg);
+}
+
+.key-part {
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+}
+
+.entry-value .json {
+  max-height: 420px;
+}
+
+tfoot td {
+  font-weight: 600;
+  border-top: 1px solid var(--line-strong);
+  padding: 4px 10px;
+}

@@ -6,7 +6,7 @@ and last fetch, read-only SQL over a store's live database that re-runs as the s
 the stores do — writes, fetches, moves between databases and degradation reports. The same view is open to
 agents (Cursor, Claude, the Rozenite CLI) as tools.
 
-It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.10 or
+It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.12 or
 later. Nothing it does changes a store's rows: a query that would write is refused, and its only actions are
 refetching a partition and clearing its ETag, which a store does on its own anyway.
 
@@ -26,7 +26,7 @@ refetching a partition and clearing its ETag, which a store does on its own anyw
    `dependencies` and `devDependencies`):
 
    ```json
-   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.2-gitpkg"
+   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.3-gitpkg"
    ```
 
 3. The hook, once, near the app's root. A release build gets a hook that does nothing, and the rest of the plugin
@@ -60,8 +60,9 @@ Then start Metro with `WITH_ROZENITE=true`, open React Native DevTools (`j` in M
 - **Activity** — what the store did, newest first, filterable by kind and by partition, entity id or scope, with
   pause.
 - **Caches** — the values the store keeps on the JS heap, per partition or per entity: entries against the limit,
-  hit rate, stale and absent misses, evictions, evicted keys read again (what a larger cache would have answered),
-  builds and `isEqual` reuses, with a cache that never hits or is too small called out.
+  an estimate of the heap they hold, hit rate, stale and absent misses, evictions, evicted keys read again (what a
+  larger cache would have answered), builds and `isEqual` reuses, with a cache that never hits or is too small called
+  out. A cache opens to its entries, newest first: each key, version, heap estimate and value.
 - **Schema** — the table as declared (columns, primary key, entity column, indexes, reads) and the `CREATE`
   statements SQLite stored for it.
 
@@ -78,7 +79,8 @@ Registered under `@sleeperhq/rozenite-plugin-cellar` while the hook is mounted:
 | `list-partitions` | a store's partitions, optionally matching a key, with rows, version, ETag and last fetch |
 | `query` | one read-only statement over a store's live database, a page at a time |
 | `entity-changes` | the entities a partition changed lately, with the version each changed at |
-| `list-caches` | the stores' caches with their entries, hits, misses, evictions and builds |
+| `list-caches` | the stores' caches with their entries, heap estimate, hits, misses, evictions and builds |
+| `cache-entries` | a page of one cache's entries: key, version, heap estimate and value |
 | `recent-events` | recent writes, binding moves, fetches and degradation reports, filterable by store and kind |
 | `ingest-timings` | the latest fetches with request and write time, and totals per store |
 | `refetch-partition` | fetches a partition again |

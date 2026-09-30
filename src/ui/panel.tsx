@@ -2,7 +2,7 @@ import './panel.css';
 import { useEffect, useMemo, useState } from 'react';
 import type { StoreOverview } from '../shared/protocol';
 import { ActivityView } from './activity_view';
-import { CachesView } from './caches_view';
+import { CachesView, heapLabel } from './caches_view';
 import { Empty, StateBadge } from './components';
 import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
 import { Overview } from './overview';
@@ -81,17 +81,11 @@ export default function CellarPanel() {
 
       <main className="main">
         {state !== 'connected' && !stores.length ? (
-          <Empty title={state === 'connecting' ? 'Connecting to the app…' : 'Waiting for the app'}>
-            <p>{problem ?? 'Open the app with Rozenite enabled.'}</p>
-            <p>
-              The app calls <code>useCellarDevTools()</code> from <code>@sleeperhq/rozenite-plugin-cellar</code> once, near its root, in a development build.
-            </p>
-          </Empty>
+          <Empty title={state === 'connecting' ? 'Connecting…' : 'Waiting for the app'}>{problem ? <p>{problem}</p> : null}</Empty>
         ) : !store && view === 'activity' ? (
           <div className="store">
             <header className="store-header">
               <h2>Activity</h2>
-              <span className="muted">what every store did, newest first</span>
             </header>
             <ActivityView events={events} />
           </div>
@@ -104,7 +98,8 @@ export default function CellarPanel() {
               <StateBadge state={store.summary.binding.state} />
               <span className="muted">
                 <code>{store.schema.table}</code> · {formatCount(store.summary.rows)} rows · {formatCount(store.summary.partitions)} partitions
-                {store.summary.databaseBytes !== undefined ? ` · ${formatBytes(store.summary.databaseBytes)}` : ''}
+                {store.summary.databaseBytes !== undefined ? ` · ${formatBytes(store.summary.databaseBytes)} on disk` : ''}
+                {store.summary.caches?.count ? ` · ${heapLabel(store.summary.caches.heapBytes)} cache heap` : ''}
               </span>
             </header>
             <div className="tabs" role="tablist">

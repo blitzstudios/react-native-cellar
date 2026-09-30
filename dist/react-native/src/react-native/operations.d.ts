@@ -9,7 +9,7 @@ export declare const defaultInspector: CellarInspector;
 export declare function storeOf(inspector: CellarInspector, name: string): InspectedStore;
 export declare function listStores(inspector: CellarInspector): Promise<StoreOverview[]>;
 export declare function runQuery(inspector: CellarInspector, { store, sql, params, limit, offset }: QueryRequest): Promise<cellarInspector.InspectedQueryResult>;
-export declare function listCaches(inspector: CellarInspector, store?: string): cellarInspector.InspectedCache[];
+export declare function listCaches(inspector: CellarInspector, store?: string, heap?: boolean): cellarInspector.InspectedCache[];
 export declare function refetchPartition(inspector: CellarInspector, { store, key }: PartitionRef): boolean;
 export declare function clearPartitionEtag(inspector: CellarInspector, { store, key }: PartitionRef): void;
 export declare function ingestReport(inspector: CellarInspector): IngestReport;

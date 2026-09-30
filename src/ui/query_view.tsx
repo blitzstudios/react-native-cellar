@@ -281,11 +281,6 @@ export function QueryView({
             ) : null}
           </div>
         </div>
-      ) : !error ? (
-        <div className="muted pad">
-          Read-only: SELECT, WITH, VALUES, EXPLAIN and reading pragmas run against the store's live database. Every row carries{' '}
-          <code>partition_key</code>. Press ⌘↵ to run.
-        </div>
       ) : null}
     </div>
   );

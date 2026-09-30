@@ -101,7 +101,7 @@ export function PartitionsView({
       </div>
       {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
       {partitions && !partitions.length ? (
-        <Empty title="No partitions yet">Nothing has been fetched or written into this store this session, and its database holds no rows.</Empty>
+        <Empty title="No partitions" />
       ) : (
         <div className="table-scroll">
           <table className="table">
@@ -109,7 +109,7 @@ export function PartitionsView({
               <tr>
                 <SortHeader label="Partition" sortKey="key" sort={sort} onSort={onSort} />
                 <SortHeader label="Rows" sortKey="rows" sort={sort} onSort={onSort} align="right" />
-                <SortHeader label={shortEntity(store)} sortKey="entities" sort={sort} onSort={onSort} align="right" />
+                <SortHeader label="Entities" sortKey="entities" sort={sort} onSort={onSort} align="right" />
                 <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" />
                 <th>ETag</th>
                 <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} />
@@ -171,14 +171,14 @@ export function PartitionsView({
                           <div className="partition-detail">
                             <section>
                               <h4>Description</h4>
-                              {partition.partition === undefined ? <div className="muted">Not recorded.</div> : <JsonView value={partition.partition} />}
+                              {partition.partition === undefined ? <div className="muted">None</div> : <JsonView value={partition.partition} />}
                             </section>
                             <section>
                               <h4>Recent activity</h4>
                               <PartitionTimeline events={partitionEvents(events, store.name, partition.key)} />
                             </section>
                             <section>
-                              <h4>Recently changed {shortEntity(store).toLowerCase()}</h4>
+                              <h4>Recently changed entities</h4>
                               <EntityChanges rpc={rpc} store={store} partitionKey={partition.key} version={partition.version} />
                             </section>
                           </div>
@@ -197,7 +197,7 @@ export function PartitionsView({
 }
 
 function PartitionTimeline({ events }: { events: InspectorEvent[] }) {
-  if (!events.length) return <div className="muted">No writes or fetches since the app started recording.</div>;
+  if (!events.length) return <div className="muted">None</div>;
   return (
     <ul className="timeline">
       {events.map((event) => (
@@ -219,12 +219,6 @@ function PartitionTimeline({ events }: { events: InspectorEvent[] }) {
   );
 }
 
-/** The entity column's name as a heading, such as `player_id` → `Players`. */
-function shortEntity(store: StoreOverview): string {
-  const name = store.schema.entityColumn.replace(/_id$/, '');
-  return `${name.charAt(0).toUpperCase()}${name.slice(1)}s`;
-}
-
 /** The entities a partition changed since its epoch, newest first, read again whenever its version moves. */
 function EntityChanges({ rpc, store, partitionKey, version }: { rpc: CellarRpc | null; store: StoreOverview; partitionKey: string; version: number }) {
   const [changes, setChanges] = useState<InspectedEntityChanges>();
@@ -238,13 +232,11 @@ function EntityChanges({ rpc, store, partitionKey, version }: { rpc: CellarRpc |
   }, [rpc, store.name, partitionKey, version]);
   if (error) return <div className="error-text">{error}</div>;
   if (!changes) return <div className="muted">Loading…</div>;
-  if (!changes.version) return <div className="muted">Not written this session.</div>;
+  if (!changes.version) return <div className="muted">Not written this session</div>;
   return (
     <div>
       <div className="muted small">
-        {changes.epoch === changes.version
-          ? `The last write (v${changes.version}) counted every entity as changed.`
-          : `${formatCount(changes.count)} changed since v${changes.epoch}, when every entity last counted as changed.`}
+        {changes.epoch === changes.version ? `all changed at v${changes.version}` : `${formatCount(changes.count)} changed since v${changes.epoch}`}
       </div>
       {changes.changed.length ? (
         <div className="entities">

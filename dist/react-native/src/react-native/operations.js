@@ -15,8 +15,8 @@ export async function listStores(inspector) {
 export function runQuery(inspector, { store, sql, params, limit, offset }) {
     return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
 }
-export function listCaches(inspector, store) {
-    return store ? storeOf(inspector, store).caches() : inspector.inspectedCaches();
+export function listCaches(inspector, store, heap = false) {
+    return store ? storeOf(inspector, store).caches({ heap }) : inspector.inspectedCaches(undefined, { heap });
 }
 export function refetchPartition(inspector, { store, key }) {
     return storeOf(inspector, store).refetch(key);

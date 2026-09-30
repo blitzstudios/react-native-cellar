@@ -45,16 +45,16 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
             <code>{schema.entityColumn}</code>
           </dd>
           <dt>Primary key</dt>
-          <dd className="chips">{schema.primaryKey.length ? schema.primaryKey.map((column) => <code key={column}>{column}</code>) : <span className="muted">none: rows repeat</span>}</dd>
+          <dd className="chips">{schema.primaryKey.length ? schema.primaryKey.map((column) => <code key={column}>{column}</code>) : <span className="muted">none</span>}</dd>
           <dt>Writes rows</dt>
-          <dd>{schema.nativeShred ? 'with the native shredder' : 'in JS'}</dd>
+          <dd>{schema.nativeShred ? 'native shredder' : 'JS'}</dd>
           <dt>Database</dt>
           <dd>
             {summary.binding.database ? <code>{summary.binding.database}</code> : <span className="muted">unnamed</span>} · since {formatAgo(summary.binding.since, now)}
             {summary.binding.reopens ? ` · reopened ${summary.binding.reopens}×` : ''}
           </dd>
           <dt>Reads</dt>
-          <dd className="chips">{schema.reads.length ? schema.reads.map((read) => <code key={read}>{read}</code>) : <span className="muted">none built yet</span>}</dd>
+          <dd className="chips">{schema.reads.length ? schema.reads.map((read) => <code key={read}>{read}</code>) : <span className="muted">none</span>}</dd>
         </dl>
       </section>
       <section>
@@ -106,7 +106,6 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
       </section>
       <section>
         <h4>CREATE statements</h4>
-        <p className="muted small">The SQL SQLite stored when Cellar created the store's tables and indexes, from {master}.</p>
         {error ? <ErrorBanner message={error} /> : null}
         {definitions?.map((definition) => (
           <pre key={definition.name} className="json">

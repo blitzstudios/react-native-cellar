@@ -79,7 +79,29 @@ export const cellarAgentTools = {
     name: 'list-caches',
     description:
       "List the stores' caches (values kept on the JS heap, per partition or per entity) with their entries against their limit, hits, misses (stale after a write, or absent), evictions, re-reads of evicted keys (what a larger cache would have answered), builds and isEqual reuses. Development builds only.",
-    inputSchema: { type: 'object', properties: { store: { type: 'string', description: "Only this store's caches." } } },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        store: { type: 'string', description: "Only this store's caches." },
+        heap: { type: 'boolean', description: 'Also estimate what each cache holds on the JS heap, in bytes.' },
+      },
+    },
+    readOnly: true,
+  },
+  cacheEntries: {
+    name: 'cache-entries',
+    description:
+      "A page of one cache's entries, most recently used first: each entry's key parts (partition, then entity and any others), the version it was built at, its estimated heap bytes, and its value previewed ($type marks Maps, Sets, class instances and cut-off values).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        store: STORE,
+        cache: { type: 'string', description: "The cache's name within its store, from list-caches (its `cache` field)." },
+        offset: { type: 'number', description: 'How many entries to skip.' },
+        limit: { type: 'number', description: 'The most entries to return; 50 by default, at most 500.' },
+      },
+      required: ['store', 'cache'],
+    },
     readOnly: true,
   },
   recentEvents: {
@@ -132,7 +154,9 @@ export const agentToolHandlers = (inspector: CellarInspector) => ({
   },
   query: (request: QueryRequest) => runQuery(inspector, request),
   entityChanges: async ({ store, key, limit }: PartitionRef & { limit?: number }) => storeOf(inspector, store).entityChanges(key, limit),
-  listCaches: async ({ store }: { store?: string }) => ({ caches: listCaches(inspector, store) }),
+  listCaches: async ({ store, heap }: { store?: string; heap?: boolean }) => ({ caches: listCaches(inspector, store, heap) }),
+  cacheEntries: async ({ store, cache, offset, limit }: { store: string; cache: string; offset?: number; limit?: number }) =>
+    storeOf(inspector, store).cacheEntries(cache, { offset, limit }),
   recentEvents: async ({ store, kinds, limit = 100 }: { store?: string; kinds?: InspectorEvent['kind'][]; limit?: number }) => ({
     events: filterEvents(inspector.recentInspectorEvents(), { store, kinds, limit }),
   }),

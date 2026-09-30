@@ -22,6 +22,11 @@ function useCellarAgentTools(inspector = operations_1.defaultInspector) {
     (0, agent_bridge_1.useRozenitePluginAgentTool)({ pluginId: protocol_1.PLUGIN_ID, tool: agent_tool_contracts_1.cellarAgentTools.listCaches, handler: handlers.listCaches });
     (0, agent_bridge_1.useRozenitePluginAgentTool)({
         pluginId: protocol_1.PLUGIN_ID,
+        tool: agent_tool_contracts_1.cellarAgentTools.cacheEntries,
+        handler: handlers.cacheEntries,
+    });
+    (0, agent_bridge_1.useRozenitePluginAgentTool)({
+        pluginId: protocol_1.PLUGIN_ID,
         tool: agent_tool_contracts_1.cellarAgentTools.recentEvents,
         handler: handlers.recentEvents,
     });
