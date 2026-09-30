@@ -1,10 +1,12 @@
 /** The panel's connection to the app: the RPC calls, the store list, and the event log as it grows. */
 
 import { createRozeniteRpc, isHandlerError, isProtocolError, useRozeniteDevToolsClient } from '@rozenite/plugin-bridge';
-import type { RozeniteDevToolsClient, RozeniteRpc } from '@rozenite/plugin-bridge';
+import type { RozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PLUGIN_ID } from '../shared/protocol';
-import type { CellarEventMap, CellarMethods, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { CellarEventMap, InspectorEvent, StoreOverview } from '../shared/protocol';
+import { parsingRpc } from '../shared/wire';
+import type { CellarRpc, CellarWireMethods } from '../shared/wire';
 
 /** How many events the panel keeps; the app keeps fewer, so this is room for a long session in the panel. */
 export const PANEL_EVENT_CAPACITY = 5000;
@@ -15,7 +17,7 @@ const RETRY_MS = 2000;
 
 export type ConnectionState = 'connecting' | 'connected' | 'unavailable';
 
-export type CellarRpc = RozeniteRpc<CellarMethods>;
+export type { CellarRpc };
 
 export interface CellarConnection {
   state: ConnectionState;
@@ -51,8 +53,9 @@ export function mergeEvents(events: readonly InspectorEvent[], incoming: readonl
 
 export function useCellarConnection(): CellarConnection {
   const client = useRozeniteDevToolsClient<CellarEventMap>({ pluginId: PLUGIN_ID });
-  const rpc = useMemo(() => (client ? createRozeniteRpc<CellarMethods>(client as unknown as RozeniteDevToolsClient) : null), [client]);
-  useEffect(() => () => rpc?.close(), [rpc]);
+  const wire = useMemo(() => (client ? createRozeniteRpc<CellarWireMethods>(client as unknown as RozeniteDevToolsClient) : null), [client]);
+  useEffect(() => () => wire?.close(), [wire]);
+  const rpc = useMemo(() => (wire ? parsingRpc(wire) : null), [wire]);
 
   const [state, setState] = useState<ConnectionState>('connecting');
   const [problem, setProblem] = useState<string>();
@@ -117,7 +120,8 @@ export function useCellarConnection(): CellarConnection {
 
   useEffect(() => {
     if (!client) return;
-    const subscription = client.onMessage('cellar:events', ({ events: incoming }) => {
+    const subscription = client.onMessage('cellar:events', ({ json }) => {
+      const incoming = JSON.parse(json) as InspectorEvent[];
       setEvents((current) => mergeEvents(current, incoming));
       if (incoming.some((event) => event.kind !== 'degradation')) scheduleRefresh(incoming.some((event) => event.kind === 'binding'));
     });
