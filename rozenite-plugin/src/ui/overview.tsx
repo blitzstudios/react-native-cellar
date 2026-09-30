@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { Empty, ErrorBanner, StateBadge, Stat } from './components';
+import { heapLabel } from './caches_view';
 import { Degradations } from './degradations';
 import { formatAgo, formatBytes, formatCount, formatMs, shortStoreName } from './format';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
@@ -50,8 +51,13 @@ export function Overview({
 
   const fetchStats = useMemo(() => fetchStatsOf(timings ?? []), [timings]);
   const totals = stores.reduce(
-    (sum, store) => ({ rows: sum.rows + store.summary.rows, partitions: sum.partitions + store.summary.partitions, bytes: sum.bytes + (store.summary.databaseBytes ?? 0) }),
-    { rows: 0, partitions: 0, bytes: 0 },
+    (sum, store) => ({
+      rows: sum.rows + store.summary.rows,
+      partitions: sum.partitions + store.summary.partitions,
+      bytes: sum.bytes + (store.summary.databaseBytes ?? 0),
+      heap: sum.heap + (store.summary.caches?.heapBytes ?? 0),
+    }),
+    { rows: 0, partitions: 0, bytes: 0, heap: 0 },
   );
   const offDatabase = stores.filter((store) => store.summary.binding.state !== 'database');
 
@@ -61,8 +67,9 @@ export function Overview({
         <Stat label="stores" value={formatCount(stores.length)} />
         <Stat label="rows" value={formatCount(totals.rows)} />
         <Stat label="partitions" value={formatCount(totals.partitions)} />
-        <Stat label="on disk" value={formatBytes(totals.bytes)} title="The stores' own databases, added up" />
-        <Stat label="off their database" value={formatCount(offDatabase.length)} title="Stores on the in-memory fallback or unbound" />
+        <Stat label="on disk" value={formatBytes(totals.bytes)} />
+        <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold" />
+        <Stat label="off their database" value={formatCount(offDatabase.length)} />
       </div>
 
       {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
@@ -77,7 +84,8 @@ export function Overview({
                 <th>Runs on</th>
                 <th className="num">Rows</th>
                 <th className="num">Partitions</th>
-                <th className="num">Size</th>
+                <th className="num">On disk</th>
+                <th className="num">Cache heap</th>
                 <th className="num">Writes / min</th>
                 <th>Last write</th>
               </tr>
@@ -96,6 +104,9 @@ export function Overview({
                     <td className="num">{formatCount(store.summary.rows)}</td>
                     <td className="num">{formatCount(store.summary.partitions)}</td>
                     <td className="num">{formatBytes(store.summary.databaseBytes)}</td>
+                    <td className="num" title={`${formatCount(store.summary.caches?.entries ?? 0)} entries in ${store.summary.caches?.count ?? 0} caches`}>
+                      {heapLabel(store.summary.caches?.heapBytes)}
+                    </td>
                     <td className="num">{recent?.writesLastMinute ?? 0}</td>
                     <td>{formatAgo(recent?.lastWrite, now)}</td>
                   </tr>
@@ -104,16 +115,12 @@ export function Overview({
             </tbody>
           </table>
         ) : (
-          <Empty title="No stores declared">The app hasn't declared any Cellar stores yet, or declares them in modules that haven't loaded.</Empty>
+          <Empty title="No stores" />
         )}
       </section>
 
       <section>
-        <h3>Fetches by store</h3>
-        <p className="muted">
-          The latest 128 partition fetches. Each splits into the request and writing its rows, which tells a slow network from a slow write; the averages are
-          per fetch, the totals over all of them.
-        </p>
+        <h3>Fetches <span className="muted small">latest 128</span></h3>
         {fetchStats.length ? (
           <table className="table">
             <thead>
@@ -148,7 +155,7 @@ export function Overview({
             </tbody>
           </table>
         ) : (
-          <div className="muted">No fetches recorded yet.</div>
+          <div className="muted">None</div>
         )}
       </section>
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerCellarHandlers } from '../react-native/handlers';
 import { PLUGIN_ID } from '../shared/protocol';
 import type { CellarEventMap, CellarMethods } from '../shared/protocol';
-import { NBA, NFL, NFL_GAMES, gamesStore } from './fixtures';
+import { NBA, NFL, NFL_GAMES, cachedStore, gamesStore } from './fixtures';
 
 async function connect() {
   const { device, panel } = connectFakePair();
@@ -93,6 +93,17 @@ describe('the calls the panel makes', () => {
     await gamesStore('protocol_caches_store');
     expect(await session.rpc.method('caches').invoke({ store: 'protocol_caches_store' })).toEqual([]);
     expect(Array.isArray(await session.rpc.method('caches').invoke({}))).toBe(true);
+  });
+
+  it("reads a cache's heap and its entries, newest first", async () => {
+    const store = await cachedStore('protocol_cached_store');
+    store.lifecycle.teamsOf(NFL, ['KC', 'BUF']);
+    store.lifecycle.teamsOf(NBA, ['BOS']);
+    const [cache] = await session.rpc.method('caches').invoke({ store: 'protocol_cached_store', heap: true });
+    expect(cache).toMatchObject({ cache: 'teams', entries: 2, heapPartial: false });
+    expect(cache.heapBytes).toBeGreaterThan(0);
+    const page = await session.rpc.method('cacheEntries').invoke({ store: 'protocol_cached_store', cache: 'teams' });
+    expect(page).toMatchObject({ total: 2, entries: [{ key: ['nba:2026'], value: ['BOS'] }, { key: ['nfl:2026'], value: ['KC', 'BUF'] }] });
   });
 
   it("sends a refused write back as the handler's error", async () => {

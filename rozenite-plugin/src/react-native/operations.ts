@@ -28,8 +28,8 @@ export function runQuery(inspector: CellarInspector, { store, sql, params, limit
   return storeOf(inspector, store).query(sql, params ?? [], { limit, offset });
 }
 
-export function listCaches(inspector: CellarInspector, store?: string) {
-  return store ? storeOf(inspector, store).caches() : inspector.inspectedCaches();
+export function listCaches(inspector: CellarInspector, store?: string, heap = false) {
+  return store ? storeOf(inspector, store).caches({ heap }) : inspector.inspectedCaches(undefined, { heap });
 }
 
 export function refetchPartition(inspector: CellarInspector, { store, key }: PartitionRef): boolean {

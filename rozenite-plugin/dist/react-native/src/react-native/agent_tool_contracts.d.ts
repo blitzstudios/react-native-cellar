@@ -124,7 +124,38 @@ export declare const cellarAgentTools: {
                     type: string;
                     description: string;
                 };
+                heap: {
+                    type: string;
+                    description: string;
+                };
             };
+        };
+        readOnly: true;
+    };
+    cacheEntries: {
+        name: string;
+        description: string;
+        inputSchema: {
+            type: string;
+            properties: {
+                store: {
+                    readonly type: "string";
+                    readonly description: "The store name, from list-stores, such as \"player_stats_store\".";
+                };
+                cache: {
+                    type: string;
+                    description: string;
+                };
+                offset: {
+                    type: string;
+                    description: string;
+                };
+                limit: {
+                    type: string;
+                    description: string;
+                };
+            };
+            required: string[];
         };
         readOnly: true;
     };
@@ -214,6 +245,11 @@ export declare const agentToolHandlers: (inspector: CellarInspector) => {
             rows: number;
             partitions: number;
             databaseBytes?: number;
+            caches: {
+                count: number;
+                entries: number;
+                heapBytes: number;
+            };
             name: string;
             table: string;
         }[];
@@ -247,11 +283,18 @@ export declare const agentToolHandlers: (inspector: CellarInspector) => {
     entityChanges: ({ store, key, limit }: PartitionRef & {
         limit?: number;
     }) => Promise<import("@sleeperhq/react-native-cellar/inspector").InspectedEntityChanges>;
-    listCaches: ({ store }: {
+    listCaches: ({ store, heap }: {
         store?: string;
+        heap?: boolean;
     }) => Promise<{
         caches: import("@sleeperhq/react-native-cellar/inspector").InspectedCache[];
     }>;
+    cacheEntries: ({ store, cache, offset, limit }: {
+        store: string;
+        cache: string;
+        offset?: number;
+        limit?: number;
+    }) => Promise<import("@sleeperhq/react-native-cellar/inspector").InspectedCacheEntries>;
     recentEvents: ({ store, kinds, limit }: {
         store?: string;
         kinds?: InspectorEvent["kind"][];

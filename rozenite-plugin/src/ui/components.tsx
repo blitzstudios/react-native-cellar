@@ -7,9 +7,9 @@ type BindingState = InspectedSummary['binding']['state'];
 
 const STATE_LABEL: Record<BindingState, string> = { database: 'database', memory: 'in memory', unbound: 'unbound' };
 const STATE_TITLE: Record<BindingState, string> = {
-  database: 'Running on its own database',
-  memory: 'Running on the in-memory fallback: its database kept failing, or it was asked to run in memory',
-  unbound: 'Running on nothing: every read is empty until a retry binds it',
+  database: 'Its own database',
+  memory: 'In-memory fallback',
+  unbound: 'Unbound: reads are empty',
 };
 
 export function StateBadge({ state }: { state: BindingState }) {

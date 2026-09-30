@@ -1181,7 +1181,7 @@ __metadata:
     vite: "npm:^7.3.1"
     vitest: "npm:^3.2.4"
   peerDependencies:
-    "@sleeperhq/react-native-cellar": ">=1.2.10"
+    "@sleeperhq/react-native-cellar": ">=1.2.12"
     react: ">=18"
     react-native: ">=0.76"
   languageName: unknown

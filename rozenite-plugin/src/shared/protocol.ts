@@ -5,6 +5,7 @@
 
 import type {
   InspectedCache,
+  InspectedCacheEntries,
   InspectedEntityChanges,
   IngestRollup,
   IngestTiming,
@@ -57,7 +58,9 @@ export type CellarMethods = {
   /** A partition's recently changed entities. */
   entityChanges: (params: PartitionRef & { limit?: number }) => Promise<InspectedEntityChanges>;
   /** A store's caches, or every store's, with what each has done. */
-  caches: (params: { store?: string }) => Promise<InspectedCache[]>;
+  caches: (params: { store?: string; heap?: boolean }) => Promise<InspectedCache[]>;
+  /** A page of one cache's entries, most recently used first. */
+  cacheEntries: (params: { store: string; cache: string; offset?: number; limit?: number }) => Promise<InspectedCacheEntries>;
   /** One read-only statement over a store's database. */
   query: (params: QueryRequest) => Promise<InspectedQueryResult>;
   /** Fetches a partition again; false for a store that doesn't fetch. */
@@ -76,4 +79,4 @@ export type CellarEventMap = {
   'cellar:events': { events: InspectorEvent[] };
 };
 
-export type { InspectedCache, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };
+export type { InspectedCache, InspectedCacheEntries, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };

@@ -89,13 +89,15 @@ export function Callsite({ stack, kind }: { stack: string; kind?: 'component' | 
 
   if (!frames) return <div className="muted">Resolving the callsite…</div>;
   if (!frames.length) return <pre className="json">{stack.trim()}</pre>;
-  const shown = showLibrary ? frames : frames.filter((frame) => !frame.library);
+  const appFrames = frames.filter((frame) => !frame.library);
+  const shown = showLibrary ? frames : appFrames;
   const hidden = frames.length - shown.length;
   return (
     <div className="callsite">
       <div className="muted">{kind === 'component' ? 'Rendered by' : 'Called from'}</div>
+      {!appFrames.length && !showLibrary ? <div className="muted">No app code on the stack</div> : null}
       <ol className="frames">
-        {(shown.length ? shown : frames).map((frame, index) => (
+        {shown.map((frame, index) => (
           <li key={index} className={frame.library ? 'frame frame-library' : 'frame'}>
             <code className="frame-method">{frame.method}</code>
             <span className="frame-file" title={frame.file}>

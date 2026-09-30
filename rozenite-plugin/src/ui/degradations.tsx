@@ -46,8 +46,8 @@ function FirstAppFrame({ stack }: { stack?: string }) {
   const frames = useSymbolicated(stack);
   if (!stack) return <span className="muted">—</span>;
   if (!frames) return <span className="muted">…</span>;
-  const frame = frames.find((candidate) => !candidate.library) ?? frames[0];
-  if (!frame) return <span className="muted">—</span>;
+  const frame = frames.find((candidate) => !candidate.library);
+  if (!frame) return <span className="muted">no app code</span>;
   return (
     <span title={frame.file}>
       <code>{frame.method}</code> <span className="muted">{shortPath(frame.file)}:{frame.line}</span>
@@ -60,12 +60,7 @@ export function Degradations({ events, now, store }: { events: readonly Inspecto
   const [open, setOpen] = useState<string>();
   const groups = useMemo(() => groupDegradations(events).filter((group) => !store || store(group.scope)), [events, store]);
   if (!groups.length) {
-    return (
-      <Empty title="No degradations reported">
-        A degradation is a store losing a benefit it should have had: the native shredder, its own database, a cache that earns its heap, or a partition
-        sized to what its reads use.
-      </Empty>
-    );
+    return <Empty title="None" />;
   }
   return (
     <table className="table degradations-table">
@@ -113,7 +108,7 @@ export function Degradations({ events, now, store }: { events: readonly Inspecto
                       </div>
                       <div className="muted">{latest.context}</div>
                       {latest.error ? <pre className="json">{latest.error}</pre> : null}
-                      {latest.callsite ? <Callsite stack={latest.callsite} kind={latest.callsiteKind} /> : <div className="muted">No callsite recorded.</div>}
+                      {latest.callsite ? <Callsite stack={latest.callsite} kind={latest.callsiteKind} /> : null}
                     </div>
                   </td>
                 </tr>

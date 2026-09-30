@@ -19,6 +19,11 @@ export function useCellarAgentTools(inspector = defaultInspector) {
     useRozenitePluginAgentTool({ pluginId: PLUGIN_ID, tool: cellarAgentTools.listCaches, handler: handlers.listCaches });
     useRozenitePluginAgentTool({
         pluginId: PLUGIN_ID,
+        tool: cellarAgentTools.cacheEntries,
+        handler: handlers.cacheEntries,
+    });
+    useRozenitePluginAgentTool({
+        pluginId: PLUGIN_ID,
         tool: cellarAgentTools.recentEvents,
         handler: handlers.recentEvents,
     });

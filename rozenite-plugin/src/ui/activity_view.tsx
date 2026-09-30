@@ -82,11 +82,9 @@ export function ActivityView({ events, store }: { events: readonly InspectorEven
           Clear
         </button>
       </div>
-      {paused ? <div className="paused">Paused — {formatCount(events.length - paused.length)} newer events are waiting.</div> : null}
+      {paused ? <div className="paused">Paused · {formatCount(events.length - paused.length)} new</div> : null}
       {!shown.length ? (
-        <Empty title="Nothing yet">
-          Writes, fetches, moves between databases and degradation reports show up here as they happen. The app records them in development builds only.
-        </Empty>
+        <Empty title="No events" />
       ) : (
         <div className="table-scroll">
           <table className="table events">
