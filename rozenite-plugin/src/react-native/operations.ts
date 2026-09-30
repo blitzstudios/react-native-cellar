@@ -2,7 +2,7 @@
 
 import * as cellarInspector from '@sleeperhq/react-native-cellar/inspector';
 import type { InspectedStore, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
-import type { IngestReport, PartitionRef, QueryRequest, StoreOverview } from '../shared/protocol';
+import type { DatabaseDump, IngestReport, PartitionRef, QueryRequest, StoreOverview } from '../shared/protocol';
 
 /** The part of Cellar's inspector the plugin reads; a test hands in its own. */
 export type CellarInspector = Pick<
@@ -11,6 +11,16 @@ export type CellarInspector = Pick<
 >;
 
 export const defaultInspector: CellarInspector = cellarInspector;
+
+declare const require: (id: string) => { dumpSqliteStores: (options: { name?: string }) => Promise<DatabaseDump> };
+
+/** Writes the dump; loaded when first asked for, since only a device running nitro can. */
+export type DumpDatabases = () => Promise<DatabaseDump>;
+
+export const nitroDump =
+  (name?: string): DumpDatabases =>
+  () =>
+    require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores(name ? { name } : {});
 
 /** The store named `name`, or an error that lists the stores there are. */
 export function storeOf(inspector: CellarInspector, name: string): InspectedStore {

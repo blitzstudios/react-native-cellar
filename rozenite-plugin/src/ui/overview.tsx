@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { DatabaseDump, IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { Empty, ErrorBanner, StateBadge, Stat } from './components';
 import { heapLabel } from './caches_view';
 import { Degradations } from './degradations';
@@ -11,6 +11,8 @@ const MINUTE = 60_000;
 
 /** Every store at a glance, where the session's fetch time went, and what degraded. */
 export function Overview({
+  mode = 'live',
+  dumpBytes,
   rpc,
   stores,
   events,
@@ -25,10 +27,29 @@ export function Overview({
   /** What was cleared: degradations up to an event id, fetches up to a time. */
   cleared: OverviewCleared;
   onClear: (cleared: OverviewCleared) => void;
+  mode?: 'live' | 'dump';
+  /** The dump file's size, in dump mode. */
+  dumpBytes?: number;
 }) {
   const now = useNow();
   const [timings, setTimings] = useState<IngestTiming[]>();
   const [error, setError] = useState<string>();
+  const [dump, setDump] = useState<DatabaseDump>();
+  const [dumping, setDumping] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const dumpDatabases = async () => {
+    if (!rpc) return;
+    setDumping(true);
+    try {
+      setDump(await rpc.method('dump', { timeoutMs: 120_000 }).invoke());
+      setError(undefined);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setDumping(false);
+    }
+  };
 
   const loadRollup = useCallback(async () => {
     if (!rpc) return;
@@ -39,7 +60,7 @@ export function Overview({
     }
   }, [rpc]);
   const latestFetch = useLatestEventId(events, (event) => event.kind === 'fetch');
-  useThrottledEffect(loadRollup, `${latestFetch}:${rpc ? 1 : 0}`, 2000, !!rpc);
+  useThrottledEffect(loadRollup, `${latestFetch}:${rpc ? 1 : 0}`, 2000, !!rpc && mode === 'live');
 
   const activity = useMemo(() => {
     const byStore = new Map<string, { writesLastMinute: number; lastWrite?: number }>();
@@ -72,9 +93,40 @@ export function Overview({
         <Stat label="stores" value={formatCount(stores.length)} />
         <Stat label="rows" value={formatCount(totals.rows)} />
         <Stat label="partitions" value={formatCount(totals.partitions)} />
-        <Stat label="on disk" value={formatBytes(totals.bytes)} />
-        <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold" />
-        <Stat label="off their database" value={formatCount(offDatabase.length)} />
+        <Stat label={mode === 'dump' ? 'file' : 'on disk'} value={formatBytes(mode === 'dump' ? dumpBytes : totals.bytes)} />
+        {mode === 'live' ? (
+          <>
+            <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold, a shared object counted once" />
+            <Stat label="off their database" value={formatCount(offDatabase.length)} />
+          </>
+        ) : null}
+        {mode === 'live' ? (
+          <div className="dump-action">
+            <button type="button" className="button" onClick={dumpDatabases} disabled={!rpc || dumping}>
+              {dumping ? 'Dumping…' : 'Dump DB'}
+            </button>
+            {dump ? (
+              <div className="dump-result">
+                <code title={dump.path}>{dump.path}</code>
+                <span className="muted">
+                  {formatBytes(dump.bytes)} · {dump.tables.length} tables
+                </span>
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={() =>
+                    navigator.clipboard?.writeText(dump.path).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1200);
+                    })
+                  }
+                >
+                  {copied ? 'Copied' : 'Copy path'}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
@@ -86,13 +138,17 @@ export function Overview({
             <thead>
               <tr>
                 <th>Store</th>
-                <th>Runs on</th>
+                {mode === 'live' ? <th>Runs on</th> : null}
                 <th className="num">Rows</th>
                 <th className="num">Partitions</th>
-                <th className="num">On disk</th>
-                <th className="num">Cache heap</th>
-                <th className="num">Writes / min</th>
-                <th>Last write</th>
+                {mode === 'live' ? (
+                  <>
+                    <th className="num">On disk</th>
+                    <th className="num">Cache heap</th>
+                    <th className="num">Writes / min</th>
+                    <th>Last write</th>
+                  </>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -103,17 +159,23 @@ export function Overview({
                     <td>
                       <strong>{shortStoreName(store.name)}</strong> <span className="muted">{store.schema.table}</span>
                     </td>
-                    <td>
-                      <StateBadge state={store.summary.binding.state} /> {store.summary.binding.database ? <span className="muted">{store.summary.binding.database}</span> : null}
-                    </td>
+                    {mode === 'live' ? (
+                      <td>
+                        <StateBadge state={store.summary.binding.state} /> {store.summary.binding.database ? <span className="muted">{store.summary.binding.database}</span> : null}
+                      </td>
+                    ) : null}
                     <td className="num">{formatCount(store.summary.rows)}</td>
                     <td className="num">{formatCount(store.summary.partitions)}</td>
-                    <td className="num">{formatBytes(store.summary.databaseBytes)}</td>
-                    <td className="num" title={`${formatCount(store.summary.caches?.entries ?? 0)} entries in ${store.summary.caches?.count ?? 0} caches`}>
-                      {heapLabel(store.summary.caches?.heapBytes)}
-                    </td>
-                    <td className="num">{recent?.writesLastMinute ?? 0}</td>
-                    <td>{formatAgo(recent?.lastWrite, now)}</td>
+                    {mode === 'live' ? (
+                      <>
+                        <td className="num">{formatBytes(store.summary.databaseBytes)}</td>
+                        <td className="num" title={`${formatCount(store.summary.caches?.entries ?? 0)} entries in ${store.summary.caches?.count ?? 0} caches`}>
+                          {heapLabel(store.summary.caches?.heapBytes)}
+                        </td>
+                        <td className="num">{recent?.writesLastMinute ?? 0}</td>
+                        <td>{formatAgo(recent?.lastWrite, now)}</td>
+                      </>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -124,6 +186,8 @@ export function Overview({
         )}
       </section>
 
+      {mode === 'live' ? (
+        <>
       <section>
         <h3 className="section-head">
           Fetches <span className="muted small">latest 128</span>
@@ -182,6 +246,8 @@ export function Overview({
         </h3>
         <Degradations events={events} after={cleared.degradationsThrough} />
       </section>
+        </>
+      ) : null}
     </div>
   );
 }

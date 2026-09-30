@@ -126,6 +126,11 @@ exports.cellarAgentTools = {
         inputSchema: { type: 'object', properties: { store: { type: 'string', description: 'Only this store\'s fetches.' } } },
         readOnly: true,
     },
+    dumpDatabases: {
+        name: 'dump-databases',
+        description: "Copy every store's database into one SQLite file on the device and return its path (on a simulator, a path on this Mac, which sqlite3 can open directly), size and tables. Only rows are copied, not indexes. The file is replaced by the next dump.",
+        inputSchema: { type: 'object', properties: {} },
+    },
     refetchPartition: {
         name: 'refetch-partition',
         description: 'Fetch one partition again, sending its ETag, as the store would when it goes stale. Returns false for a store that does not fetch.',
@@ -139,7 +144,8 @@ exports.cellarAgentTools = {
         idempotent: true,
     },
 };
-const agentToolHandlers = (inspector) => ({
+const agentToolHandlers = (inspector, dump = (0, operations_1.nitroDump)()) => ({
+    dumpDatabases: () => dump(),
     listStores: async () => ({
         stores: (await (0, operations_1.listStores)(inspector)).map(({ name, schema, summary }) => ({ name, table: schema.table, ...summary })),
     }),

@@ -2,7 +2,7 @@
  * The tools an agent (Cursor, Claude, the Rozenite CLI) calls to look into the stores, and what each answers: the same
  * operations the panel's calls use. `useCellarAgentTools` registers them under the plugin's id.
  */
-import { clearPartitionEtag, filterEvents, listCaches, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import { clearPartitionEtag, filterEvents, listCaches, nitroDump, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
 const STORE = { type: 'string', description: 'The store name, from list-stores, such as "player_stats_store".' };
 const PARTITION_KEY = { type: 'string', description: 'The partition key, from list-partitions.' };
 const EVENT_KINDS = ['write', 'binding', 'fetch', 'degradation'];
@@ -123,6 +123,11 @@ export const cellarAgentTools = {
         inputSchema: { type: 'object', properties: { store: { type: 'string', description: 'Only this store\'s fetches.' } } },
         readOnly: true,
     },
+    dumpDatabases: {
+        name: 'dump-databases',
+        description: "Copy every store's database into one SQLite file on the device and return its path (on a simulator, a path on this Mac, which sqlite3 can open directly), size and tables. Only rows are copied, not indexes. The file is replaced by the next dump.",
+        inputSchema: { type: 'object', properties: {} },
+    },
     refetchPartition: {
         name: 'refetch-partition',
         description: 'Fetch one partition again, sending its ETag, as the store would when it goes stale. Returns false for a store that does not fetch.',
@@ -136,7 +141,8 @@ export const cellarAgentTools = {
         idempotent: true,
     },
 };
-export const agentToolHandlers = (inspector) => ({
+export const agentToolHandlers = (inspector, dump = nitroDump()) => ({
+    dumpDatabases: () => dump(),
     listStores: async () => ({
         stores: (await listStores(inspector)).map(({ name, schema, summary }) => ({ name, table: schema.table, ...summary })),
     }),

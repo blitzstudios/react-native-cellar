@@ -6,8 +6,8 @@
 import type { AgentTool } from '@rozenite/agent-bridge';
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 import type { PartitionRef, QueryRequest } from '../shared/protocol';
-import { clearPartitionEtag, filterEvents, listCaches, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
-import type { CellarInspector } from './operations';
+import { clearPartitionEtag, filterEvents, listCaches, nitroDump, ingestReport, listStores, refetchPartition, runQuery, storeOf } from './operations';
+import type { CellarInspector, DumpDatabases } from './operations';
 
 const STORE = { type: 'string', description: 'The store name, from list-stores, such as "player_stats_store".' } as const;
 const PARTITION_KEY = { type: 'string', description: 'The partition key, from list-partitions.' } as const;
@@ -140,6 +140,12 @@ export const cellarAgentTools = {
     inputSchema: { type: 'object', properties: { store: { type: 'string', description: 'Only this store\'s fetches.' } } },
     readOnly: true,
   },
+  dumpDatabases: {
+    name: 'dump-databases',
+    description:
+      "Copy every store's database into one SQLite file on the device and return its path (on a simulator, a path on this Mac, which sqlite3 can open directly), size and tables. Only rows are copied, not indexes. The file is replaced by the next dump.",
+    inputSchema: { type: 'object', properties: {} },
+  },
   refetchPartition: {
     name: 'refetch-partition',
     description: 'Fetch one partition again, sending its ETag, as the store would when it goes stale. Returns false for a store that does not fetch.',
@@ -154,7 +160,8 @@ export const cellarAgentTools = {
   },
 } satisfies Record<string, AgentTool>;
 
-export const agentToolHandlers = (inspector: CellarInspector) => ({
+export const agentToolHandlers = (inspector: CellarInspector, dump: DumpDatabases = nitroDump()) => ({
+  dumpDatabases: () => dump(),
   listStores: async () => ({
     stores: (await listStores(inspector)).map(({ name, schema, summary }) => ({ name, table: schema.table, ...summary })),
   }),

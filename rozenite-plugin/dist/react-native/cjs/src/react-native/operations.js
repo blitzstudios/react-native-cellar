@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.defaultInspector = void 0;
+exports.nitroDump = exports.defaultInspector = void 0;
 exports.storeOf = storeOf;
 exports.listStores = listStores;
 exports.runQuery = runQuery;
@@ -45,6 +45,8 @@ exports.ingestReport = ingestReport;
 exports.filterEvents = filterEvents;
 const cellarInspector = __importStar(require("@sleeperhq/react-native-cellar/inspector"));
 exports.defaultInspector = cellarInspector;
+const nitroDump = (name) => () => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores(name ? { name } : {});
+exports.nitroDump = nitroDump;
 /** The store named `name`, or an error that lists the stores there are. */
 function storeOf(inspector, name) {
     const store = inspector.inspectedStore(name);

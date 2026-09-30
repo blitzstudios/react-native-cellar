@@ -1140,3 +1140,52 @@ tfoot td {
   font: inherit;
   text-align: left;
 }
+
+/* Dumps */
+
+.file-button {
+  position: relative;
+  text-align: center;
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.connection-dump {
+  background: var(--violet-soft);
+  color: var(--violet);
+}
+
+.dump-name {
+  padding: 0 12px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dump-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.dump-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.dump-result code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}

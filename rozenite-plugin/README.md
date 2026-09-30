@@ -6,7 +6,7 @@ and last fetch, read-only SQL over a store's live database that re-runs as the s
 the stores do — writes, fetches, moves between databases and degradation reports. The same view is open to
 agents (Cursor, Claude, the Rozenite CLI) as tools.
 
-It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.15 or
+It reads everything through Cellar's `./inspector` entry, so it needs `@sleeperhq/react-native-cellar` 1.2.17 or
 later. Nothing it does changes a store's rows: a query that would write is refused, and its only actions are
 refetching a partition and clearing its ETag, which a store does on its own anyway.
 
@@ -26,7 +26,7 @@ refetching a partition and clearing its ETag, which a store does on its own anyw
    `dependencies` and `devDependencies`):
 
    ```json
-   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.7-gitpkg"
+   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.8-gitpkg"
    ```
 
 3. The hook, once, near the app's root. A release build gets a hook that does nothing, and the rest of the plugin
@@ -73,6 +73,21 @@ Then start Metro with `WITH_ROZENITE=true`, open React Native DevTools (`j` in M
 
 The app records events in development builds only, the latest 1000; the panel keeps the latest 5000 it has seen.
 
+## Database dumps
+
+**Dump DB** on the Overview copies every store's database into one SQLite file on the device (Cellar's
+`dumpSqliteStores`) and shows its path; on a simulator that is a path on your Mac. The `dump-databases` agent tool
+does the same. `useCellarDevTools({ dumpName })` names the file; the next dump replaces it.
+
+The same panel opens a dump without the app: in the browser, from a terminal,
+
+```sh
+node_modules/.bin/cellar-open-dump path/to/dump.db
+```
+
+or with **Open dump…** in the panel's sidebar. It shows the stores, partitions, entities, queries and schema the
+file holds; what lived only in the app's memory (activity, caches, fetches, degradations, versions) isn't there.
+
 ## Agent tools
 
 Registered under `@sleeperhq/rozenite-plugin-cellar` while the hook is mounted:
@@ -89,6 +104,7 @@ Registered under `@sleeperhq/rozenite-plugin-cellar` while the hook is mounted:
 | `cache-entries` | a page of one cache's entries: key, version, heap estimate and value |
 | `recent-events` | recent writes, binding moves, fetches and degradation reports, filterable by store and kind |
 | `ingest-timings` | the latest fetches with request and write time, and totals per store |
+| `dump-databases` | copies every store's database into one SQLite file on the device and returns its path |
 | `refetch-partition` | fetches a partition again |
 | `clear-etag` | deletes a partition's ETag, so its next fetch brings the whole body |
 

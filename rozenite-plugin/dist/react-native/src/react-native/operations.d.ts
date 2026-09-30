@@ -1,10 +1,13 @@
 /** What the app answers the panel and agents with, over Cellar's inspector. */
 import * as cellarInspector from '@sleeperhq/react-native-cellar/inspector';
 import type { InspectedStore, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
-import type { IngestReport, PartitionRef, QueryRequest, StoreOverview } from '../shared/protocol';
+import type { DatabaseDump, IngestReport, PartitionRef, QueryRequest, StoreOverview } from '../shared/protocol';
 /** The part of Cellar's inspector the plugin reads; a test hands in its own. */
 export type CellarInspector = Pick<typeof cellarInspector, 'inspectedStores' | 'inspectedStore' | 'inspectedCaches' | 'recentInspectorEvents' | 'onInspectorEvent' | 'getIngestTimings' | 'rollupIngestTimings'>;
 export declare const defaultInspector: CellarInspector;
+/** Writes the dump; loaded when first asked for, since only a device running nitro can. */
+export type DumpDatabases = () => Promise<DatabaseDump>;
+export declare const nitroDump: (name?: string) => DumpDatabases;
 /** The store named `name`, or an error that lists the stores there are. */
 export declare function storeOf(inspector: CellarInspector, name: string): InspectedStore;
 export declare function listStores(inspector: CellarInspector): Promise<StoreOverview[]>;

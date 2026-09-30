@@ -44,6 +44,15 @@ export interface QueryRequest {
   offset?: number;
 }
 
+/** A copy of every store's database in one SQLite file on the device: see Cellar's `dumpSqliteStores`. */
+export interface DatabaseDump {
+  name: string;
+  /** The file's path on the device; on a simulator, a path on the Mac. */
+  path: string;
+  bytes: number;
+  tables: Array<{ database: string; table: string; rows: number }>;
+}
+
 /** The recent fetches, and their totals per store. */
 export interface IngestReport {
   timings: IngestTiming[];
@@ -74,6 +83,8 @@ export type CellarMethods = {
   events: (params: { afterId?: number }) => Promise<InspectorEvent[]>;
   /** The recent fetch timings, and their totals per store. */
   ingest: () => Promise<IngestReport>;
+  /** Copies every store's database into one SQLite file on the device. */
+  dump: () => Promise<DatabaseDump>;
 };
 
 /** What the app sends without being asked. */

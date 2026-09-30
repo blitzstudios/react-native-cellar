@@ -5,8 +5,8 @@ import type { RozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 import type { CellarEventMap } from '../shared/protocol';
 import type { CellarWireMethods } from '../shared/wire';
-import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, refetchPartition, runQuery, storeOf } from './operations';
-import type { CellarInspector } from './operations';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, refetchPartition, runQuery, storeOf } from './operations';
+import type { CellarInspector, DumpDatabases } from './operations';
 
 /** How long events gather before they go to the panel in one message, in ms. */
 export const EVENT_FLUSH_MS = 100;
@@ -14,7 +14,11 @@ export const EVENT_FLUSH_MS = 100;
 export const EVENTS_PER_MESSAGE = 250;
 
 /** Wires `client` up to answer the panel, and returns a function that unwires it. */
-export function registerCellarHandlers(client: RozeniteDevToolsClient<CellarEventMap>, inspector: CellarInspector = defaultInspector): () => void {
+export function registerCellarHandlers(
+  client: RozeniteDevToolsClient<CellarEventMap>,
+  inspector: CellarInspector = defaultInspector,
+  dump: DumpDatabases = nitroDump(),
+): () => void {
   const rpc = createRozeniteRpc<CellarWireMethods>(client as unknown as RozeniteDevToolsClient);
   const json = async (result: unknown): Promise<string> => JSON.stringify((await result) ?? null);
   const subscriptions = [
@@ -29,6 +33,7 @@ export function registerCellarHandlers(client: RozeniteDevToolsClient<CellarEven
     rpc.handle('clearEtag', (params) => json(clearPartitionEtag(inspector, params))),
     rpc.handle('events', ({ afterId }) => json(inspector.recentInspectorEvents(afterId))),
     rpc.handle('ingest', () => json(ingestReport(inspector))),
+    rpc.handle('dump', () => json(dump())),
   ];
 
   let pending: InspectorEvent[] = [];

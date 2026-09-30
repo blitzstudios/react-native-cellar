@@ -4,7 +4,7 @@
  */
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 import type { PartitionRef, QueryRequest } from '../shared/protocol';
-import type { CellarInspector } from './operations';
+import type { CellarInspector, DumpDatabases } from './operations';
 export declare const cellarAgentTools: {
     listStores: {
         name: string;
@@ -222,6 +222,14 @@ export declare const cellarAgentTools: {
         };
         readOnly: true;
     };
+    dumpDatabases: {
+        name: string;
+        description: string;
+        inputSchema: {
+            type: string;
+            properties: {};
+        };
+    };
     refetchPartition: {
         name: string;
         description: string;
@@ -261,7 +269,8 @@ export declare const cellarAgentTools: {
         idempotent: true;
     };
 };
-export declare const agentToolHandlers: (inspector: CellarInspector) => {
+export declare const agentToolHandlers: (inspector: CellarInspector, dump?: DumpDatabases) => {
+    dumpDatabases: () => Promise<import("../shared/protocol").DatabaseDump>;
     listStores: () => Promise<{
         stores: {
             binding: import("@sleeperhq/react-native-cellar/inspector").InspectedBinding;
@@ -272,6 +281,7 @@ export declare const agentToolHandlers: (inspector: CellarInspector) => {
                 count: number;
                 entries: number;
                 heapBytes: number;
+                sharedBytes: number;
             };
             name: string;
             table: string;

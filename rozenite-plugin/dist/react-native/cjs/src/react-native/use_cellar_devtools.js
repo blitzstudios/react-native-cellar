@@ -11,8 +11,9 @@ const operations_1 = require("./operations");
  * Connects the app's Cellar stores to the Cellar DevTools panel and registers the Cellar agent tools. Call it once,
  * near the root of the app; a release build gets a hook that does nothing.
  */
-function useCellarDevTools() {
+function useCellarDevTools(options = {}) {
     const client = (0, plugin_bridge_1.useRozeniteDevToolsClient)({ pluginId: protocol_1.PLUGIN_ID });
-    (0, react_1.useEffect)(() => (client ? (0, handlers_1.registerCellarHandlers)(client, operations_1.defaultInspector) : undefined), [client]);
-    (0, agent_tools_1.useCellarAgentTools)(operations_1.defaultInspector);
+    const dump = (0, react_1.useMemo)(() => (0, operations_1.nitroDump)(options.dumpName), [options.dumpName]);
+    (0, react_1.useEffect)(() => (client ? (0, handlers_1.registerCellarHandlers)(client, operations_1.defaultInspector, dump) : undefined), [client, dump]);
+    (0, agent_tools_1.useCellarAgentTools)(operations_1.defaultInspector, dump);
 }
