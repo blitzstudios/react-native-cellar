@@ -12,6 +12,8 @@ import type { CellarRpc, CellarWireMethods } from '../shared/wire';
 export const PANEL_EVENT_CAPACITY = 5000;
 /** How often the store list is re-read while writes keep arriving, at most, in ms. */
 const STORE_REFRESH_MS = 2000;
+/** How often the store list is re-read without writes, while the panel is on screen, in ms. */
+const STORE_POLL_MS = 5000;
 /** How often the panel asks again while the app hasn't answered, in ms. */
 const RETRY_MS = 2000;
 
@@ -27,8 +29,6 @@ export interface CellarConnection {
   stores: StoreOverview[];
   /** Every event seen, oldest first. */
   events: InspectorEvent[];
-  /** Reads the store list again now. */
-  refreshStores: () => void;
 }
 
 /** A failed call's message, as the panel shows it. */
@@ -118,6 +118,16 @@ export function useCellarConnection(): CellarConnection {
   );
   useEffect(() => () => refreshTimer.current && clearTimeout(refreshTimer.current), []);
 
+  // Caches fill on reads, which send no event, so the totals are also re-read while the panel is on screen; that
+  // also brings the panel back once an app that stopped answering does again.
+  useEffect(() => {
+    if (!rpc) return undefined;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') scheduleRefresh();
+    }, STORE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [rpc, scheduleRefresh]);
+
   useEffect(() => {
     if (!client) return;
     const subscription = client.onMessage('cellar:events', ({ json }) => {
@@ -128,7 +138,7 @@ export function useCellarConnection(): CellarConnection {
     return () => subscription.remove();
   }, [client, scheduleRefresh]);
 
-  return { state, problem, rpc, stores, events, refreshStores: () => scheduleRefresh(true) };
+  return { state, problem, rpc, stores, events };
 }
 
 /** The current time, ticking every `intervalMs`, for relative times that keep up. */

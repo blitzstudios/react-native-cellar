@@ -1,12 +1,22 @@
 import { getRozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import { RozeniteChannelProvider, connectFakePair } from '@rozenite/testing';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import type { SqlJsStatic } from 'sql.js';
+import { afterEach, expect, it, vi } from 'vitest';
 import { registerCellarHandlers } from '../react-native/handlers';
 import { PLUGIN_ID } from '../shared/protocol';
 import type { CellarEventMap } from '../shared/protocol';
 import CellarPanel from '../ui/panel';
-import { NBA, NFL, NFL_GAMES, gamesStore } from './fixtures';
+import { NBA, NFL, NFL_GAMES, gamesStore, loadSqlJs } from './fixtures';
+
+vi.mock('sql.js/dist/sql-wasm.wasm?url', async () => {
+  const { createRequire } = await import('node:module');
+  const path = await import('node:path');
+  return { default: path.join(path.dirname(createRequire(import.meta.url).resolve('sql.js')), 'sql-wasm.wasm') };
+});
+
+/** A picked file; jsdom's File has no arrayBuffer(). */
+const fileOf = (bytes: Uint8Array, name: string) => Object.assign(new File([bytes as BlobPart], name), { arrayBuffer: async () => bytes.slice().buffer });
 
 const closers: Array<() => void> = [];
 
@@ -104,6 +114,42 @@ it('lists one partition’s entities at a time, and moves to another partition u
   await waitFor(() => expect(partition.value).toBe('nba:2026'));
   await waitFor(() => expect(screen.queryByText('KC')).toBeNull());
   expect(screen.getAllByText('MIA').length).toBeGreaterThan(0);
+});
+
+it('opens a dump from the sidebar, and its x goes back to the app', async () => {
+  const store = await gamesStore('panel_dump_live_store');
+  store.lifecycle.put(NFL, NFL_GAMES);
+  const SQL = (await loadSqlJs()) as unknown as SqlJsStatic;
+  const db = new SQL.Database();
+  db.run(`
+    CREATE TABLE players (partition_key TEXT, player_id TEXT);
+    CREATE TABLE players_meta (partition_key TEXT, etag TEXT, partition TEXT);
+    INSERT INTO players VALUES ('nfl', '1003');
+  `);
+  const bytes = db.export();
+  db.close();
+  await renderPanel();
+  const sidebar = await screen.findByRole('navigation');
+  await within(sidebar).findByTitle('panel_dump_live_store');
+
+  fireEvent.change(within(sidebar).getByLabelText('Open dump'), { target: { files: [fileOf(bytes, 'tiny-dump.db')] } });
+  const close = await within(sidebar).findByRole('button', { name: 'Close dump' }, { timeout: 3000 });
+  expect(within(sidebar).getAllByTitle('tiny-dump.db').length).toBeGreaterThan(0);
+  expect(within(sidebar).getByTitle('players')).toBeTruthy();
+  expect(within(sidebar).queryByTitle('panel_dump_live_store')).toBeNull();
+
+  fireEvent.click(close);
+  expect(await within(sidebar).findByTitle('panel_dump_live_store')).toBeTruthy();
+  expect(within(sidebar).queryAllByTitle('tiny-dump.db')).toHaveLength(0);
+});
+
+it('goes back from a dump that would not open', async () => {
+  await renderPanel();
+  const sidebar = await screen.findByRole('navigation');
+  fireEvent.change(within(sidebar).getByLabelText('Open dump'), { target: { files: [fileOf(new Uint8Array([1, 2, 3]), 'broken.db')] } });
+  expect(await screen.findByText(/Couldn't open broken\.db: (?!file\.arrayBuffer)/, {}, { timeout: 3000 })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to the app' }));
+  expect(screen.queryByText("Couldn't open the dump")).toBeNull();
 });
 
 it('has Save and Open in the sidebar, Save once the app is connected', async () => {

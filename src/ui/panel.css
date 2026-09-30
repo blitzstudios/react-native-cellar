@@ -107,7 +107,6 @@ button {
 }
 
 .sidebar {
-  width: 200px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -187,10 +186,6 @@ button {
 .nav-meta {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-
-.nav-refresh {
-  margin: 8px 12px 0;
 }
 
 .dot {
@@ -1212,8 +1207,40 @@ button.file-status {
 }
 
 .dump-name {
-  padding: 0 12px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 6px 12px;
+  white-space: nowrap;
+}
+
+.dump-name code {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.dump-name .icon-button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.icon-button-small {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-resizer {
+  flex-shrink: 0;
+  width: 6px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:active {
+  background: linear-gradient(to right, transparent 2px, var(--accent) 2px, var(--accent) 4px, transparent 4px);
 }
