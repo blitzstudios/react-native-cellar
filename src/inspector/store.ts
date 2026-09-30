@@ -170,12 +170,17 @@ function toBridgeValue(value: unknown): unknown {
  * Runs a read off the JS thread where the connection can (nitro runs `executeAsync` on its own thread), on the store's
  * dedicated reader when it has one, so counting a large table doesn't stall the app.
  */
-async function read<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null> = []): Promise<T[]> {
+async function readResult<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null>): Promise<{ rows: T[]; columns?: string[] }> {
   const target = conn.reader ?? conn;
   const result = target.executeAsync ? await target.executeAsync(sql, params) : target.execute(sql, params);
   const rows = (result.rows?._array ?? []) as T[];
+  const columns = result.metadata && Object.entries(result.metadata).sort(([, a], [, b]) => a.index - b.index).map(([name]) => name);
   result.dispose?.();
-  return rows;
+  return { rows, columns };
+}
+
+async function read<T>(conn: SqliteConnection, sql: string, params: ReadonlyArray<string | number | null> = []): Promise<T[]> {
+  return (await readResult<T>(conn, sql, params)).rows;
 }
 
 const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -272,10 +277,10 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
       const text = isWrappable(statement) ? `SELECT * FROM (${statement.sql}) LIMIT ${limit + 1}` : statement.sql;
       const started = now();
-      const all = await read<Record<string, unknown>>(running.conn, text, params);
+      const { rows: all, columns: ordered } = await readResult<Record<string, unknown>>(running.conn, text, params);
       const durationMs = now() - started;
       const kept = all.length > limit ? all.slice(0, limit) : all;
-      const columns = kept.length ? Object.keys(kept[0]) : [];
+      const columns = ordered?.length ? ordered : kept.length ? Object.keys(kept[0]) : [];
       return {
         columns,
         rows: kept.map((row) => columns.map((column) => toBridgeValue(row[column]))),

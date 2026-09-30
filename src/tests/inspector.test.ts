@@ -6,6 +6,7 @@ import { clearInspectorEvents, inspectedStore, inspectedStores, onInspectorEvent
 import type { InspectorEvent } from '../inspector';
 import type { Loose } from '../read/facade';
 import type { PartitionKeyColumn, StoreTableSchema } from '../table/partitioned';
+import type { SqliteConnection } from '../table/connection';
 import type { RowTable } from '../table/types';
 import { itDev, itProd } from '../testing/dev_mode';
 import { installTestRuntime } from '../testing/runtime';
@@ -244,6 +245,27 @@ describe('queries', () => {
     expect(reopen).not.toHaveBeenCalled();
     expect(inspected.binding().state).toBe('database');
     expect(table().find({})).toHaveLength(3);
+  });
+
+  it("orders columns by the result's metadata, as nitro's row objects lose the statement's order", async () => {
+    const { store } = gamesStore('metadata_store');
+    const sqljs = createSqlJsConnection();
+    const scrambled: SqliteConnection = {
+      execute: (sql, params) => {
+        const result = sqljs.execute(sql, params);
+        const rows = (result.rows?._array ?? []) as Array<Record<string, unknown>>;
+        if (!rows.length) return result;
+        const names = Object.keys(rows[0]);
+        return {
+          rows: { _array: rows.map((row) => Object.fromEntries(Object.entries(row).reverse())) },
+          metadata: Object.fromEntries(names.map((name, index) => [name, { index }])),
+        };
+      },
+    };
+    store.bindSqlite(scrambled);
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    const result = await inspectedStore('metadata_store')!.query('SELECT team, sport, score FROM inspected_games');
+    expect(result).toMatchObject({ columns: ['team', 'sport', 'score'], rows: [['KC', 'nfl', 27]] });
   });
 
   it('answers nothing while the store is unbound, and still refuses a write', async () => {

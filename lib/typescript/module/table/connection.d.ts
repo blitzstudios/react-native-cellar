@@ -10,6 +10,13 @@ export interface QueryExecResult {
         /** The rows, as objects keyed by column. */
         _array?: unknown[];
     };
+    /**
+     * Each result column by name, with its position in the statement. Nitro reports it, and its row objects don't keep
+     * the statement's column order, so this is the only way to know it there.
+     */
+    metadata?: Record<string, {
+        index: number;
+    }>;
     /** Frees the result's native memory. */
     dispose?: () => void;
 }
