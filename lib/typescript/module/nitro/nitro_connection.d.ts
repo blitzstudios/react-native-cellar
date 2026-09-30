@@ -38,10 +38,9 @@ interface BindableStore {
     bindSqlite: (conn: SqliteConnection, options?: BindOptions) => void;
 }
 /**
- * Opens the in-memory database a store falls back to, where its `TEMP` tables hold the store's rows. On a binary whose
- * nitro opens one for a `:memory:` name (1.1.5 and later), that is a private in-memory database, which needs no file.
- * On an older one, it is a scratch database beside `dbName` with `temp_store` in memory. Either way it has no separate
- * reader, since `TEMP` tables are visible only to their own connection.
+ * Opens the in-memory database a store falls back to, where its `TEMP` tables hold the store's rows: the private one
+ * nitro opens for `:memory:<dbName>`, which needs no file. It has no separate reader, since `TEMP` tables are visible
+ * only to their own connection.
  */
 export declare function openNitroMemoryFallback(dbName: string, opts?: Pick<NitroConnectionOptions, 'shredInJs'>): SqliteConnection;
 /** Options for {@linkcode bindSqliteStore}. */

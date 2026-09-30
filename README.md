@@ -50,9 +50,9 @@ same engine compiled to WebAssembly, through `./sqljs`. Tests use sql.js too, th
 
 ```jsonc
 // package.json
-"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.2.5-gitpkg",
-// On device, the SQLite driver `./nitro` opens databases with: 1.1.4 or later, and 1.1.5 or later for an in-memory
-// fallback that needs no file. An app that runs Cellar only on the web or in tests leaves it out.
+"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.2.6-gitpkg",
+// On device, the SQLite driver `./nitro` opens databases with, 1.1.5 or later. An app that runs Cellar only on the
+// web or in tests leaves it out.
 "react-native-nitro-sqlite": "blitzstudios/react-native-nitro-sqlite.git#react-native-nitro-sqlite-v1.1.5-gitpkg"
 ```
 
@@ -167,11 +167,9 @@ player's stats across several weeks, is a `defineReadAcross`, whose `partitions`
 Until it is bound, a store runs over a connection that answers nothing, so each read gives back its `empty`. Startup
 binds it (step 4). On device, a read whose own statement fails (a query bug, or a value `json_extract` cannot parse) is
 reported once and answers empty, and the connection carries on. Any other SQLite failure mid-session reopens the
-database, deleting it first when the file is what failed, and after two failed reopens moves the store to an in-memory
-database: the same SQLite, with the store's tables
-in the connection's temp schema. With `react-native-nitro-sqlite` 1.1.5 or later in the binary, that database needs no
-file at all; on an older binary it is a scratch file beside the store's own, with `temp_store` in memory. `build` runs
-again each time the store moves, so it holds nothing outside what it returns — and `itemStore.reads` always reaches
+database, deleting it first when the file is what failed, and after two failed reopens moves the store to a private
+in-memory database, which needs no file: the same SQLite, with the store's tables in the connection's temp schema.
+`build` runs again each time the store moves, so it holds nothing outside what it returns — and `itemStore.reads` always reaches
 whichever connection is running, so callers hold the store rather than anything taken off it.
 
 #### Priming is by partition, not by what a read selects
