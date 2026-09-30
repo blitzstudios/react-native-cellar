@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.nitroDump = exports.defaultInspector = void 0;
+exports.openDeviceFile = exports.nitroDump = exports.defaultInspector = void 0;
 exports.storeOf = storeOf;
 exports.listStores = listStores;
 exports.runQuery = runQuery;
@@ -45,8 +45,30 @@ exports.ingestReport = ingestReport;
 exports.filterEvents = filterEvents;
 const cellarInspector = __importStar(require("@sleeperhq/react-native-cellar/inspector"));
 exports.defaultInspector = cellarInspector;
-const nitroDump = (name) => () => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores(name ? { name } : {});
+/** Cellar's dump, loaded when first asked for, since only a device running nitro can write one. */
+const nitroDump = (name = 'cellar-dump.db') => Object.assign(() => require('@sleeperhq/react-native-cellar/nitro').dumpSqliteStores({ name }), { fileName: name });
 exports.nitroDump = nitroDump;
+/**
+ * Opens a file through React Native's networking, which reads `file://` URLs into a native blob on both platforms, so
+ * the whole file never enters JS: each part is sliced off the blob and read as a data URL.
+ */
+const openDeviceFile = async (path) => {
+    const blob = await (await fetch(`file://${encodeURI(path)}`)).blob();
+    return {
+        size: blob.size,
+        read: (offset, length) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const url = String(reader.result ?? '');
+                resolve(url.slice(url.indexOf(',') + 1));
+            };
+            reader.onerror = () => reject(reader.error ?? new Error(`Couldn't read ${path}`));
+            reader.readAsDataURL(blob.slice(offset, Math.min(offset + length, blob.size)));
+        }),
+        close: () => blob.close?.(),
+    };
+};
+exports.openDeviceFile = openDeviceFile;
 /** The store named `name`, or an error that lists the stores there are. */
 function storeOf(inspector, name) {
     const store = inspector.inspectedStore(name);

@@ -84,7 +84,21 @@ export type CellarMethods = {
     ingest: () => Promise<IngestReport>;
     /** Copies every store's database into one SQLite file on the device. */
     dump: () => Promise<DatabaseDump>;
+    /** The file name the app dumps to, which the panel suggests when saving. */
+    dumpName: () => Promise<string>;
+    /** Part of the latest dump's file, for the panel to save: at most {@linkcode DUMP_CHUNK_BYTES} from `offset`. */
+    readDump: (params: {
+        path: string;
+        offset: number;
+    }) => Promise<DumpChunk>;
 };
+/** The most bytes of a dump one `readDump` answers. */
+export declare const DUMP_CHUNK_BYTES: number;
+/** Bytes of a dump's file, as base64, and the file's whole size. */
+export interface DumpChunk {
+    base64: string;
+    size: number;
+}
 /** What the app sends without being asked. */
 export type CellarEventMap = {
     /** Events as they are recorded, batched, as the JSON text of an `InspectorEvent[]`: see `wire.ts`. */

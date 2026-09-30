@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { InspectedEntity, InspectorEvent, StoreOverview } from '../shared/protocol';
+import type { InspectedEntity, InspectedPartition, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { heapLabel } from './caches_view';
 import { Empty, ErrorBanner, JsonView } from './components';
 import { formatClock, formatCount, quoteName } from './format';
@@ -20,6 +20,9 @@ interface EntityRow extends EntityRef {
 
 const sameRef = (a: EntityRef | undefined, b: EntityRef) => !!a && a.partition === b.partition && a.id === b.id;
 
+const mostEntities = (partitions: readonly InspectedPartition[]) =>
+  partitions.reduce<InspectedPartition | undefined>((best, candidate) => (!best || candidate.entities > best.entities ? candidate : best), undefined);
+
 /** A store's entities, each an id within one partition, by how many rows it has; and one of them in full. */
 export function EntitiesView({
   mode = 'live',
@@ -35,74 +38,106 @@ export function EntitiesView({
   mode?: 'live' | 'dump';
 }) {
   const [search, setSearch] = useState('');
-  const [list, setList] = useState<{ rows: EntityRow[]; truncated: boolean }>();
+  const [partitions, setPartitions] = useState<InspectedPartition[]>();
+  const [partition, setPartition] = useState<string>();
+  const [list, setList] = useState<{ partition: string; rows: EntityRow[]; truncated: boolean }>();
   const [selected, setSelected] = useState<EntityRef>();
   const [error, setError] = useState<string>();
   const entity = quoteName(store.schema.entityColumn);
   const table = quoteName(store.schema.table);
 
-  const load = useCallback(async () => {
+  const loadPartitions = useCallback(async () => {
     if (!rpc) return;
+    try {
+      const loaded = await rpc.method('partitions').invoke({ store: store.name });
+      setPartitions(loaded);
+      setPartition((current) => (current !== undefined && loaded.some((candidate) => candidate.key === current) ? current : mostEntities(loaded)?.key));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }, [rpc, store.name]);
+  const latestWrite = useLatestEventId(events, (event) => event.kind === 'write' && event.store === store.name);
+  useEffect(() => {
+    loadPartitions();
+  }, [loadPartitions]);
+  useThrottledEffect(loadPartitions, latestWrite, 2000, latestWrite > 0);
+
+  const load = useCallback(async () => {
+    if (!rpc || partition === undefined) return;
     const needle = search.trim();
     try {
       const result = await rpc.method('query').invoke({
         store: store.name,
-        sql: `SELECT partition_key AS partition, ${entity} AS id, COUNT(*) AS rows FROM ${table} ${needle ? `WHERE ${entity} LIKE ?` : ''} GROUP BY partition_key, ${entity} ORDER BY rows DESC, id, partition`,
-        params: needle ? [`%${needle}%`] : [],
+        sql: `SELECT ${entity} AS id, COUNT(*) AS rows FROM ${table} WHERE partition_key = ?${needle ? ` AND ${entity} LIKE ?` : ''} GROUP BY ${entity} ORDER BY rows DESC, id`,
+        params: needle ? [partition, `%${needle}%`] : [partition],
         limit: LIST_LIMIT,
       });
       const at = (column: string) => result.columns.indexOf(column);
       setList({
-        rows: result.rows.map((row) => ({ partition: String(row[at('partition')]), id: String(row[at('id')]), rows: Number(row[at('rows')]) })),
+        partition,
+        rows: result.rows.map((row) => ({ partition, id: String(row[at('id')]), rows: Number(row[at('rows')]) })),
         truncated: result.truncated,
       });
       setError(undefined);
     } catch (caught) {
       setError(errorMessage(caught));
     }
-  }, [rpc, store.name, entity, table, search]);
+  }, [rpc, store.name, entity, table, search, partition]);
 
   useEffect(() => {
     const timer = setTimeout(load, 200);
     return () => clearTimeout(timer);
   }, [load]);
 
+  const select = (ref: EntityRef) => {
+    setPartition(ref.partition);
+    setSelected(ref);
+  };
+  const shown = list && list.partition === partition ? list : undefined;
+
   return (
     <div className="entities-view">
       <div className="toolbar">
+        <select className="select" value={partition ?? ''} onChange={(event) => setPartition(event.target.value)} aria-label="Partition" disabled={!partitions?.length}>
+          {(partitions ?? []).map((candidate) => (
+            <option key={candidate.key} value={candidate.key}>
+              {candidate.key} · {formatCount(candidate.entities)}
+            </option>
+          ))}
+        </select>
         <input className="search" placeholder={`Search ${store.schema.entityColumn}`} value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search entities" />
-        {list ? (
+        {shown ? (
           <span className="muted">
-            {formatCount(list.rows.length)}
-            {list.truncated ? '+' : ''} entities
+            {formatCount(shown.rows.length)}
+            {shown.truncated ? '+' : ''} entities
           </span>
         ) : null}
       </div>
       {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
       <div className="entities-body">
         <div className="table-scroll entities-list">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{store.schema.entityColumn}</th>
-                <th>Partition</th>
-                <th className="num">Rows</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(list?.rows ?? []).map((row) => (
-                <tr key={`${row.partition}\u0000${row.id}`} className={`clickable-row${sameRef(selected, row) ? ' row-open' : ''}`} onClick={() => setSelected(row)}>
-                  <td>
-                    <code>{row.id}</code>
-                  </td>
-                  <td>
-                    <code>{row.partition}</code>
-                  </td>
-                  <td className="num">{formatCount(row.rows)}</td>
+          {partitions && !partitions.length ? (
+            <Empty title="No partitions" />
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{store.schema.entityColumn}</th>
+                  <th className="num">Rows</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(shown?.rows ?? []).map((row) => (
+                  <tr key={row.id} className={`clickable-row${sameRef(selected, row) ? ' row-open' : ''}`} onClick={() => setSelected(row)}>
+                    <td>
+                      <code>{row.id}</code>
+                    </td>
+                    <td className="num">{formatCount(row.rows)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
         <div className="entity-detail">
           {selected ? (
@@ -113,7 +148,7 @@ export function EntitiesView({
               entityRef={selected}
               mode={mode}
               events={events}
-              onSelect={setSelected}
+              onSelect={select}
               onRows={() =>
                 onQuery(`SELECT *\nFROM ${table}\nWHERE partition_key = ? AND ${entity} = ?`, JSON.stringify([selected.partition, selected.id]))
               }

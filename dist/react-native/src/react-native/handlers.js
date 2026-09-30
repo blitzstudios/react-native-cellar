@@ -1,14 +1,40 @@
 /** Answers the panel's calls, and pushes the stores' events to it as they are recorded. */
 import { createRozeniteRpc } from '@rozenite/plugin-bridge';
-import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, refetchPartition, runQuery, storeOf } from './operations';
+import { DUMP_CHUNK_BYTES } from '../shared/protocol';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, openDeviceFile, refetchPartition, runQuery, storeOf } from './operations';
 /** How long events gather before they go to the panel in one message, in ms. */
 export const EVENT_FLUSH_MS = 100;
 /** The most events one message carries; a busier interval goes out as several. */
 export const EVENTS_PER_MESSAGE = 250;
 /** Wires `client` up to answer the panel, and returns a function that unwires it. */
-export function registerCellarHandlers(client, inspector = defaultInspector, dump = nitroDump()) {
+export function registerCellarHandlers(client, inspector = defaultInspector, dump = nitroDump(), openFile = openDeviceFile) {
     const rpc = createRozeniteRpc(client);
     const json = async (result) => JSON.stringify((await result) ?? null);
+    let latest;
+    const forgetLatest = () => {
+        latest?.file?.then((file) => file.close(), () => undefined);
+        latest = undefined;
+    };
+    const dumpAndRemember = async () => {
+        const written = await dump();
+        forgetLatest();
+        latest = { path: written.path };
+        return written;
+    };
+    const readLatest = async (path, offset) => {
+        if (latest?.path !== path)
+            throw new Error('Only the latest dump can be read; dump again.');
+        const opening = (latest.file ?? (latest.file = openFile(path)));
+        try {
+            const file = await opening;
+            return { base64: await file.read(offset, DUMP_CHUNK_BYTES), size: file.size };
+        }
+        catch (error) {
+            if (latest?.file === opening)
+                latest.file = undefined;
+            throw error;
+        }
+    };
     const subscriptions = [
         rpc.handle('stores', () => json(listStores(inspector))),
         rpc.handle('partitions', ({ store }) => json(storeOf(inspector, store).partitions())),
@@ -21,7 +47,9 @@ export function registerCellarHandlers(client, inspector = defaultInspector, dum
         rpc.handle('clearEtag', (params) => json(clearPartitionEtag(inspector, params))),
         rpc.handle('events', ({ afterId }) => json(inspector.recentInspectorEvents(afterId))),
         rpc.handle('ingest', () => json(ingestReport(inspector))),
-        rpc.handle('dump', () => json(dump())),
+        rpc.handle('dump', () => json(dumpAndRemember())),
+        rpc.handle('dumpName', () => json(dump.fileName)),
+        rpc.handle('readDump', ({ path, offset }) => json(readLatest(path, offset))),
     ];
     let pending = [];
     let timer;
@@ -42,6 +70,7 @@ export function registerCellarHandlers(client, inspector = defaultInspector, dum
         if (timer !== undefined)
             clearTimeout(timer);
         pending = [];
+        forgetLatest();
         subscriptions.forEach((subscription) => subscription.remove());
         rpc.close();
     };

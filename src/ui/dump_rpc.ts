@@ -175,6 +175,8 @@ export function createDumpRpc(SQL: SqlJsStatic, bytes: Uint8Array, fileName: str
     events: async () => [],
     ingest: async () => ({ timings: [], rollup: [] }),
     dump: needsApp('Dumping') as () => Promise<DatabaseDump>,
+    dumpName: needsApp('Saving a dump'),
+    readDump: needsApp('Saving a dump'),
   };
 
   const rpc: CellarRpc = {

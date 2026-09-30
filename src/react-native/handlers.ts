@@ -3,10 +3,11 @@
 import { createRozeniteRpc } from '@rozenite/plugin-bridge';
 import type { RozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import type { InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
-import type { CellarEventMap } from '../shared/protocol';
+import { DUMP_CHUNK_BYTES } from '../shared/protocol';
+import type { CellarEventMap, DatabaseDump, DumpChunk } from '../shared/protocol';
 import type { CellarWireMethods } from '../shared/wire';
-import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, refetchPartition, runQuery, storeOf } from './operations';
-import type { CellarInspector, DumpDatabases } from './operations';
+import { clearPartitionEtag, defaultInspector, ingestReport, listCaches, listStores, nitroDump, openDeviceFile, refetchPartition, runQuery, storeOf } from './operations';
+import type { CellarInspector, DeviceFile, DumpDatabases, OpenDeviceFile } from './operations';
 
 /** How long events gather before they go to the panel in one message, in ms. */
 export const EVENT_FLUSH_MS = 100;
@@ -18,9 +19,33 @@ export function registerCellarHandlers(
   client: RozeniteDevToolsClient<CellarEventMap>,
   inspector: CellarInspector = defaultInspector,
   dump: DumpDatabases = nitroDump(),
+  openFile: OpenDeviceFile = openDeviceFile,
 ): () => void {
   const rpc = createRozeniteRpc<CellarWireMethods>(client as unknown as RozeniteDevToolsClient);
   const json = async (result: unknown): Promise<string> => JSON.stringify((await result) ?? null);
+
+  let latest: { path: string; file?: Promise<DeviceFile> } | undefined;
+  const forgetLatest = (): void => {
+    latest?.file?.then((file) => file.close(), () => undefined);
+    latest = undefined;
+  };
+  const dumpAndRemember = async (): Promise<DatabaseDump> => {
+    const written = await dump();
+    forgetLatest();
+    latest = { path: written.path };
+    return written;
+  };
+  const readLatest = async (path: string, offset: number): Promise<DumpChunk> => {
+    if (latest?.path !== path) throw new Error('Only the latest dump can be read; dump again.');
+    const opening = (latest.file ??= openFile(path));
+    try {
+      const file = await opening;
+      return { base64: await file.read(offset, DUMP_CHUNK_BYTES), size: file.size };
+    } catch (error) {
+      if (latest?.file === opening) latest.file = undefined;
+      throw error;
+    }
+  };
   const subscriptions = [
     rpc.handle('stores', () => json(listStores(inspector))),
     rpc.handle('partitions', ({ store }) => json(storeOf(inspector, store).partitions())),
@@ -33,7 +58,9 @@ export function registerCellarHandlers(
     rpc.handle('clearEtag', (params) => json(clearPartitionEtag(inspector, params))),
     rpc.handle('events', ({ afterId }) => json(inspector.recentInspectorEvents(afterId))),
     rpc.handle('ingest', () => json(ingestReport(inspector))),
-    rpc.handle('dump', () => json(dump())),
+    rpc.handle('dump', () => json(dumpAndRemember())),
+    rpc.handle('dumpName', () => json(dump.fileName)),
+    rpc.handle('readDump', ({ path, offset }) => json(readLatest(path, offset))),
   ];
 
   let pending: InspectorEvent[] = [];
@@ -55,6 +82,7 @@ export function registerCellarHandlers(
     stopListening();
     if (timer !== undefined) clearTimeout(timer);
     pending = [];
+    forgetLatest();
     subscriptions.forEach((subscription) => subscription.remove());
     rpc.close();
   };
