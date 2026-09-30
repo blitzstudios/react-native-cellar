@@ -69,7 +69,7 @@ export declare function runBatchAsync(conn: SqliteConnection, commands: Readonly
  * connection: the first such failure calls `onFatal`, and later calls answer empty. A write fails it even for a bug
  * in its statement, since the rows it didn't write would otherwise stand behind an ETag that vouches for them.
  */
-export declare function guardedConnection(conn: SqliteConnection, onFatal: (error: unknown, op: string) => void, onContended?: (error: unknown, op: string) => void, onStatementError?: (error: unknown, op: string) => void): SqliteConnection;
+export declare function guardedConnection(conn: SqliteConnection, onFatal: (error: unknown, op: string) => void, onContended?: (error: unknown, op: string) => void, onStatementError?: (error: unknown, op: string, sql: string | undefined) => void): SqliteConnection;
 /**
  * Runs a `SELECT` and returns its rows as plain objects. It runs on the connection's reader if it has one, so a query
  * of a `TEMP` table the caller just created must be passed a {@linkcode PinnedConnection}.

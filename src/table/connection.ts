@@ -128,12 +128,12 @@ export function guardedConnection(
   conn: SqliteConnection,
   onFatal: (error: unknown, op: string) => void,
   onContended?: (error: unknown, op: string) => void,
-  onStatementError?: (error: unknown, op: string) => void,
+  onStatementError?: (error: unknown, op: string, sql: string | undefined) => void,
 ): SqliteConnection {
   let failed = false;
   let contended = 0;
 
-  const trip = (error: unknown, op: string, isRead: boolean): void => {
+  const trip = (error: unknown, op: string, isRead: boolean, sql?: string): void => {
     if (__DEV__) throw error;
     if (failed) return;
     const message = messageOf(error);
@@ -144,35 +144,35 @@ export function guardedConnection(
       if (contended === 1) onContended?.(error, op);
       if (contended < CONTENTION_TOLERANCE) return;
     } else if (isRead && !STORAGE_FAILURE.test(message)) {
-      onStatementError?.(error, op);
+      onStatementError?.(error, op, sql);
       return;
     }
     failed = true;
     onFatal(error, op);
   };
 
-  function guard<T>(op: string, run: () => T, benign: T, isRead = false): T {
+  function guard<T>(op: string, run: () => T, benign: T, isRead = false, sql?: string): T {
     if (failed) return benign;
     try {
       return run();
     } catch (error) {
-      trip(error, op, isRead);
+      trip(error, op, isRead, sql);
       return benign;
     }
   }
 
-  async function guardAsync<T>(op: string, run: () => Promise<T>, benign: T, isRead = false): Promise<T> {
+  async function guardAsync<T>(op: string, run: () => Promise<T>, benign: T, isRead = false, sql?: string): Promise<T> {
     if (failed) return benign;
     try {
       return await run();
     } catch (error) {
-      trip(error, op, isRead);
+      trip(error, op, isRead, sql);
       return benign;
     }
   }
 
   const guarded: SqliteConnection = {
-    execute: (sql, params) => guard('execute', () => conn.execute(sql, params), EMPTY_RESULT, READ_STATEMENT.test(sql)),
+    execute: (sql, params) => guard('execute', () => conn.execute(sql, params), EMPTY_RESULT, READ_STATEMENT.test(sql), sql),
     executeBatch: conn.executeBatch && ((commands) => guard('executeBatch', () => conn.executeBatch!(commands), undefined)),
     executeAsync:
       conn.executeAsync && ((sql, params) => guardAsync('executeAsync', () => conn.executeAsync!(sql, params), EMPTY_RESULT, READ_STATEMENT.test(sql))),
@@ -183,7 +183,7 @@ export function guardedConnection(
     // trips this guard anyway on the writes that fallback issues, at the cost of one wasted parse.
     shredJsonArrayAsync: conn.shredJsonArrayAsync && ((spec, rawJson, binds) => (failed ? Promise.resolve(0) : conn.shredJsonArrayAsync!(spec, rawJson, binds))),
     reader: conn.reader && {
-      execute: (sql, params) => guard('reader.execute', () => conn.reader!.execute(sql, params), EMPTY_RESULT, true),
+      execute: (sql, params) => guard('reader.execute', () => conn.reader!.execute(sql, params), EMPTY_RESULT, true, sql),
       reader: undefined,
     },
   };

@@ -9,6 +9,9 @@ import type { QueryExecResult, SqliteConnection } from '../table/connection';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
+import { inspectedCaches } from './caches';
+import type { InspectedCache } from './caches';
+import type { EntityChanges } from '../reactivity/version_atom';
 
 /** A column of a store's table. */
 export interface InspectedColumn {
@@ -47,6 +50,8 @@ export interface InspectedPartition {
   partition?: unknown;
   /** How many rows it holds. */
   rows: number;
+  /** How many distinct entities its rows belong to. */
+  entities: number;
   /** Its version: 0 before its first write, and one higher after every write that changed it. */
   version: number;
   /** The ETag its next fetch sends, or `null` if it has none. */
@@ -82,8 +87,10 @@ export interface InspectedQueryResult {
   columns: string[];
   /** Each row's values, in column order. Blobs come back as {@linkcode InspectedBlob}s. */
   rows: unknown[][];
-  /** Whether there were more rows than `limit`, and the rest were left out. */
+  /** Whether there were more rows than `limit`, and the rest were left out: another page follows. */
   truncated: boolean;
+  /** How many rows were skipped before these. */
+  offset: number;
   /** How long the query took, in ms. */
   durationMs: number;
 }
@@ -92,6 +99,23 @@ export interface InspectedQueryResult {
 export interface InspectedQueryOptions {
   /** The most rows to return; 500 by default, at most 10000. Only a `SELECT`, `WITH` or `VALUES` is limited. */
   limit?: number;
+  /** How many rows to skip first, for the next page of a `SELECT`, `WITH` or `VALUES`; 0 by default. */
+  offset?: number;
+}
+
+/** The entities that changed lately in one partition. */
+export interface InspectedEntityChanges {
+  /** The partition's version. */
+  version: number;
+  /**
+   * The version at which every entity last counted as changed: the partition's first write, or a write that couldn't
+   * say which entities it changed. Entities changed after it are listed.
+   */
+  epoch: number;
+  /** How many entities changed after the epoch. */
+  count: number;
+  /** The most recently changed of them, newest first, each with the version it changed at. */
+  changed: Array<{ id: string; version: number }>;
 }
 
 /** A store, for a development tool: what it holds and how it's doing. */
@@ -106,6 +130,10 @@ export interface InspectedStore {
   summary(): Promise<InspectedSummary>;
   /** Every partition that holds rows, has an ETag, or is remembered, by key. */
   partitions(): Promise<InspectedPartition[]>;
+  /** The entities that changed lately in one partition, at most `limit` of them (50 by default). */
+  entityChanges(partitionKey: string, limit?: number): InspectedEntityChanges;
+  /** The store's caches and what each has done; empty in a release build. */
+  caches(): InspectedCache[];
   /**
    * Runs one read-only statement on the store's database and returns its rows. Throws for a statement that writes, for
    * a pragma that sets something, for more than one statement, and for SQL that SQLite rejects. Reads go to the
@@ -139,6 +167,7 @@ export interface RunningStore {
   /** A remembered partition's description. */
   describe: (key: string) => unknown;
   versionOf: (key: string) => number;
+  entityChanges: (key: string) => EntityChanges;
   fetchedAt: (key: string) => number | undefined;
   refetch?: (key: string) => void;
   clearEtag: (key: string) => void;
@@ -208,9 +237,13 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
   const metaTable = quote(meta.table);
   const keyColumn = quote(meta.keyColumns[0]);
 
-  const rowCounts = async (conn: SqliteConnection): Promise<Map<string, number>> => {
-    const rows = await read<{ key: string; rows: number }>(conn, `SELECT ${keyColumn} AS key, COUNT(*) AS rows FROM ${table} GROUP BY ${keyColumn};`);
-    return new Map(rows.map((row) => [row.key, Number(row.rows)]));
+  const rowCounts = async (conn: SqliteConnection): Promise<Map<string, { rows: number; entities: number }>> => {
+    const entity = quote(schema.entityId);
+    const rows = await read<{ key: string; rows: number; entities: number }>(
+      conn,
+      `SELECT ${keyColumn} AS key, COUNT(*) AS rows, COUNT(DISTINCT ${entity}) AS entities FROM ${table} GROUP BY ${keyColumn};`,
+    );
+    return new Map(rows.map((row) => [row.key, { rows: Number(row.rows), entities: Number(row.entities) }]));
   };
 
   const metaRecords = async (conn: SqliteConnection): Promise<Map<string, { etag: string | null; record: string | null }>> => {
@@ -234,7 +267,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
 
   const tableOrder = new Map([...Object.keys(schema.columns), meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])].map((column, index) => [column, index]));
 
-  const unboundResult = (): InspectedQueryResult => ({ columns: [], rows: [], truncated: false, durationMs: 0 });
+  const unboundResult = (offset: number): InspectedQueryResult => ({ columns: [], rows: [], truncated: false, offset, durationMs: 0 });
 
   return {
     name: source.name,
@@ -256,7 +289,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
       const keys = new Set([...counts.keys(), ...records.keys()]);
       let rows = 0;
-      for (const count of counts.values()) rows += count;
+      for (const count of counts.values()) rows += count.rows;
       let databaseBytes: number | undefined;
       if (binding.state === 'database') {
         const [[pages], [size]] = await Promise.all([
@@ -279,7 +312,8 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
         return {
           key,
           ...(partition === undefined ? {} : { partition }),
-          rows: counts.get(key) ?? 0,
+          rows: counts.get(key)?.rows ?? 0,
+          entities: counts.get(key)?.entities ?? 0,
           version: running.versionOf(key),
           etag: record?.etag ?? null,
           fetchedAt: running.fetchedAt(key) ?? null,
@@ -289,10 +323,11 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
     query: async (sql, params = [], options = {}) => {
       const statement = parseReadStatement(sql);
       const running = source.running();
-      if (!running) return unboundResult();
+      const offset = Math.max(0, Math.floor(options.offset ?? 0));
+      if (!running) return unboundResult(offset);
       assertCompilesToRead(running.conn, statement, params);
       const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
-      const text = isWrappable(statement) ? `SELECT * FROM (${statement.sql}) LIMIT ${limit + 1}` : statement.sql;
+      const text = isWrappable(statement) ? `SELECT * FROM (${statement.sql}) LIMIT ${limit + 1} OFFSET ${offset}` : statement.sql;
       const started = now();
       const { rows: all, metadata } = await readResult<Record<string, unknown>>(running.conn, text, params);
       const durationMs = now() - started;
@@ -302,9 +337,18 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
         columns,
         rows: kept.map((row) => columns.map((column) => toBridgeValue(row[column]))),
         truncated: all.length > limit,
+        offset: isWrappable(statement) ? offset : 0,
         durationMs,
       };
     },
+    entityChanges: (partitionKey, limit = 50) => {
+      const running = source.running();
+      if (!running) return { version: 0, epoch: 0, count: 0, changed: [] };
+      const { epoch, changed } = running.entityChanges(partitionKey);
+      const newest = changed.sort((a, b) => b.version - a.version);
+      return { version: running.versionOf(partitionKey), epoch, count: newest.length, changed: newest.slice(0, limit) };
+    },
+    caches: () => inspectedCaches(source.name),
     refetch: (partitionKey) => {
       const refetch = source.running()?.refetch;
       if (!refetch) return false;

@@ -1,4 +1,5 @@
 import { defineSqliteStore } from '../define_sqlite_store';
+import { byPartition } from '../caches';
 import { recordIngestTiming } from '../diagnostics/ingest_timing';
 import { resetOnceGuards } from '../diagnostics/once_guard';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
@@ -144,11 +145,37 @@ describe('partitions', () => {
 
     const inspected = inspectedStore('partitioned_store')!;
     expect(await inspected.partitions()).toEqual([
-      { key: 'nba:2026', partition: NBA, rows: 1, version: 1, etag: null, fetchedAt: null },
-      { key: 'nfl:2026', partition: NFL, rows: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
+      { key: 'nba:2026', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
+      { key: 'nfl:2026', partition: NFL, rows: 2, entities: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
     ]);
     expect(await inspected.summary()).toMatchObject({ binding: { state: 'database' }, rows: 3, partitions: 2 });
     expect((await inspected.summary()).databaseBytes).toBeGreaterThan(0);
+  });
+
+  it('lists the entities a partition changed since its epoch, newest first', () => {
+    const { store } = gamesStore('entity_changes_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 27 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 30 },
+      { team: 'BUF', sport: 'nfl', score: 24 },
+    ]);
+    store.lifecycle.put(NFL, [
+      { team: 'KC', sport: 'nfl', score: 30 },
+      { team: 'BUF', sport: 'nfl', score: 21 },
+    ]);
+    expect(inspectedStore('entity_changes_store')!.entityChanges('nfl:2026')).toEqual({
+      version: 3,
+      epoch: 1,
+      count: 2,
+      changed: [
+        { id: 'BUF', version: 3 },
+        { id: 'KC', version: 2 },
+      ],
+    });
   });
 
   it('clears a partition ETag, and says a store without fetches cannot refetch', async () => {
@@ -233,6 +260,14 @@ describe('queries', () => {
     expect((await inspected.query('SELECT COUNT(*) AS n FROM inspected_games')).rows).toEqual([[3]]);
   });
 
+  it('pages through the rows with an offset', async () => {
+    const { inspected } = seeded('paged_store');
+    const first = await inspected.query('SELECT team FROM inspected_games ORDER BY team', [], { limit: 2 });
+    const second = await inspected.query('SELECT team FROM inspected_games ORDER BY team', [], { limit: 2, offset: 2 });
+    expect(first).toMatchObject({ rows: [['BUF'], ['KC']], truncated: true, offset: 0 });
+    expect(second).toMatchObject({ rows: [['MIA']], truncated: false, offset: 2 });
+  });
+
   it('keeps a semicolon inside a string or a quoted name as part of the one statement', async () => {
     const { inspected } = seeded('quoted_store');
     expect((await inspected.query("SELECT 'a;b' AS \"x;y\"")).rows).toEqual([['a;b']]);
@@ -286,7 +321,7 @@ describe('queries', () => {
   it('answers nothing while the store is unbound, and still refuses a write', async () => {
     gamesStore('unbound_query_store');
     const inspected = inspectedStore('unbound_query_store')!;
-    expect(await inspected.query('SELECT 1 AS one')).toEqual({ columns: [], rows: [], truncated: false, durationMs: 0 });
+    expect(await inspected.query('SELECT 1 AS one')).toEqual({ columns: [], rows: [], truncated: false, offset: 0, durationMs: 0 });
     await expect(inspected.query('DELETE FROM inspected_games')).rejects.toThrow(ReadOnlyViolation);
   });
 });
@@ -329,6 +364,51 @@ describe('the event log', () => {
       expect.objectContaining({ scope: 'inspected.scope', severity: 'info', first: false }),
     ]);
     (console.warn as jest.Mock).mockRestore();
+  });
+
+  itDev('records a degradation with its numbers, a count per scope, and where it came from', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    reportStoreDegradation({ scope: 'counted.scope', context: 'c', extra: { rows: 9422, partition: 'w=4', nested: { a: 1 } } });
+    reportStoreDegradation({ scope: 'counted.scope', context: 'c', callsite: '\n    at StatsScreen (app.bundle:1:2)' });
+    const [first, second] = recentInspectorEvents().filter((event) => event.kind === 'degradation');
+    expect(first).toMatchObject({ count: 1, extra: { rows: 9422, partition: 'w=4', nested: '{"a":1}' }, callsiteKind: 'stack' });
+    expect(first.kind === 'degradation' && first.callsite).toMatch(/inspector\.test/);
+    expect(second).toMatchObject({ count: 2, callsite: '\n    at StatsScreen (app.bundle:1:2)', callsiteKind: 'component' });
+    (console.warn as jest.Mock).mockRestore();
+  });
+
+  itDev('counts what each of a store’s caches does', () => {
+    const store = defineSqliteStore({
+      name: 'cached_store',
+      schema: SCHEMA,
+      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      build: (cellar) => {
+        const { teams } = cellar.defineCaches({ teams: byPartition<string[]>({ max: 4 }) });
+        const put = (season: Season, games: Game[]) => {
+          const key = cellar.keyOf(season);
+          cellar.bump(key, cellar.table.overwrite(cellar.where(key), games.map((game) => ({ ...game, partition_key: key }))).changes);
+        };
+        const teamsOf = (season: Season) => {
+          const key = cellar.keyOf(season);
+          return teams.for(key).read(() => cellar.rows(key).map((row) => row.team, []));
+        };
+        return { reads: {}, lifecycle: { put, teamsOf } };
+      },
+    });
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    store.lifecycle.teamsOf(NFL);
+    store.lifecycle.teamsOf(NFL);
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 30 }]);
+    store.lifecycle.teamsOf(NFL);
+
+    expect(inspectedStore('cached_store')!.caches()).toEqual([
+      expect.objectContaining({ name: 'cached.teams', store: 'cached', cache: 'teams', kind: 'partition', max: 4, entries: 1, hits: 1, absent: 1, stale: 1, builds: 2, reused: 1, evictions: 0 }),
+    ]);
+  });
+
+  itProd('lists no caches in a release build', () => {
+    expect(inspectedStores().flatMap((store) => store.caches())).toEqual([]);
   });
 
   itDev('records each fetch under the store name', () => {

@@ -17,5 +17,11 @@ export declare function reportStoreDegradation(args: {
     severity?: 'error' | 'info';
     /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
     sampleRate?: number;
+    /**
+     * The component chain (a React owner stack) of the code that caused this, for a report filed away from its cause,
+     * such as after a fetch. Left out, the report is attributed to the component rendering when it is filed, or to the JS
+     * stack. Dev only.
+     */
+    callsite?: string;
 }): void;
 //# sourceMappingURL=telemetry.d.ts.map

@@ -8,10 +8,34 @@ import { errorSink } from '../runtime';
 import { shouldLog } from './log_level';
 import { createOnceGuard } from './once_guard';
 import { recordInspectorEvent } from '../inspector/events';
+import type { InspectorDegradationEvent } from '../inspector/events';
+import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 
 const reportedScopes = createOnceGuard();
 const messageOf = (error: unknown): string => String((error as { message?: unknown })?.message ?? error);
+/** How many times each scope has been reported this session, first report included. Dev only. */
+const scopeCounts = new Map<string, number>();
 
+/** The report's details as JSON carries them: numbers, strings and booleans as they are, anything else as text. */
+function plainExtra(extra: Record<string, unknown>): NonNullable<InspectorDegradationEvent['extra']> {
+  const out: NonNullable<InspectorDegradationEvent['extra']> = {};
+  for (const [key, value] of Object.entries(extra)) {
+    out[key] = value === null || typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean' ? value : String(JSON.stringify(value) ?? value).slice(0, 500);
+  }
+  return out;
+}
+
+/**
+ * Where the report came from: the caller's own, else the component rendering now, else the JS stack without this
+ * file's frames.
+ */
+function callsiteOf(given: string | undefined): Pick<InspectorDegradationEvent, 'callsite' | 'callsiteKind'> {
+  if (given) return { callsite: given, callsiteKind: 'component' };
+  const owner = renderPhaseOwnerStack();
+  if (owner) return { callsite: owner, callsiteKind: 'component' };
+  const stack = new Error().stack?.split('\n').slice(3).join('\n');
+  return stack ? { callsite: stack, callsiteKind: 'stack' } : {};
+}
 
 /** Reports that a store lost a benefit it should have had, at most once per `scope` per session. */
 export function reportStoreDegradation(args: {
@@ -27,12 +51,30 @@ export function reportStoreDegradation(args: {
   severity?: 'error' | 'info';
   /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
   sampleRate?: number;
+  /**
+   * The component chain (a React owner stack) of the code that caused this, for a report filed away from its cause,
+   * such as after a fetch. Left out, the report is attributed to the component rendering when it is filed, or to the JS
+   * stack. Dev only.
+   */
+  callsite?: string;
 }): void {
   const { scope, context, error, extra, severity = 'error', sampleRate = 1 } = args;
 
   const first = !reportedScopes.seen(scope);
   if (__DEV__) {
-    recordInspectorEvent({ kind: 'degradation', scope, context, severity, first, ...(error === undefined ? {} : { error: messageOf(error) }) });
+    const count = (scopeCounts.get(scope) ?? 0) + 1;
+    scopeCounts.set(scope, count);
+    recordInspectorEvent({
+      kind: 'degradation',
+      scope,
+      context,
+      severity,
+      first,
+      count,
+      ...(error === undefined ? {} : { error: messageOf(error) }),
+      ...(extra ? { extra: plainExtra(extra) } : {}),
+      ...callsiteOf(args.callsite),
+    });
   }
   if (!first) return;
 

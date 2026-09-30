@@ -6,7 +6,7 @@
  */
 
 import { reportStoreDegradation } from './diagnostics/telemetry';
-import { createVersionAtom, VersionAtom } from './reactivity/version_atom';
+import { createVersionAtom, entityChangesOf, VersionAtom } from './reactivity/version_atom';
 import { FindOpts, RowShape, RowTable } from './table/types';
 import { NativeShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
@@ -547,6 +547,7 @@ export function defineSqliteStore<
       internedKeys: partitions.internedKeys,
       describe: partitions.partitionOf,
       versionOf: partitions.versionOf,
+      entityChanges: (key) => entityChangesOf(atom, [key]),
       fetchedAt: partitions.inspect.fetchedAt,
       refetch: partitions.inspect.refetch,
       clearEtag: partitions.clearEtag,
@@ -614,13 +615,13 @@ export function defineSqliteStore<
           error,
           extra: extra({ op }),
         }),
-      (error, op) => {
+      (error, op, sql) => {
         if (statementErrors.seen(config.name, messageOf(error))) return;
         reportStoreDegradation({
           scope: `${config.name}.statement_error`,
           context: `a SQLite \`${op}\` read failed on its own statement and answered empty; the connection is fine, and the read's SQL or the value it parsed is not`,
           error,
-          extra: extra({ op }),
+          extra: extra({ op, ...(sql ? { sql: sql.slice(0, 500) } : {}) }),
         });
       },
     );

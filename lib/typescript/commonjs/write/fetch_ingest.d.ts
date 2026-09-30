@@ -157,6 +157,8 @@ export interface PrimeIntent {
     slice?: boolean;
     /** The caller's query `meta` ({@linkcode ReadCallOptions.meta | meta}), which the partition's query carries. */
     meta?: Readonly<Record<string, unknown>>;
+    /** The read that wants a slice, by its name in the store, for an oversized fetch's report to name. Dev only. */
+    read?: string;
 }
 /**
  * Creates a store's fetching: one React Query query per partition (the set of rows one fetch returns and replaces). Its

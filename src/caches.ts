@@ -17,6 +17,8 @@
 import { identityOf, KEY_SEP, cacheKeyOf } from './args_key';
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { covered } from './table/read_coverage';
+import { registerInspectedCache } from './inspector/caches';
+import type { CacheStats, InspectedCacheKind } from './inspector/caches';
 import type { CommonDef, ReadDef } from './read/surface';
 import type { Partitions } from './define_partitions';
 import type { byEntity } from './read/derived_values';
@@ -34,42 +36,53 @@ export interface MemoDiagnostics {
 }
 
 /**
- * The watch a declared memo carries in dev. It reports one too small for its working set — a key evicted for capacity,
- * then asked for again — and one that has never once answered from its entry, which is heap held for nothing.
+ * The watch a declared memo carries in dev. It counts what the memo does for the inspector, and reports one too small
+ * for its working set — a key evicted for capacity, then asked for again — and one that has never once answered from
+ * its entry, which is heap held for nothing.
  */
-function createMemoWatch({ name, keyedBy }: MemoDiagnostics, maxEntries: number) {
+function createMemoWatch({ name, keyedBy }: MemoDiagnostics, maxEntries: number, kind: InspectedCacheKind) {
   const ghosts = new Set<string>();
-  let returned = 0;
-  let missed = 0;
-  let earned = false;
+  const stats: CacheStats = { hits: 0, stale: 0, absent: 0, evictions: 0, rereads: 0, builds: 0, reused: 0, since: Date.now() };
+  let lru: { readonly size: number } | undefined;
+  const numbers = () => ({ maxEntries, entries: lru?.size ?? 0, hits: stats.hits, misses: stats.stale + stats.absent, evictions: stats.evictions, rereads: stats.rereads });
   return {
+    /** Lists the memo in the inspector, sized by `table`. */
+    track: (table: { readonly size: number }): void => {
+      lru = table;
+      registerInspectedCache({ name, keyedBy, kind, max: maxEntries, stats, size: () => table.size });
+    },
     onEvict: (key: string): void => {
+      stats.evictions += 1;
       ghosts.add(key);
       if (ghosts.size > EVICTION_GHOSTS) ghosts.delete(ghosts.values().next().value as string);
     },
     /** Call on a lookup that answered from the entry, which is how a memo shows it is earning its heap. */
     noteHit: (): void => {
-      earned = true;
+      stats.hits += 1;
     },
     /** Call on a lookup that did not; `absent` separates an evicted key from an entry held at another version. */
     noteMiss: (key: string, absent: boolean): void => {
-      if (!earned) {
-        missed += 1;
-        if (missed === NEVER_HIT_REPORT_AT)
-          reportStoreDegradation({
-            scope: `memo.never_hit.${name}`,
-            context: `${NEVER_HIT_REPORT_AT} lookups keyed by ${keyedBy} never answered from the entry, so whatever calls this already holds the value`,
-            extra: { maxEntries },
-          });
-      }
+      if (absent) stats.absent += 1;
+      else stats.stale += 1;
+      if (!stats.hits && stats.stale + stats.absent === NEVER_HIT_REPORT_AT)
+        reportStoreDegradation({
+          scope: `memo.never_hit.${name}`,
+          context: `lookups keyed by ${keyedBy} never answered from the entry, so whatever calls this already holds the value`,
+          extra: numbers(),
+        });
       if (!absent || !ghosts.delete(key)) return;
-      returned += 1;
-      if (returned !== UNDERSIZED_REPORT_AT) return;
+      stats.rereads += 1;
+      if (stats.rereads !== UNDERSIZED_REPORT_AT) return;
       reportStoreDegradation({
         scope: `memo.undersized.${name}`,
-        context: `${UNDERSIZED_REPORT_AT} keys evicted for capacity were read again, so values keyed by ${keyedBy} are being rebuilt and their readers repainted`,
-        extra: { maxEntries },
+        context: `keys evicted for capacity were read again, so values keyed by ${keyedBy} are being rebuilt and their readers repainted`,
+        extra: numbers(),
       });
+    },
+    /** Call when a value is built and stored; `reused` when `isEqual` kept the previous object. */
+    noteBuild: (reused: boolean): void => {
+      stats.builds += 1;
+      if (reused) stats.reused += 1;
     },
   };
 }
@@ -92,6 +105,8 @@ export interface BoundedLru<V> {
   set(key: string, value: V): void;
   /** Every stored key, from least to most recently used. */
   keys(): IterableIterator<string>;
+  /** How many entries it holds. */
+  readonly size: number;
 }
 
 /**
@@ -134,6 +149,9 @@ export function createBoundedLru<V>(max: number, onEvict?: (key: string) => void
   };
 
   return {
+    get size() {
+      return map.size;
+    },
     *keys() {
       for (let node = oldest; node !== undefined; node = node.newer) yield node.key;
     },
@@ -193,8 +211,9 @@ export interface VersionedCache<V> {
  * room. Stores declare theirs through {@linkcode createMemos} rather than calling this.
  */
 export function createVersionedCache<V>(maxEntries: number, isEqual?: (prev: V, next: V) => boolean, diagnostics?: MemoDiagnostics): VersionedCache<V> {
-  const watch = __DEV__ && diagnostics ? createMemoWatch(diagnostics, maxEntries) : undefined;
+  const watch = __DEV__ && diagnostics ? createMemoWatch(diagnostics, maxEntries, 'partition') : undefined;
   const lru = createBoundedLru<{ version: number; value: V }>(maxEntries, watch?.onEvict);
+  watch?.track(lru);
   const cache: VersionedCache<V> = {
     read(key, version, compute) {
       const hit = cache.peek(key, version);
@@ -214,6 +233,7 @@ export function createVersionedCache<V>(maxEntries: number, isEqual?: (prev: V, 
       const prior = lru.get(key);
       const stored = prior && isEqual && isEqual(prior.value, value) ? prior.value : value;
       lru.set(key, { version, value: stored });
+      watch?.noteBuild(stored !== value);
       return stored;
     },
   };
@@ -438,8 +458,9 @@ export function entityMemo<V>() {
   }): MemoDecl<BoundEntityMemo<V, By>> => ({
     by: spec.by ?? [],
     bind: (store, diagnostics) => {
-      const watch = __DEV__ ? createMemoWatch(diagnostics, spec.max) : undefined;
+      const watch = __DEV__ ? createMemoWatch(diagnostics, spec.max, 'entity') : undefined;
       const lru = createBoundedLru<{ version: number; value: V }>(spec.max, watch?.onEvict);
+      watch?.track(lru);
       const keyer = createPartKeyer();
       /** The entry for this key if it was built at the entity's current version; noted as a hit or a miss. */
       const current = (key: string, version: number): { value: V } | undefined => {
@@ -455,6 +476,7 @@ export function entityMemo<V>() {
         const prior = lru.get(key);
         const kept = prior && spec.isEqual && spec.isEqual(prior.value, value) ? prior.value : value;
         lru.set(key, { version, value: kept });
+        watch?.noteBuild(kept !== value);
         return kept;
       };
       return {

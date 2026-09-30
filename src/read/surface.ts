@@ -345,8 +345,9 @@ export function useResult<T>(data: T, status: DataStatus, isFetching: boolean, d
 
 const SELECTS_SLICE = { slice: true } as const;
 
-/** A call's prime intent, with the query `meta` it passed. */
-function intentWith(intent: { slice: boolean } | undefined, meta: Readonly<Record<string, unknown>> | undefined): PrimeIntent | undefined {
+/** A call's prime intent, with the query `meta` it passed, and in dev the name of a read that wants a slice. */
+function intentWith(intent: { slice: boolean } | undefined, meta: Readonly<Record<string, unknown>> | undefined, label: () => string): PrimeIntent | undefined {
+  if (__DEV__ && intent?.slice) return meta ? { slice: true, meta, read: label() } : { slice: true, read: label() };
   if (!meta) return intent;
   return intent?.slice ? { slice: true, meta } : { meta };
 }
@@ -515,6 +516,8 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       },
       /** Whether `enabled` lets the read run; an `enabled` that reads an arg its caller didn't pass doesn't. */
       enabled: (args: object, enabled: ((args: never) => boolean) | undefined): boolean => predicate(args, enabled),
+      /** The read's name in its store, for a warning or report to say which read it was. */
+      label,
       /** Whether `prime` lets the read fetch; a `prime` that reads an arg its caller didn't pass doesn't. */
       primes: (args: object, prime: boolean | ((args: never) => boolean) | undefined): boolean =>
         typeof prime === 'function' ? predicate(args, prime) : prime ?? true,
@@ -578,7 +581,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const key = call?.key;
       const parts = call ? call.parts : NO_PARTS;
       const gates = gatesFor(args as Args, parts, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.meta));
+      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? argsKeyOf(parts, args as object) : NO_ARGS_KEY;
       if (__DEV__ && gates.read) noteRead(store, argsKey, batchSizeOf(args as object));
       const data = useTrackedValue<T>(() => (hasOne(key as Key, parts) ? run(args as Args, key as Key, parts, () => argsKey) : def.empty), [argsKey], {
@@ -652,7 +655,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta));
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const data = useTrackedValue<T>(
         () => {
@@ -674,7 +677,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
       const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta));
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
       const isEqual = def.isEqual ?? shallowEqualValue;
       // Which partitions hold rows is part of the tracked value, so one landing re-renders even when the value it adds

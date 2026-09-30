@@ -273,7 +273,28 @@ export function createVersionAtom(root: string): VersionAtom {
   const subscribe = (parts: readonly string[], listener: Listener): (() => void) =>
     listen(specifier(parts), (entry) => entry.listeners, listener);
 
-  return { key, get, getEntity, getPresence, bump, bumpAll, subscribe };
+  const atom: VersionAtom = { key, get, getEntity, getPresence, bump, bumpAll, subscribe };
+  entityLogs.set(atom, (parts) => {
+    const entry = entries.get(specifier(parts));
+    return { epoch: entry?.epoch ?? 0, changed: entry ? Array.from(entry.changedAt, ([id, version]) => ({ id, version })) : [] };
+  });
+  return atom;
+}
+
+/** What each atom remembers of a partition's entity changes, read without tracking, for the inspector. */
+const entityLogs = new WeakMap<VersionAtom, (parts: readonly string[]) => EntityChanges>();
+
+/** The entities that changed in a partition since every entity last counted as changed. */
+export interface EntityChanges {
+  /** The version at which every entity last counted as changed: the partition's first write, or a write of all. */
+  epoch: number;
+  /** Each entity that changed after the epoch, with the version it changed at. */
+  changed: Array<{ id: string; version: number }>;
+}
+
+/** The partition's entity changes as `atom` remembers them; empty for an atom {@linkcode createVersionAtom} didn't make. */
+export function entityChangesOf(atom: VersionAtom, parts: readonly string[]): EntityChanges {
+  return entityLogs.get(atom)?.(parts) ?? { epoch: 0, changed: [] };
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a

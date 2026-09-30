@@ -41,6 +41,8 @@ export interface BoundedLru<V> {
     set(key: string, value: V): void;
     /** Every stored key, from least to most recently used. */
     keys(): IterableIterator<string>;
+    /** How many entries it holds. */
+    readonly size: number;
 }
 /**
  * Creates a {@linkcode BoundedLru}: a map with string keys that holds at most `max` entries, removing the least

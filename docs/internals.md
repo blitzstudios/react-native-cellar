@@ -449,7 +449,8 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | `registry.ts`                                    | every declared store by name; `defineSqliteStore` registers each, and a re-declaration under the same name replaces it |
 | `store.ts`                                       | one store as the tool sees it: schema, binding, partitions (rows, version, ETag, last fetch) and read-only SQL, all looked up on the running surface without counting as a read |
 | `read_only.ts`                                   | what lets a typed query through: one statement, a reading verb, a pragma in its reading form, and a compiled program that opens no write transaction |
-| `events.ts`                                      | the bounded log of writes, binding moves, fetches and degradation reports, with listeners; dev builds only |
+| `caches.ts`                                      | every declared cache with its hits, misses, evictions and builds, counted by the dev watch each cache carries |
+| `events.ts`                                      | the bounded log of writes, binding moves, fetches and degradation reports (with their numbers, a count per scope and a callsite), with listeners; dev builds only |
 
 | `nitro/` — the device                            |                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------ |

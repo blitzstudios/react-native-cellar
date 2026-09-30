@@ -90,5 +90,17 @@ export interface VersionAtom {
  * creates one per store.
  */
 export declare function createVersionAtom(root: string): VersionAtom;
+/** The entities that changed in a partition since every entity last counted as changed. */
+export interface EntityChanges {
+    /** The version at which every entity last counted as changed: the partition's first write, or a write of all. */
+    epoch: number;
+    /** Each entity that changed after the epoch, with the version it changed at. */
+    changed: Array<{
+        id: string;
+        version: number;
+    }>;
+}
+/** The partition's entity changes as `atom` remembers them; empty for an atom {@linkcode createVersionAtom} didn't make. */
+export declare function entityChangesOf(atom: VersionAtom, parts: readonly string[]): EntityChanges;
 export type { ALL_ENTITIES, Read, defineSqliteStore, trackDependency };
 //# sourceMappingURL=version_atom.d.ts.map

@@ -14,6 +14,8 @@ import { PrimeState } from '../prime_state';
 import { recordIngestTiming } from '../diagnostics/ingest_timing';
 import { createOnceGuard } from '../diagnostics/once_guard';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
+import { createBoundedLru } from '../caches';
+import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 import { queryRuntime } from '../runtime';
 import type { QueryRuntime } from '../runtime';
 import { ChangeSet, isUnchanged, WriteResult } from '../table/change_set';
@@ -244,6 +246,14 @@ export interface PrimeIntent {
   slice?: boolean;
   /** The caller's query `meta` ({@linkcode ReadCallOptions.meta | meta}), which the partition's query carries. */
   meta?: Readonly<Record<string, unknown>>;
+  /** The read that wants a slice, by its name in the store, for an oversized fetch's report to name. Dev only. */
+  read?: string;
+}
+
+/** Who first asked for a slice of a partition: the read, and the components rendering it. */
+interface SliceCaller {
+  read?: string;
+  callsite?: string;
 }
 
 const NO_META: { meta?: Readonly<Record<string, unknown>> } = Object.freeze({});
@@ -274,7 +284,7 @@ const oversizedPrimeReported = createOnceGuard();
  * taught the reader to ignore the channel. An app priming its own sports at startup is the case that made this
  * necessary.
  */
-function reportOversizedPrime(store: string, partition: string, rows: number, chars: number | null, wantedWhole: boolean): void {
+function reportOversizedPrime(store: string, partition: string, rows: number, chars: number | null, wantedWhole: boolean, caller: SliceCaller | undefined): void {
   // Somebody asked for this partition outright — a prime hook, or a read that selects all of it. The rows are what
   // they asked for, and `prime: false` is not advice that applies, so there is nothing to say.
   if (wantedWhole) return;
@@ -289,7 +299,8 @@ function reportOversizedPrime(store: string, partition: string, rows: number, ch
       'slice, check whether the payload that named those rows already carries what they render, and declare ' +
       '`prime: false` on the read if so.',
     severity: 'info',
-    extra: { store, partition, rows, chars },
+    extra: { store, partition, rows, chars, rowLimit: OVERSIZED_PRIME_ROWS, charLimit: OVERSIZED_PRIME_CHARS, ...(caller?.read ? { read: caller.read } : {}) },
+    ...(caller?.callsite ? { callsite: caller.callsite } : {}),
   });
 }
 
@@ -309,6 +320,12 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
    * so the question is only ever whether such a caller has existed, and a refcount would cost an effect per read.
    */
   const wantedWhole = new Set<string>();
+  /** The first caller that asked for a slice of each partition, so an oversized fetch can say who. Dev only. */
+  const sliceCallers = __DEV__ ? createBoundedLru<SliceCaller>(256) : undefined;
+  const noteSliceCaller = (partition: string, opts: PrimeIntent): void => {
+    if (!sliceCallers || sliceCallers.get(partition)) return;
+    sliceCallers.set(partition, { read: opts.read, callsite: renderPhaseOwnerStack() ?? undefined });
+  };
   const queryKey = (parts: readonly string[]): (string | undefined)[] => [cfg.ingestKeyRoot, ...parts];
   const bump = (key: Key, parts: readonly string[], changes: ChangeSet): number =>
     cfg.bump ? cfg.bump(key, changes) : cfg.version.bump(parts, changes);
@@ -348,7 +365,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
         at,
       });
       // A 304 and an unchanged body report negative rows and shredded nothing, so neither is a prime worth flagging.
-      if (rows > 0) reportOversizedPrime(cfg.ingestKeyRoot, partition, rows, chars, wantedWhole.has(partition));
+      if (rows > 0) reportOversizedPrime(cfg.ingestKeyRoot, partition, rows, chars, wantedWhole.has(partition), sliceCallers?.get(partition));
     };
 
     if (res?.__etagMatch) {
@@ -418,6 +435,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     const addressable = addressesPartition(parts);
     const isEnabled = (enabled ?? true) && addressable;
     if (!opts?.slice && addressable) wantedWhole.add(partitionLabel(parts));
+    else if (__DEV__ && opts?.slice && addressable) noteSliceCaller(partitionLabel(parts), opts);
     // Asked for whenever the key names a partition, not only when this caller is enabled. A disabled caller still
     // constructs the observer, and an observer constructed without a staleTime treats its data as stale on arrival —
     // it then fetches when it is enabled, however fresh the cache is.
@@ -439,6 +457,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     // `useFocusGatedQueries` keys on this array's identity, and callers rebuild it each render, so memo on contents.
     const addressable = partitionEntries(keys, cfg.toParts).filter((entry) => addressesPartition(entry.parts));
     if (!opts?.slice) for (const entry of addressable) wantedWhole.add(partitionLabel(entry.parts));
+    else if (__DEV__) for (const entry of addressable) noteSliceCaller(partitionLabel(entry.parts), opts);
     const identity = partitionsKey(addressable.map((entry) => entry.parts));
     const runtime = queryRuntime();
     // Callers pass `meta` inline, a new object each render, so memo on its contents.

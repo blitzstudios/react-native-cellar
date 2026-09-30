@@ -86,6 +86,16 @@ export interface InspectorDegradationEvent extends EventBase {
   error?: string;
   /** Whether this is the scope's first report this session; later ones reach neither the console nor the error sink. */
   first: boolean;
+  /** How many times the scope has been reported this session, this one included. */
+  count: number;
+  /** The report's numbers and names, such as `{ rows: 9422, chars: 5759138 }`; anything else arrives as text. */
+  extra?: Record<string, string | number | boolean | null>;
+  /**
+   * Where it came from: a React owner stack (`\n    at Component (file:line:col)` lines) when `callsiteKind` is
+   * `component`, a JS stack when it is `stack`. The locations are the bundle's, for a tool to symbolicate.
+   */
+  callsite?: string;
+  callsiteKind?: 'component' | 'stack';
 }
 
 /** Anything the inspector's log records. */
