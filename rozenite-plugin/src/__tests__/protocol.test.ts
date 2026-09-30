@@ -98,6 +98,20 @@ describe('the calls the panel makes', () => {
     expect(Array.isArray(await session.rpc.method('caches').invoke({}))).toBe(true);
   });
 
+  it("finds one entity across a store's partitions", async () => {
+    const store = await gamesStore('protocol_entity_store');
+    store.lifecycle.put(NFL, NFL_GAMES);
+    store.lifecycle.put(NBA, [{ team: 'KC', sport: 'nba', score: 1 }]);
+    expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', id: 'KC' })).toEqual({
+      id: 'KC',
+      partitions: [
+        { key: 'nba:2026', rows: 1, version: 1 },
+        { key: 'nfl:2026', rows: 1, version: 1 },
+      ],
+      cacheEntries: [],
+    });
+  });
+
   it("reads a cache's heap and its entries, newest first", async () => {
     const store = await cachedStore('protocol_cached_store');
     store.lifecycle.teamsOf(NFL, ['KC', 'BUF']);

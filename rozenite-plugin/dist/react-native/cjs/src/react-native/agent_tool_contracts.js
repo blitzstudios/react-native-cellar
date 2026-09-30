@@ -56,6 +56,16 @@ exports.cellarAgentTools = {
         readOnly: true,
         idempotent: true,
     },
+    entity: {
+        name: 'entity',
+        description: "One entity (such as a player, by its id) across a store: each partition holding its rows, with how many and the partition version at which it last changed, and its entries in the store's per-entity caches with their values.",
+        inputSchema: {
+            type: 'object',
+            properties: { store: STORE, id: { type: 'string', description: "The entity's id, the value of the store's entity column (describe-store)." } },
+            required: ['store', 'id'],
+        },
+        readOnly: true,
+    },
     entityChanges: {
         name: 'entity-changes',
         description: "The entities (such as players) that changed lately in one partition, newest first, each with the partition version it changed at, and the epoch: the version at which every entity last counted as changed.",
@@ -139,6 +149,7 @@ const agentToolHandlers = (inspector) => ({
         return { total: matching.length, partitions: matching.slice(0, limit) };
     },
     query: (request) => (0, operations_1.runQuery)(inspector, request),
+    entity: async ({ store, id }) => (0, operations_1.storeOf)(inspector, store).entity(id),
     entityChanges: async ({ store, key, limit }) => (0, operations_1.storeOf)(inspector, store).entityChanges(key, limit),
     listCaches: async ({ store, heap }) => ({ caches: (0, operations_1.listCaches)(inspector, store, heap) }),
     cacheEntries: async ({ store, cache, offset, limit }) => (0, operations_1.storeOf)(inspector, store).cacheEntries(cache, { offset, limit }),

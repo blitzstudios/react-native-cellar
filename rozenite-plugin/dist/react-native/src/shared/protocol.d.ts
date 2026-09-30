@@ -2,7 +2,7 @@
  * What the app and the panel say to each other. The panel calls the app's methods over Rozenite's RPC; the app pushes
  * what the stores do, in batches, as `cellar:events`.
  */
-import type { InspectedCache, InspectedCacheEntries, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
+import type { InspectedCache, InspectedCacheEntries, InspectedEntity, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent } from '@sleeperhq/react-native-cellar/inspector';
 export declare const PLUGIN_ID = "@sleeperhq/rozenite-plugin-cellar";
 /** A value a query binds to a `?`. */
 export type SqlParam = string | number | null;
@@ -38,6 +38,11 @@ export type CellarMethods = {
     partitions: (params: {
         store: string;
     }) => Promise<InspectedPartition[]>;
+    /** One entity across a store's partitions and caches. */
+    entity: (params: {
+        store: string;
+        id: string;
+    }) => Promise<InspectedEntity>;
     /** A partition's recently changed entities. */
     entityChanges: (params: PartitionRef & {
         limit?: number;
@@ -74,4 +79,4 @@ export type CellarEventMap = {
         json: string;
     };
 };
-export type { InspectedCache, InspectedCacheEntries, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };
+export type { InspectedCache, InspectedCacheEntries, InspectedEntity, InspectedEntityChanges, IngestRollup, IngestTiming, InspectedPartition, InspectedQueryResult, InspectedSchema, InspectedSummary, InspectorEvent };

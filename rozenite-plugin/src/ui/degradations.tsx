@@ -2,36 +2,9 @@ import { Fragment, useMemo, useState } from 'react';
 import type { InspectorEvent } from '../shared/protocol';
 import { Callsite, ExtraChips, shortPath, useSymbolicated } from './callsite';
 import { Empty } from './components';
-import { formatAgo, formatCount } from './format';
+import { formatClock } from './format';
 
 type Degradation = Extract<InspectorEvent, { kind: 'degradation' }>;
-
-/** One scope's reports: how many, when, and the latest one's numbers and callsite. */
-export interface DegradationGroup {
-  scope: string;
-  severity: 'error' | 'info';
-  count: number;
-  firstAt: number;
-  lastAt: number;
-  latest: Degradation;
-}
-
-/** The reports grouped by scope, most recent first. */
-export function groupDegradations(events: readonly InspectorEvent[]): DegradationGroup[] {
-  const groups = new Map<string, DegradationGroup>();
-  for (const event of events) {
-    if (event.kind !== 'degradation') continue;
-    const group = groups.get(event.scope);
-    if (!group) {
-      groups.set(event.scope, { scope: event.scope, severity: event.severity, count: event.count ?? 1, firstAt: event.at, lastAt: event.at, latest: event });
-      continue;
-    }
-    group.count = Math.max(group.count + 1, event.count ?? 0);
-    group.lastAt = event.at;
-    group.latest = event;
-  }
-  return Array.from(groups.values()).sort((a, b) => b.lastAt - a.lastAt);
-}
 
 /** A scope as its rule and its subject: `player_stats_store_ingest.oversized_prime.week:…` → `oversized_prime` and `week:…`. */
 export function splitScope(scope: string): { rule: string; subject: string } {
@@ -39,6 +12,26 @@ export function splitScope(scope: string): { rule: string; subject: string } {
   if (parts.length < 2) return { rule: scope, subject: '' };
   // `store.rule`, `store.rule.subject`, and `area.rule.subject` all put the rule second.
   return { rule: parts[1], subject: parts.length > 2 ? parts.slice(2).join('.') : parts[0] };
+}
+
+/**
+ * A report's numbers without what its row already says: names that appear in its scope (the store, the partition) are
+ * dropped, and a limit is folded into the number it limits, as `rows 9,422 / 5,000`.
+ */
+export function reportNumbers(event: Degradation): Record<string, string | number | boolean | null> | undefined {
+  if (!event.extra) return undefined;
+  const extra = event.extra;
+  // `rows` pairs with `rowLimit` as well as `rowsLimit`.
+  const limitOf = (key: string) => extra[`${key}Limit`] ?? extra[`${key.replace(/s$/, '')}Limit`];
+  const limits = (key: string) => key.endsWith('Limit') && [key.slice(0, -5), `${key.slice(0, -5)}s`].some((base) => base in extra);
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(extra)) {
+    if (limits(key)) continue;
+    if (typeof value === 'string' && event.scope.includes(value)) continue;
+    const limit = limitOf(key);
+    out[key] = typeof value === 'number' && typeof limit === 'number' ? `${value.toLocaleString('en-US')} / ${limit.toLocaleString('en-US')}` : value;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The first frame of the app's own code in a callsite, once symbolicated, as `file:line`. */
@@ -55,60 +48,55 @@ function FirstAppFrame({ stack }: { stack?: string }) {
   );
 }
 
-/** Every scope that has reported, with its count, numbers and callsite. */
-export function Degradations({ events, now, store }: { events: readonly InspectorEvent[]; now: number; store?: (scope: string) => boolean }) {
-  const [open, setOpen] = useState<string>();
-  const groups = useMemo(() => groupDegradations(events).filter((group) => !store || store(group.scope)), [events, store]);
-  if (!groups.length) {
-    return <Empty title="None" />;
-  }
+/** Every degradation report, newest first, each on its own row. */
+export function Degradations({ events, after = 0 }: { events: readonly InspectorEvent[]; after?: number }) {
+  const [open, setOpen] = useState<number>();
+  const reports = useMemo(() => events.filter((event): event is Degradation => event.kind === 'degradation' && event.id > after).reverse(), [events, after]);
+  if (!reports.length) return <Empty title="None" />;
   return (
     <table className="table degradations-table">
       <thead>
         <tr>
+          <th>Time</th>
           <th>Rule</th>
           <th>Subject</th>
-          <th className="num">Count</th>
           <th>Numbers</th>
           <th>Callsite</th>
-          <th>Last</th>
         </tr>
       </thead>
       <tbody>
-        {groups.map((group) => {
-          const { rule, subject } = splitScope(group.scope);
-          const isOpen = open === group.scope;
-          const { latest } = group;
+        {reports.map((report) => {
+          const { rule, subject } = splitScope(report.scope);
+          const isOpen = open === report.id;
           return (
-            <Fragment key={group.scope}>
-              <tr className={`clickable-row${group.severity === 'error' ? ' event-error' : ''}`} onClick={() => setOpen(isOpen ? undefined : group.scope)}>
-                <td>
+            <Fragment key={report.id}>
+              <tr className={`clickable-row${report.severity === 'error' ? ' event-error' : ''}`} onClick={() => setOpen(isOpen ? undefined : report.id)}>
+                <td className="time">
                   <span className="disclosure-mark muted">{isOpen ? '▾' : '▸'}</span>
-                  <code>{rule}</code>
-                  {group.severity === 'info' ? <span className="muted"> notice</span> : null}
+                  {formatClock(report.at)}
                 </td>
-                <td className="subject" title={group.scope}>
+                <td>
+                  <code>{rule}</code>
+                  {report.severity === 'info' ? <span className="muted"> notice</span> : null}
+                </td>
+                <td className="subject" title={report.scope}>
                   <code>{subject}</code>
                 </td>
-                <td className="num">{formatCount(group.count)}</td>
                 <td>
-                  <ExtraChips extra={latest.extra} />
+                  <ExtraChips extra={reportNumbers(report)} />
                 </td>
                 <td>
-                  <FirstAppFrame stack={latest.callsite} />
+                  <FirstAppFrame stack={report.callsite} />
                 </td>
-                <td>{formatAgo(group.lastAt, now)}</td>
               </tr>
               {isOpen ? (
                 <tr className="row-detail">
-                  <td colSpan={6}>
+                  <td colSpan={5}>
                     <div className="degradation-detail">
-                      <div>
-                        <code>{group.scope}</code>
-                      </div>
-                      <div className="muted">{latest.context}</div>
-                      {latest.error ? <pre className="json">{latest.error}</pre> : null}
-                      {latest.callsite ? <Callsite stack={latest.callsite} kind={latest.callsiteKind} /> : null}
+                      <code>{report.scope}</code>
+                      <div className="muted">{report.context}</div>
+                      {report.error ? <pre className="json">{report.error}</pre> : null}
+                      {report.callsite ? <Callsite stack={report.callsite} kind={report.callsiteKind} /> : null}
                     </div>
                   </td>
                 </tr>

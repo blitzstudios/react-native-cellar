@@ -1083,3 +1083,60 @@ tfoot td {
   border-top: 1px solid var(--line-strong);
   padding: 4px 10px;
 }
+
+/* Entities */
+
+.entities-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.entities-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 2fr);
+}
+
+.entities-list {
+  border-right: 1px solid var(--line);
+}
+
+.entity-detail {
+  overflow: auto;
+  min-height: 0;
+}
+
+.entity {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.entity-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.entity-header h3 {
+  margin: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-head .button {
+  margin-left: auto;
+}
+
+.frame-file.link {
+  font: inherit;
+  text-align: left;
+}

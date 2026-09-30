@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatAgo, formatCell, formatFetchRows, parseJsonText, parseParams, toCsv, toJsonRows } from '../ui/format';
 import { scopeNamesStore } from '../ui/activity_view';
 import { parseFrames, shortPath } from '../ui/callsite';
-import { groupDegradations, splitScope } from '../ui/degradations';
+import { reportNumbers, splitScope } from '../ui/degradations';
 import { fetchStatsOf } from '../ui/overview';
 import { mergeEvents } from '../ui/use_cellar';
 import type { InspectorEvent } from '../shared/protocol';
@@ -96,15 +96,24 @@ describe('callsites', () => {
   });
 });
 
-describe('degradation groups', () => {
-  const report = (id: number, scope: string, count: number): InspectorEvent => ({ kind: 'degradation', id, at: id, scope, context: 'c', severity: 'info', first: count === 1, count });
+describe('degradation reports', () => {
+  const report = (extra: Record<string, string | number | boolean | null>): Extract<InspectorEvent, { kind: 'degradation' }> => ({
+    kind: 'degradation',
+    id: 1,
+    at: 1,
+    scope: 'player_stats_store_ingest.oversized_prime.week:proj:w=4',
+    context: 'c',
+    severity: 'info',
+    first: true,
+    count: 1,
+    extra,
+  });
 
-  it('groups reports by scope, newest first, counting every report', () => {
-    const groups = groupDegradations([report(1, 'a.rule.x', 1), report(2, 'b.rule', 1), report(3, 'a.rule.x', 2)]);
-    expect(groups.map((group) => [group.scope, group.count, group.latest.id])).toEqual([
-      ['a.rule.x', 2, 3],
-      ['b.rule', 1, 2],
-    ]);
+  it('drops what the scope already says and folds a limit into its number', () => {
+    expect(
+      reportNumbers(report({ store: 'player_stats_store_ingest', partition: 'week:proj:w=4', rows: 9422, rowLimit: 5000, chars: 10, charLimit: 20, via: 'read' })),
+    ).toEqual({ rows: '9,422 / 5,000', chars: '10 / 20', via: 'read' });
+    expect(reportNumbers(report({ store: 'player_stats_store_ingest' }))).toBeUndefined();
   });
 
   it('splits a scope into its rule and subject', () => {

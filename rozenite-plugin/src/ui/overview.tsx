@@ -15,11 +15,16 @@ export function Overview({
   stores,
   events,
   onSelect,
+  cleared,
+  onClear,
 }: {
   rpc: CellarRpc | null;
   stores: StoreOverview[];
   events: readonly InspectorEvent[];
   onSelect: (store: string) => void;
+  /** What was cleared: degradations up to an event id, fetches up to a time. */
+  cleared: OverviewCleared;
+  onClear: (cleared: OverviewCleared) => void;
 }) {
   const now = useNow();
   const [timings, setTimings] = useState<IngestTiming[]>();
@@ -49,7 +54,7 @@ export function Overview({
     return byStore;
   }, [events, now]);
 
-  const fetchStats = useMemo(() => fetchStatsOf(timings ?? []), [timings]);
+  const fetchStats = useMemo(() => fetchStatsOf((timings ?? []).filter((timing) => timing.at > cleared.fetchesBefore)), [timings, cleared.fetchesBefore]);
   const totals = stores.reduce(
     (sum, store) => ({
       rows: sum.rows + store.summary.rows,
@@ -120,7 +125,12 @@ export function Overview({
       </section>
 
       <section>
-        <h3>Fetches <span className="muted small">latest 128</span></h3>
+        <h3 className="section-head">
+          Fetches <span className="muted small">latest 128</span>
+          <button type="button" className="button button-small" onClick={() => onClear({ ...cleared, fetchesBefore: Date.now() })}>
+            Clear
+          </button>
+        </h3>
         {fetchStats.length ? (
           <table className="table">
             <thead>
@@ -160,8 +170,17 @@ export function Overview({
       </section>
 
       <section>
-        <h3>Degradations</h3>
-        <Degradations events={events} now={now} />
+        <h3 className="section-head">
+          Degradations
+          <button
+            type="button"
+            className="button button-small"
+            onClick={() => onClear({ ...cleared, degradationsThrough: events.length ? events[events.length - 1].id : 0 })}
+          >
+            Clear
+          </button>
+        </h3>
+        <Degradations events={events} after={cleared.degradationsThrough} />
       </section>
     </div>
   );
@@ -192,4 +211,10 @@ export function fetchStatsOf(timings: readonly IngestTiming[]): FetchStats[] {
     byStore.set(timing.store, stat);
   }
   return Array.from(byStore.values()).sort((a, b) => b.fetchMs + b.ingestMs - (a.fetchMs + a.ingestMs));
+}
+
+/** What the Overview has cleared, kept by the panel so it survives switching views. */
+export interface OverviewCleared {
+  degradationsThrough: number;
+  fetchesBefore: number;
 }

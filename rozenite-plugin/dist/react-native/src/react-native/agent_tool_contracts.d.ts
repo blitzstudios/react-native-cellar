@@ -91,6 +91,25 @@ export declare const cellarAgentTools: {
         readOnly: true;
         idempotent: true;
     };
+    entity: {
+        name: string;
+        description: string;
+        inputSchema: {
+            type: string;
+            properties: {
+                store: {
+                    readonly type: "string";
+                    readonly description: "The store name, from list-stores, such as \"player_stats_store\".";
+                };
+                id: {
+                    type: string;
+                    description: string;
+                };
+            };
+            required: string[];
+        };
+        readOnly: true;
+    };
     entityChanges: {
         name: string;
         description: string;
@@ -280,6 +299,10 @@ export declare const agentToolHandlers: (inspector: CellarInspector) => {
         partitions: import("@sleeperhq/react-native-cellar/inspector").InspectedPartition[];
     }>;
     query: (request: QueryRequest) => Promise<import("@sleeperhq/react-native-cellar/inspector").InspectedQueryResult>;
+    entity: ({ store, id }: {
+        store: string;
+        id: string;
+    }) => Promise<import("@sleeperhq/react-native-cellar/inspector").InspectedEntity>;
     entityChanges: ({ store, key, limit }: PartitionRef & {
         limit?: number;
     }) => Promise<import("@sleeperhq/react-native-cellar/inspector").InspectedEntityChanges>;
