@@ -24,9 +24,9 @@ export function KindBadge({ kind }: { kind: string }) {
   return <span className={`badge badge-kind badge-kind-${kind}`}>{kind}</span>;
 }
 
-function Icon({ children }: { children: ReactNode }) {
+function Icon({ children, size = 15 }: { children: ReactNode; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       {children}
     </svg>
   );
@@ -38,6 +38,15 @@ export function SaveIcon() {
       <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
       <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
       <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+    </Icon>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <Icon size={13}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
     </Icon>
   );
 }

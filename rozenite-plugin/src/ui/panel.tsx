@@ -1,10 +1,10 @@
 import './panel.css';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { StoreOverview } from '../shared/protocol';
 import { ActivityView } from './activity_view';
 import { CachesView, heapLabel } from './caches_view';
 import { EntitiesView } from './entities_view';
-import { Empty, OpenIcon, SaveIcon, StateBadge } from './components';
+import { CloseIcon, Empty, OpenIcon, SaveIcon, StateBadge } from './components';
 import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
 import { Overview } from './overview';
 import type { OverviewCleared } from './overview';
@@ -40,7 +40,8 @@ export default function CellarPanel() {
   const saving = useSaveDump(live.rpc);
   const { dump } = dumpFile;
   const mode: PanelMode = dump ? 'dump' : 'live';
-  const { state, problem, refreshStores } = live;
+  const { state, problem } = live;
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const rpc = dump ? dump.rpc : live.rpc;
   const stores = dump ? dump.stores : live.stores;
   const events = dump ? NO_EVENTS : live.events;
@@ -74,7 +75,7 @@ export default function CellarPanel() {
 
   return (
     <div className="panel">
-      <nav className="sidebar">
+      <nav className="sidebar" style={{ width: sidebarWidth }}>
         <div className="brand">
           <span className="brand-name">Cellar</span>
           {dump ? (
@@ -90,9 +91,9 @@ export default function CellarPanel() {
           <button
             type="button"
             className="icon-button"
-            title={mode === 'dump' ? "Saving reads the running app's databases" : "Save the app's databases"}
+            title={mode === 'dump' ? "Saving reads the running app's databases" : state === 'connected' ? "Save the app's databases" : 'Saving needs the app'}
             aria-label="Save dump"
-            disabled={mode === 'dump' || !live.rpc || !!saving.progress}
+            disabled={mode === 'dump' || !live.rpc || state !== 'connected' || !!saving.progress}
             onClick={() => live.rpc && saving.save(live.rpc)}
           >
             <SaveIcon />
@@ -125,8 +126,12 @@ export default function CellarPanel() {
           </button>
         ) : null}
         {dump ? (
-          <div className="dump-name" title={dump.name}>
-            <code>{dump.name}</code> <span className="muted">{formatBytes(dump.bytes)}</span>
+          <div className="dump-name">
+            <code title={dump.name}>{dump.name}</code>
+            <span className="muted">{formatBytes(dump.bytes)}</span>
+            <button type="button" className="icon-button icon-button-small" title="Close the dump and go back to the app" aria-label="Close dump" onClick={dumpFile.close}>
+              <CloseIcon />
+            </button>
           </div>
         ) : null}
         {(mode === 'live' ? (['overview', 'activity'] as const) : (['overview'] as const)).map((item) => (
@@ -147,17 +152,8 @@ export default function CellarPanel() {
         {stores.map((candidate) => (
           <StoreNavItem key={candidate.name} store={candidate} events={events} active={candidate.name === selected} onSelect={() => setSelected(candidate.name)} />
         ))}
-        <span className="spacer" />
-        {mode === 'live' ? (
-          <button type="button" className="button button-small nav-refresh" onClick={refreshStores} disabled={!rpc}>
-            Refresh stores
-          </button>
-        ) : (
-          <button type="button" className="button button-small nav-refresh" onClick={dumpFile.close}>
-            Close dump
-          </button>
-        )}
       </nav>
+      <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
 
       <main className="main">
         {dumpFile.loading ? (
@@ -165,6 +161,9 @@ export default function CellarPanel() {
         ) : dumpFile.error ? (
           <Empty title="Couldn't open the dump">
             <p>{dumpFile.error}</p>
+            <button type="button" className="button" onClick={dumpFile.dismissError}>
+              {dump ? 'Back to the dump' : 'Back to the app'}
+            </button>
           </Empty>
         ) : mode === 'live' && state !== 'connected' && !stores.length ? (
           <Empty title={state === 'connecting' ? 'Connecting…' : 'Waiting for the app'}>{problem ? <p>{problem}</p> : null}</Empty>
@@ -223,6 +222,53 @@ export default function CellarPanel() {
         )}
       </main>
     </div>
+  );
+}
+
+const SIDEBAR_WIDTH = { initial: 200, min: 160, max: 480 };
+const SIDEBAR_WIDTH_KEY = 'cellar.sidebarWidth';
+const clampWidth = (width: number) => Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)));
+
+/** The sidebar's width, kept across panel reloads. */
+function useSidebarWidth(): [number, (width: number) => void] {
+  const [width, setWidth] = useState(() => {
+    const saved = Number(globalThis.localStorage?.getItem(SIDEBAR_WIDTH_KEY));
+    return saved ? clampWidth(saved) : SIDEBAR_WIDTH.initial;
+  });
+  useEffect(() => {
+    globalThis.localStorage?.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  }, [width]);
+  return [width, (next) => setWidth(clampWidth(next))];
+}
+
+/** The sidebar's right edge, dragged to resize it; a double click puts it back. */
+function SidebarResizer({ width, onResize }: { width: number; onResize: (width: number) => void }) {
+  const drag = useRef<{ x: number; width: number }>(undefined);
+  return (
+    <div
+      className="sidebar-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuenow={width}
+      aria-valuemin={SIDEBAR_WIDTH.min}
+      aria-valuemax={SIDEBAR_WIDTH.max}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { x: event.clientX, width };
+      }}
+      onPointerMove={(event) => {
+        if (drag.current) onResize(drag.current.width + event.clientX - drag.current.x);
+      }}
+      onPointerUp={() => {
+        drag.current = undefined;
+      }}
+      onPointerCancel={() => {
+        drag.current = undefined;
+      }}
+      onDoubleClick={() => onResize(SIDEBAR_WIDTH.initial)}
+    />
   );
 }
 

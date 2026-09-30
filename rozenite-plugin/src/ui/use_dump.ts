@@ -52,5 +52,15 @@ export function useDump() {
     });
   }, [load]);
 
-  return { dump, loading, error, openFile, close: () => setDump(undefined) };
+  const close = () => {
+    setDump(undefined);
+    setError(undefined);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('dump')) {
+      url.searchParams.delete('dump');
+      url.searchParams.delete('name');
+      window.history.replaceState(null, '', url);
+    }
+  };
+  return { dump, loading, error, openFile, close, dismissError: () => setError(undefined) };
 }
