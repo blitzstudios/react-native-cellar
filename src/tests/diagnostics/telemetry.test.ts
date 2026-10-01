@@ -46,6 +46,19 @@ describe('reportStoreDegradation', () => {
     expect(captureException.mock.calls[0][0].message).toBe('attempt 0');
   });
 
+  it('samples info reports at the sink’s rate, and never errors', () => {
+    configureCellar({ errors: { captureException, captureMessage, infoSampleRate: 0.01 } });
+    random.mockReturnValue(0.5);
+    reportStoreDegradation({ scope: 'player_stats_store.oversized_prime.week', context: 'large', severity: 'info' });
+    reportStoreDegradation({ scope: 'row_table.native_shred.week', context: 'fell back' });
+    expect(captureMessage).not.toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledTimes(1);
+
+    random.mockReturnValue(0.005);
+    reportStoreDegradation({ scope: 'player_stats_store.oversized_prime.season', context: 'large', severity: 'info' });
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('dedups per site, not globally', () => {
     reportStoreDegradation({ scope: 'row_table.native_shred.leaderboard', context: 'a' });
     reportStoreDegradation({ scope: 'row_table.native_shred.schedule', context: 'b' });

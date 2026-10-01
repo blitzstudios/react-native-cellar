@@ -87,9 +87,10 @@ export function reportStoreDegradation(args: {
     console.warn(`[cellar ${severity === 'info' ? 'notice' : 'degraded'}] ${scope}: ${context}`, error ?? '', extra ?? '');
   }
 
-  if (!(sampleRate >= 1) && Math.random() >= sampleRate) return;
-
   const sink = errorSink();
+  const rate = severity === 'info' ? sampleRate * (sink.infoSampleRate ?? 1) : sampleRate;
+  if (!(rate >= 1) && Math.random() >= rate) return;
+
   const captureContext = {
     tags: { cellar_degradation: scope },
     fingerprint: ['cellar-degradation', scope],

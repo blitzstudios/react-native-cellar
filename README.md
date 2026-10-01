@@ -252,6 +252,10 @@ bindSqliteStore('initItemStore', 'items.db', itemStore);
 AppState.addEventListener('change', (state) => state === 'active' && retrySqliteStores());
 ```
 
+Each report Cellar files is sent once per session per site. Errors always reach the sink; `info` notices, such as an
+oversized partition fetch, arrive from nearly every session across a large install base, so `infoSampleRate` (0 to 1,
+default 1) lets the host send a sample: `errors: { captureException, captureMessage, infoSampleRate: 0.01 }`.
+
 On the web, the app loads sql.js and binds each store to a database of its own, held in memory for the page:
 
 ```ts

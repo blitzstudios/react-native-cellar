@@ -26,6 +26,12 @@ export interface ErrorSink {
         /** The report's level, always `info`. */
         level: 'info';
     }) => void;
+    /**
+     * The chance an info-level report reaches {@linkcode ErrorSink.captureMessage | captureMessage}, from 0 to 1; 1 by
+     * default. Info reports are expected events sent once per session, so across a large install base the same few arrive
+     * from nearly every session, and a sample says as much. Errors are always sent.
+     */
+    infoSampleRate?: number;
 }
 /** A React Query key built by Cellar: the store's query root, then the partition's key parts. */
 export type QueryKey = readonly (string | undefined)[];

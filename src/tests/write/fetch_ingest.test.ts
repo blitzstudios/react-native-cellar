@@ -224,16 +224,56 @@ describe('createFetchIngest — unchanged body short-circuit', () => {
   });
 
   it('keeps the etag from an unchanged body, so the next fetch can still go conditional', async () => {
+    // A pushed write retires the stored ETag; a refetch that turns out unchanged puts it back.
     const harness = makeCfg();
     harness.setResponse({ data: '[{"id":"a"}]', etag: 'W/"1"' });
     const ingest = createFetchIngest(harness.cfg);
     await ingest.prefetch('week');
     (harness.cfg.setEtag as jest.Mock).mockClear();
 
-    harness.setResponse({ data: '[{"id":"a"}]', etag: 'W/"2"' });
+    const out = await ingest.prefetch('week');
+
+    expect(out.count).toBe(-2);
+    expect(harness.cfg.setEtag).toHaveBeenCalledWith('week', 'W/"1"');
+  });
+
+  it('takes a body with the ETag it was shredded under as unchanged, without reading the body', async () => {
+    const harness = makeCfg();
+    harness.setResponse({ data: '[{"id":"a","pts":1}]', etag: 'W/"1"' });
+    const ingest = createFetchIngest(harness.cfg);
     await ingest.prefetch('week');
 
-    expect(harness.cfg.setEtag).toHaveBeenCalledWith('week', 'W/"2"');
+    // The bytes differ but the server names the same body: the ETag decides, so nothing hashes the body.
+    harness.setResponse({ data: '[{"id":"a","pts":1} ]', etag: 'W/"1"' });
+    const out = await ingest.prefetch('week');
+
+    expect(out.count).toBe(-2);
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('shreds a body whose ETag differs from the one shredded last', async () => {
+    const harness = makeCfg();
+    harness.setResponse({ data: '[{"id":"a","pts":1}]', etag: 'W/"1"' });
+    const ingest = createFetchIngest(harness.cfg);
+    await ingest.prefetch('week');
+
+    harness.setResponse({ data: '[{"id":"a","pts":2}]', etag: 'W/"2"' });
+    const out = await ingest.prefetch('week');
+
+    expect(out.count).toBe(5);
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('shreds a body with an ETag after one that had none, since nothing names the earlier body', async () => {
+    const harness = makeCfg();
+    harness.setResponse({ data: '[{"id":"a"}]' });
+    const ingest = createFetchIngest(harness.cfg);
+    await ingest.prefetch('week');
+
+    harness.setResponse({ data: '[{"id":"a"}]', etag: 'W/"1"' });
+    const out = await ingest.prefetch('week');
+
+    expect(out.count).toBe(5);
   });
 
   it('records the skip, so a session can tell a no-op refetch from one that landed rows', async () => {
