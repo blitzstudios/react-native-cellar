@@ -7,7 +7,7 @@
 import type { BoundedLru } from '../caches';
 import { KEY_SEP } from '../key';
 import { GROUP_SEP } from '../args_key';
-import { estimateHeap, estimateInto, previewValue } from './heap';
+import { estimateHeap, estimateIntoSliced, previewValue, sliceClock } from './heap';
 import type { HeapEstimate } from './heap';
 
 /** A {@linkcode byPartition} cache, which holds a value per partition, or a {@linkcode byEntity} one, per entity. */
@@ -133,31 +133,50 @@ export interface InspectedCachesHeap {
 
 /** A store walk counts at most this many objects. */
 const STORE_WALK_OBJECTS = 1_000_000;
-const storeHeaps = new Map<string, { signature: string; heap: InspectedCachesHeap }>();
+const storeHeaps = new Map<string, { signature: string; heap: Promise<InspectedCachesHeap> }>();
 
 /**
  * What `store`'s caches hold on the heap together, walked with one set of seen objects so that a row one cache hands
- * back and another indexes counts once. The walk visits every entry, so it is kept until a cache changes.
+ * back and another indexes counts once. The walk visits every entry, megabytes of rows for a store that ranks, so it
+ * runs in slices that yield between them, and its result is kept until a cache changes; callers that ask while it
+ * runs share it.
  */
-export function inspectedCachesHeap(store: string): InspectedCachesHeap {
+export function inspectedCachesHeap(store: string): Promise<InspectedCachesHeap> {
   const prefix = `${store.replace(/_store$/, '')}.`;
   const list = Array.from(caches.values()).filter((cache) => cache.name.startsWith(prefix));
   const signature = list.map(({ name, stats, table }) => `${name}:${stats.builds}:${stats.evictions}:${table.size}`).join('|');
   const known = storeHeaps.get(prefix);
   if (known?.signature === signature) return known.heap;
-  const estimate: HeapEstimate = { bytes: 0, objects: 0, partial: false };
-  const seen = new Set<object>();
-  let separate = 0;
-  for (const { table } of list) {
-    for (const [key, slot] of table.entries()) {
-      estimate.bytes += ENTRY_OVERHEAD_BYTES + 16 + key.length;
-      estimateInto(slot.value, estimate, seen, STORE_WALK_OBJECTS);
-      separate += bytesOf(key, slot).bytes;
-    }
-  }
-  const heap = { heapBytes: estimate.bytes, sharedBytes: Math.max(0, separate - estimate.bytes), partial: estimate.partial };
+  const heap = walkCachesHeap(list);
   storeHeaps.set(prefix, { signature, heap });
+  heap.catch(() => {
+    if (storeHeaps.get(prefix)?.heap === heap) storeHeaps.delete(prefix);
+  });
   return heap;
+}
+
+async function walkCachesHeap(list: readonly RegisteredCache[]): Promise<InspectedCachesHeap> {
+  const estimate: HeapEstimate = { bytes: 0, objects: 0, partial: false };
+  const values: unknown[] = [];
+  let separate = 0;
+  const entries = list.flatMap(({ table }) => Array.from(table.entries()));
+  const clock = sliceClock();
+  for (let i = 0; i < entries.length; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (i % 256 === 0 && clock.due()) await clock.yield();
+    const [key, slot] = entries[i];
+    estimate.bytes += ENTRY_OVERHEAD_BYTES + 16 + key.length;
+    values.push(slot.value);
+    if (!slotBytes.has(slot)) {
+      const own: HeapEstimate = { bytes: 0, objects: 0, partial: false };
+      // eslint-disable-next-line no-await-in-loop
+      await estimateIntoSliced([slot.value], own, new Set<object>());
+      slotBytes.set(slot, { bytes: own.bytes, partial: own.partial });
+    }
+    separate += bytesOf(key, slot).bytes;
+  }
+  await estimateIntoSliced(values, estimate, new Set<object>(), STORE_WALK_OBJECTS);
+  return { heapBytes: estimate.bytes, sharedBytes: Math.max(0, separate - estimate.bytes), partial: estimate.partial };
 }
 
 /** Options for {@linkcode inspectedCaches}. */

@@ -18,6 +18,17 @@ export interface HeapEstimate {
  * stopping once the estimate has counted `maxObjects`.
  */
 export declare function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>, maxObjects?: number): void;
+/**
+ * Adds every one of `values` to a running estimate as {@linkcode estimateInto} does, but in slices of about `sliceMs`
+ * that yield to the event loop between them, so a walk over many megabytes of cached rows never holds the JS thread
+ * for longer than a slice.
+ */
+export declare function estimateIntoSliced(values: readonly unknown[], estimate: HeapEstimate, seen: Set<object>, maxObjects?: number, sliceMs?: number): Promise<void>;
+/** A budget for work done in slices: `due` once a slice has run `sliceMs`, and `yield` waits a turn and starts the next. */
+export declare function sliceClock(sliceMs?: number): {
+    due: () => boolean;
+    yield: () => Promise<void>;
+};
 /** A fresh estimate of `value` on its own. */
 export declare function estimateHeap(value: unknown): HeapEstimate;
 /**

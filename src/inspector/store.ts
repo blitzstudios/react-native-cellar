@@ -203,7 +203,7 @@ export interface RunningStore {
 }
 
 const DEFAULT_LIMIT = 500;
-const CACHE_TOTALS_MS = 5000;
+const CACHE_TOTALS_MS = 15_000;
 const MAX_LIMIT = 10_000;
 const HEX_PREVIEW_BYTES = 64;
 
@@ -299,10 +299,10 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
 
   /** The caches' totals, estimated at most every {@linkcode CACHE_TOTALS_MS}, since a summary is asked for after every burst of writes. */
   let totals: { at: number; value: InspectedSummary['caches'] } | undefined;
-  const cacheTotals = (): InspectedSummary['caches'] => {
+  const cacheTotals = async (): Promise<InspectedSummary['caches']> => {
     if (totals && Date.now() - totals.at < CACHE_TOTALS_MS) return totals.value;
     const list = inspectedCaches(source.name);
-    const heap = inspectedCachesHeap(source.name);
+    const heap = await inspectedCachesHeap(source.name);
     const value = {
       count: list.length,
       entries: list.reduce((sum, cache) => sum + cache.entries, 0),
@@ -331,7 +331,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
     summary: async () => {
       const binding = source.binding();
       const running = source.running();
-      const caches = cacheTotals();
+      const caches = await cacheTotals();
       if (!running) return { binding, rows: 0, partitions: 0, caches };
       const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
       const keys = new Set([...counts.keys(), ...records.keys()]);

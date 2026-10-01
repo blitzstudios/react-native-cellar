@@ -90,9 +90,11 @@ export interface InspectedCachesHeap {
 }
 /**
  * What `store`'s caches hold on the heap together, walked with one set of seen objects so that a row one cache hands
- * back and another indexes counts once. The walk visits every entry, so it is kept until a cache changes.
+ * back and another indexes counts once. The walk visits every entry, megabytes of rows for a store that ranks, so it
+ * runs in slices that yield between them, and its result is kept until a cache changes; callers that ask while it
+ * runs share it.
  */
-export declare function inspectedCachesHeap(store: string): InspectedCachesHeap;
+export declare function inspectedCachesHeap(store: string): Promise<InspectedCachesHeap>;
 /** Options for {@linkcode inspectedCaches}. */
 export interface InspectedCachesOptions {
     /** Estimates what each cache holds on the JS heap; only entries built since the last estimate are walked. */

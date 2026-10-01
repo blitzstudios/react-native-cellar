@@ -28,13 +28,22 @@ export interface HeapEstimate {
 
 const WIDE = /[^\u0000-\u00ff]/;
 
+/** How many objects a sliced walk counts between looks at the clock. */
+const OBJECTS_PER_CLOCK_CHECK = 256;
+
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
 /**
- * Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`, and
- * stopping once the estimate has counted `maxObjects`.
+ * Counts what is on `stack` into `estimate`, popping as it goes. Returns false when `pause` asked it to stop, leaving
+ * the rest on `stack` to resume from, and true once the stack is empty or the estimate has counted `maxObjects`.
  */
-export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>, maxObjects = MAX_OBJECTS): void {
-  const stack: unknown[] = [value];
+function walk(stack: unknown[], estimate: HeapEstimate, seen: Set<object>, maxObjects: number, pause?: () => boolean): boolean {
+  let sinceClock = 0;
   while (stack.length) {
+    if (pause && (sinceClock += 1) >= OBJECTS_PER_CLOCK_CHECK) {
+      sinceClock = 0;
+      if (pause()) return false;
+    }
     const next = stack.pop();
     if (typeof next === 'string') {
       estimate.bytes += STRING_BYTES + (WIDE.test(next) ? next.length * 2 : next.length);
@@ -50,7 +59,8 @@ export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<o
     if (seen.has(next)) continue;
     if (estimate.objects >= maxObjects) {
       estimate.partial = true;
-      return;
+      stack.length = 0;
+      return true;
     }
     seen.add(next);
     estimate.objects += 1;
@@ -71,6 +81,41 @@ export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<o
       for (const key of keys) stack.push((next as Record<string, unknown>)[key]);
     }
   }
+  return true;
+}
+
+/**
+ * Adds `value` to a running estimate, counting each object at most once across the walk that owns `seen`, and
+ * stopping once the estimate has counted `maxObjects`.
+ */
+export function estimateInto(value: unknown, estimate: HeapEstimate, seen: Set<object>, maxObjects = MAX_OBJECTS): void {
+  walk([value], estimate, seen, maxObjects);
+}
+
+/**
+ * Adds every one of `values` to a running estimate as {@linkcode estimateInto} does, but in slices of about `sliceMs`
+ * that yield to the event loop between them, so a walk over many megabytes of cached rows never holds the JS thread
+ * for longer than a slice.
+ */
+export async function estimateIntoSliced(values: readonly unknown[], estimate: HeapEstimate, seen: Set<object>, maxObjects = MAX_OBJECTS, sliceMs = 4): Promise<void> {
+  const stack = values.slice().reverse();
+  const clock = sliceClock(sliceMs);
+  while (!walk(stack, estimate, seen, maxObjects, clock.due)) {
+    // eslint-disable-next-line no-await-in-loop
+    await clock.yield();
+  }
+}
+
+/** A budget for work done in slices: `due` once a slice has run `sliceMs`, and `yield` waits a turn and starts the next. */
+export function sliceClock(sliceMs = 4): { due: () => boolean; yield: () => Promise<void> } {
+  let deadline = now() + sliceMs;
+  return {
+    due: () => now() >= deadline,
+    yield: async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      deadline = now() + sliceMs;
+    },
+  };
 }
 
 /** A fresh estimate of `value` on its own. */

@@ -1,4 +1,4 @@
-import { estimateHeap, previewValue } from '../../inspector/heap';
+import { estimateHeap, estimateInto, estimateIntoSliced, previewValue } from '../../inspector/heap';
 
 describe('estimateHeap', () => {
   it('grows with what a value holds, and counts a shared object once', () => {
@@ -23,6 +23,37 @@ describe('estimateHeap', () => {
     expect(estimateHeap(new Map([['k', { v: 1 }]])).objects).toBe(2);
     expect(estimateHeap(new Set([{ v: 1 }, { v: 2 }])).objects).toBe(3);
     expect(estimateHeap(cyclic).objects).toBe(1);
+  });
+});
+
+describe('estimateIntoSliced', () => {
+  const rows = Array.from({ length: 20_000 }, (_, i) => ({ id: String(i), team: 'KC', stats: { pts: i, yds: i * 2 } }));
+
+  it('reaches the estimate a single walk does, counting an object shared between values once', async () => {
+    const values = [rows, rows.slice(0, 100)];
+    const sliced = { bytes: 0, objects: 0, partial: false };
+    await estimateIntoSliced(values, sliced, new Set(), undefined, 0);
+    const single = { bytes: 0, objects: 0, partial: false };
+    const seen = new Set<object>();
+    estimateInto(values[0], single, seen);
+    estimateInto(values[1], single, seen);
+    expect(sliced).toEqual(single);
+  });
+
+  it('yields to the event loop between slices', async () => {
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+    }, 0);
+    await estimateIntoSliced([rows], { bytes: 0, objects: 0, partial: false }, new Set(), undefined, 0);
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(0);
+  });
+
+  it('stops at its object limit and says the estimate is partial', async () => {
+    const estimate = { bytes: 0, objects: 0, partial: false };
+    await estimateIntoSliced([rows], estimate, new Set(), 1000, 0);
+    expect(estimate).toMatchObject({ objects: 1000, partial: true });
   });
 });
 
