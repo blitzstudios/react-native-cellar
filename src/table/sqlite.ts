@@ -137,10 +137,14 @@ export function createSqliteRowTable<Row extends RowShape>(
    * shred cannot join the diff's transaction, so a second write starting in between would empty or refill the stage
    * the first one is about to diff. SQLite serializes writes on the one writer handle anyway, so this costs nothing.
    */
-  let writeTail: Promise<unknown> = Promise.resolve();
+  /** Settles with nothing, so the queue does not keep the last write's result, a whole partition's change set, alive. */
+  let writeTail: Promise<void> = Promise.resolve();
   function serialized<T>(write: () => Promise<T>): Promise<T> {
     const run = writeTail.then(write, write);
-    writeTail = run.catch(() => undefined);
+    writeTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 

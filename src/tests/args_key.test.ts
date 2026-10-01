@@ -3,7 +3,7 @@
  * share one cache entry, so a value that changes the answer and not the key would serve one caller another's data.
  */
 
-import { ArgValue, argsKeyOf, cacheKey, isArgPresent, partitionsKey, stableKey } from '../args_key';
+import { ArgValue, argsKeyOf, cacheKey, identityOf, isArgPresent, partitionsKey, stableKey } from '../args_key';
 import { resetOnceGuards } from '../diagnostics/once_guard';
 import { itDev } from '../testing/dev_mode';
 
@@ -96,6 +96,43 @@ describe('argsKeyOf', () => {
     const args = { cohort: 'KC' };
     argsKeyOf(['us'], args);
     expect(Object.isFrozen(args)).toBe(false);
+  });
+});
+
+describe('identityOf', () => {
+  /** A part that counts how often its content is read, which is how often it is serialized. */
+  const countingPart = () => {
+    const part = { pts: 0, scoring: { yds: 1 } };
+    let reads = 0;
+    Object.defineProperty(part, 'pts', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return 4;
+      },
+    });
+    return { part, serializations: () => reads };
+  };
+
+  itDev('serializes a held part once per turn however often a loop keys it', () => {
+    const { part, serializations } = countingPart();
+    const first = identityOf(part);
+    for (let i = 0; i < 1000; i += 1) expect(identityOf(part)).toBe(first);
+    expect(serializations()).toBe(2);
+  });
+
+  itDev('still notices a part mutated after a turn, and warns once', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const part: { scoring: { pts: number } } = { scoring: { pts: 1 } };
+    const before = identityOf(part);
+    await Promise.resolve();
+    await Promise.resolve();
+    part.scoring.pts = 2;
+    expect(identityOf(part)).not.toBe(before);
+    expect(identityOf(part)).toBe(stableKey({ scoring: { pts: 2 } }));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toMatch(/mutated after the read keyed it/);
+    warn.mockRestore();
   });
 });
 
