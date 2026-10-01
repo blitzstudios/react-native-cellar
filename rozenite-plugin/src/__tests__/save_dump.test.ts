@@ -88,7 +88,8 @@ it('writes the whole dump into the picked file, part by part, in order', async (
     joined.set(chunk, at);
     at += chunk.length;
   }
-  expect(joined).toEqual(bytes);
+  // Compared as buffers: `toEqual` walks two megabytes element by element, seconds on a slow CI runner.
+  expect(Buffer.from(joined).equals(Buffer.from(bytes))).toBe(true);
   expect(picker.closed()).toBe(true);
   expect(opened).toEqual(['/device/test-dump.db']);
   expect(progress.at(-1)).toEqual({ saved: size, size });
