@@ -226,9 +226,12 @@ export interface RowTable<Row extends RowShape> {
      * body and writes the rows in C++, so no JS objects are built for them; otherwise `parseRows` builds them in JS.
      *
      * Returns the entity ids that were added, removed or changed, and the number of rows written. `partition` is the
-     * description the native shred spec picks its variant and binds from; without it, they get `where`.
+     * description the native shred spec picks its variant and binds from; without it, they get `where`. `inJs` skips the
+     * native shredder and always parses with `parseRows`, still taking its turn in the table's write queue.
      */
-    shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object): Promise<WriteResult>;
+    shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object, opts?: {
+        inJs?: boolean;
+    }): Promise<WriteResult>;
     /** The first stored row whose columns equal the values in `where`, or `undefined` if none does. */
     getOne(where: Partial<Row>): Row | undefined;
     /**
