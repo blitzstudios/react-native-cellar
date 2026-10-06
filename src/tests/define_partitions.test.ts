@@ -175,16 +175,16 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
     const real = createTestRowTable(SCHEMA);
     const table: RowTable<EventRow> = {
       ...real,
-      shred: jest.fn(async () => {
-        throw new Error('native shred failed');
+      shred: jest.fn(async (where, rawJson, parseRows, partition, opts) => {
+        if (!opts?.inJs) throw new Error('native shred failed');
+        return real.shred(where, rawJson, parseRows, partition, opts);
       }),
-      overwrite: jest.fn(real.overwrite),
     };
     const harness = makeEvents({ table });
 
     await harness.events.lifecycle.fetch(US);
 
-    expect(table.overwrite).toHaveBeenCalled();
+    expect(table.shred).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), expect.any(Function), expect.anything(), { inJs: true });
     expect(real.find(harness.events.where(US))).toHaveLength(2);
     expect(degradeMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'events_store.raw_ingest' }));
   });
@@ -207,8 +207,11 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
 
     await events.lifecycle.fetch(US);
 
-    expect(table.shred).not.toHaveBeenCalled();
-    expect(table.overwrite).toHaveBeenCalled();
+    // Parsed in JS, but still through the table's write queue, so it never starts a batch inside another write.
+    expect(table.shred).toHaveBeenCalledTimes(1);
+    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), expect.anything(), { inJs: true });
+    expect(table.overwrite).not.toHaveBeenCalled();
+    expect(real.find(events.where(US))).toHaveLength(1);
     expect(degradeMock).not.toHaveBeenCalled();
   });
 

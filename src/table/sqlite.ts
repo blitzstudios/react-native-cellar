@@ -292,9 +292,15 @@ export function createSqliteRowTable<Row extends RowShape>(
     return [[`DELETE FROM ${schema.table}${sql};`, params], ...syncDiff.insertInto(schema.table, rows)];
   };
 
-  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition: object): Promise<WriteResult> {
+  async function shredOrParse(
+    where: Partial<Row>,
+    rawJson: string,
+    parseRows: (rawJson: string) => ReplaceRow<Row>[],
+    partition: object,
+    inJs: boolean,
+  ): Promise<WriteResult> {
     const direct = partitionIsEmpty(where);
-    if (conn.shredJsonArrayAsync && nativeShredSpec) {
+    if (!inJs && conn.shredJsonArrayAsync && nativeShredSpec) {
       try {
         const variant = nativeShredSpec.variant(partition as Readonly<Record<string, unknown>>);
         const spec = nativeShredSpec.specs[variant];
@@ -418,10 +424,16 @@ export function createSqliteRowTable<Row extends RowShape>(
       return result;
     },
 
-    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object): Promise<WriteResult> {
+    async shred(
+      where: Partial<Row>,
+      rawJson: string,
+      parseRows: (rawJson: string) => ReplaceRow<Row>[],
+      partition?: object,
+      opts?: { inJs?: boolean },
+    ): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where)));
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, !!opts?.inJs)));
     },
 
     getOne(where: Partial<Row>): Row | undefined {

@@ -470,22 +470,25 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     const partition = describe(key);
     const rowsWhere = where(key);
     const parse = (raw: string): Row[] => spec.toRows(partition, raw, key) as Row[];
-    const inJs = (): WriteResult => table.overwrite(rowsWhere, parse(rawJson));
+    // Through the table's write queue, like the native shred: a synchronous `overwrite` here would start its batch on
+    // the writer while another partition's shred still holds a savepoint on it (nitro does not queue `executeAsync`),
+    // and SQLite refuses the batch's BEGIN as a nested transaction — whose ROLLBACK then also undoes that shred.
+    const inJs = (): Promise<WriteResult> => table.shred(rowsWhere, rawJson, parse, partition as object, { inJs: true });
 
     let result: WriteResult;
     if (spec.canShredNatively?.(partition) === false) {
-      result = inJs();
+      result = await inJs();
     } else {
       try {
         result = await table.shred(rowsWhere, rawJson, parse, partition as object);
       } catch (error) {
         reportStoreDegradation({
           scope: `${name}_store.raw_ingest`,
-          context: 'async raw ingest failed; re-parsed and retried through the synchronous path',
+          context: 'async raw ingest failed; re-parsed and retried through the JS parse path',
           error,
           extra: { store: name, partition: partitionLabel(toParts(key)) },
         });
-        result = inJs();
+        result = await inJs();
       }
     }
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());

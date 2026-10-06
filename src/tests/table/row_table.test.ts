@@ -877,6 +877,27 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     const staged = batches[0].find(([sql]) => sql.startsWith('INSERT OR REPLACE INTO temp.things__async_stage_'));
     expect(staged?.[1]).toEqual(['a', 'us', 'NE', 1]);
   });
+  it('a shred parsed in JS waits for a native shred still running, rather than starting a batch inside its savepoint', async () => {
+    // The device failure (SLEEPER-PROD-8469): nitro does not queue `executeAsync`, so a batch started while a native
+    // shred holds `SAVEPOINT nitro_shred` on the writer is refused as a nested transaction.
+    const { conn, batches } = makeConn();
+    let finishShred!: (rows: number) => void;
+    const shredJsonArrayAsync = jest.fn(() => new Promise<number>((resolve) => (finishShred = resolve)));
+    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] });
+
+    const native = db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+    const inJs = db.shred({ region: 'eu' }, '[]', () => [row('x', 'eu', 'BOS', 9)], undefined, { inJs: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(shredJsonArrayAsync).toHaveBeenCalledTimes(1);
+    expect(batches).toHaveLength(0);
+
+    finishShred(1);
+    await Promise.all([native, inJs]);
+
+    expect(shredJsonArrayAsync).toHaveBeenCalledTimes(1);
+    expect(batches.flat().some(([sql, params]) => sql.startsWith('INSERT') && params.includes('x'))).toBe(true);
+  });
 });
 
 describe('row_table — inserts are grouped into multi-row statements', () => {
