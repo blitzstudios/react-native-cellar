@@ -182,7 +182,7 @@ function EventSummary({ event }: { event: InspectorEvent }) {
     case 'degradation':
       return (
         <span>
-          <code>{event.scope}</code> {event.severity === 'info' ? <span className="muted">notice</span> : null}
+          <code>{event.scope}</code> {event.severity !== 'error' ? <span className="muted">{event.severity === 'info' ? 'notice' : 'advice'}</span> : null}
  <ExtraChips extra={reportNumbers(event)} />
         </span>
       );

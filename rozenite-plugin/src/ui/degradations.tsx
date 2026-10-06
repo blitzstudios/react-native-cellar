@@ -77,7 +77,7 @@ export function Degradations({ events, after = 0 }: { events: readonly Inspector
                 </td>
                 <td>
                   <code>{rule}</code>
-                  {report.severity === 'info' ? <span className="muted"> notice</span> : null}
+                  {report.severity !== 'error' ? <span className="muted"> {report.severity === 'info' ? 'notice' : 'advice'}</span> : null}
                 </td>
                 <td className="subject" title={report.scope}>
                   <code>{subject}</code>
