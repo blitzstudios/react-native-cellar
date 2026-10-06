@@ -100,6 +100,7 @@ export function createPushIngest<Item, Row extends RowShape, Key>(config: PushIn
       runFlush().catch((error) => {
         reportStoreDegradation({
           scope: `${name}.flush_aborted`,
+          group: 'push.flush_aborted',
           context: 'the push flush threw outside the write, leaving the partitions it had not reached unbumped and their readers stale until the next flush',
           error,
         });
@@ -147,6 +148,7 @@ export function createPushIngest<Item, Row extends RowShape, Key>(config: PushIn
                 requeue(key, unwritten);
                 reportStoreDegradation({
                   scope: `${name}.flush`,
+                  group: 'push.flush',
                   context: 'a batch of pushed rows failed to persist; it is requeued and retried after a delay',
                   error,
                   extra: { partitionKey: String(key), rowCount: rows.length, requeued: unwritten.length },

@@ -67,6 +67,7 @@ function createMemoWatch({ name, keyedBy }: MemoDiagnostics, maxEntries: number,
       if (!stats.hits && stats.stale + stats.absent === NEVER_HIT_REPORT_AT)
         reportStoreDegradation({
           scope: `memo.never_hit.${name}`,
+          severity: 'verbose',
           context: `lookups keyed by ${keyedBy} never answered from the entry, so whatever calls this already holds the value`,
           extra: numbers(),
         });
@@ -75,6 +76,7 @@ function createMemoWatch({ name, keyedBy }: MemoDiagnostics, maxEntries: number,
       if (stats.rereads !== UNDERSIZED_REPORT_AT) return;
       reportStoreDegradation({
         scope: `memo.undersized.${name}`,
+        severity: 'verbose',
         context: `keys evicted for capacity were read again, so values keyed by ${keyedBy} are being rebuilt and their readers repainted`,
         extra: numbers(),
       });

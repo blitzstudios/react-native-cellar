@@ -86,6 +86,7 @@ export function bindSqlJsStore(label: string, SQL: SqlJsModule, store: BindableS
   } catch (error) {
     reportStoreDegradation({
       scope: `sqljs.bind.${label}`,
+      group: 'sqljs.bind',
       context: 'failed to bind the store to sql.js; its reads are empty for the life of the page',
       error,
       extra: { label },

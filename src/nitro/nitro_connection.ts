@@ -68,6 +68,7 @@ function applyPragmas(conn: ReturnType<typeof open>, name: string): void {
     } catch (error) {
       reportStoreDegradation({
         scope: `nitro_connection.pragma.${name}`,
+        group: 'nitro_connection.pragma',
         context: `failed to apply \`${pragma.sql}\` — ${pragma.cost}`,
         error,
         extra: { connection: name, pragma: pragma.sql },
@@ -205,6 +206,7 @@ export function openNitroConnection(name: string, opts?: NitroConnectionOptions)
     } catch (error) {
       reportStoreDegradation({
         scope: `nitro_connection.reader.${name}`,
+        group: 'nitro_connection.reader',
         context:
           'failed to open the dedicated reader handle — reads fall back to the writer, where a read that needs a transaction can collide ' +
           'with an ingest and send the store through a reopen and a refetch',
@@ -330,6 +332,7 @@ export function bindSqliteStore(label: string, dbName: string, store: BindableSt
     if (error !== undefined) {
       reportStoreDegradation({
         scope: `nitro_connection.bind_in_memory.${label}`,
+        group: 'nitro_connection.bind_in_memory',
         context: 'the store was asked to run in memory, and its in-memory database would not open; its reads are empty this session',
         error,
         extra: { label },
@@ -359,6 +362,7 @@ export function bindSqliteStore(label: string, dbName: string, store: BindableSt
   const memoryError = attemptBind(bindInMemory);
   reportStoreDegradation({
     scope: `nitro_connection.bind.${label}`,
+    group: 'nitro_connection.bind',
     context:
       memoryError === undefined
         ? 'failed to bind SQLite, and again after deleting the database — the store runs on its in-memory database until a retry binds it'

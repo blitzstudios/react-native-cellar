@@ -257,7 +257,8 @@ store reopening its database, arrive from nearly every session across a large in
 1, default 1) lets the host send a sample. A storage failure, such as a full disk, is sent as an `info` notice: the
 store already moved to memory, and nothing in Cellar can fix it. `verbose` reports are advice for a developer, such as an oversized partition
 fetch, and `minSeverity` (default `verbose`) is the lowest severity sent:
-`errors: { captureException, captureMessage, infoSampleRate: 0.01, minSeverity: 'info' }`.
+`errors: { captureException, captureMessage, infoSampleRate: 0.01, minSeverity: 'info' }`. An error is one issue per
+kind across stores, with the store in its `cellar_degradation` tag, and every notice shares a single issue.
 
 On the web, the app loads sql.js and binds each store to a database of its own, held in memory for the page:
 

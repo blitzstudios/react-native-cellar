@@ -851,9 +851,11 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     expect(staged?.[1]).toEqual(['a', 'us', 'NE', 1]);
   });
 
-  it('shred fails without reporting the native shred on a body JS cannot parse either', async () => {
+  it('shred fails on a body JS cannot parse either, reporting the body as a notice rather than the native shred', async () => {
+    resetOnceGuards();
     const captureException = jest.fn();
-    configureCellar({ errors: { captureException, captureMessage: jest.fn() } });
+    const captureMessage = jest.fn();
+    configureCellar({ errors: { captureException, captureMessage } });
     const { conn } = makeConn();
     const shredJsonArrayAsync = jest.fn(async () => {
       throw new Error('nitro_shred: JSON parse failed: UNCLOSED_STRING');
@@ -862,6 +864,7 @@ describe('row_table — sqlite backend (generated SQL)', () => {
 
     await expect(db.shred({ region: 'us' }, '[{"id', (raw) => JSON.parse(raw))).rejects.toThrow(SyntaxError);
     expect(captureException).not.toHaveBeenCalled();
+    expect(captureMessage.mock.calls.map(([, ctx]) => ctx.tags.cellar_degradation)).toEqual(['row_table.unparseable_body.things']);
     configureCellar({ errors: INERT_ERRORS });
   });
 

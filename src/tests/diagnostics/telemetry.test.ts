@@ -115,7 +115,18 @@ describe('reportStoreDegradation', () => {
       const [message, ctx] = captureMessage.mock.calls[0];
       expect(message).toBe('cellar_kill_switch.item: the kill switch disabled this store');
       expect(ctx.level).toBe('info');
-      expect(ctx.fingerprint).toEqual(['cellar-degradation', 'cellar_kill_switch.item']);
+      expect(ctx.fingerprint).toEqual(['cellar-notice']);
+    });
+
+    it('groups an error by its kind across stores, keeping the store in its tag', () => {
+      reportStoreDegradation({ scope: 'player_store.in_memory', group: 'store.in_memory', context: 'moved to memory', error: new Error('boom') });
+      reportStoreDegradation({ scope: 'schedule_store.in_memory', group: 'store.in_memory', context: 'moved to memory', error: new Error('boom') });
+
+      expect(captureException.mock.calls.map(([, ctx]) => ctx.fingerprint)).toEqual([
+        ['cellar-degradation', 'store.in_memory'],
+        ['cellar-degradation', 'store.in_memory'],
+      ]);
+      expect(captureException.mock.calls.map(([, ctx]) => ctx.tags.cellar_degradation)).toEqual(['player_store.in_memory', 'schedule_store.in_memory']);
     });
 
     it('defaults to an exception, so an unexpected fallback keeps its stack', () => {

@@ -525,6 +525,7 @@ export function defineSqliteStore<
           if (dropped) {
             reportStoreDegradation({
               scope: `${config.name}.push`,
+              group: 'store.push',
               context: 'pushed items threw before they were queued, so they were dropped and their rows stay stale until the next push or fetch',
               error: firstError,
               extra: extra({ dropped, total: items.length }),
@@ -610,6 +611,7 @@ export function defineSqliteStore<
       (error, op) =>
         reportStoreDegradation({
           scope: `${config.name}.contention`,
+          group: 'store.contention',
           context:
             `SQLite \`${op}\` was refused because another statement held the connection — absorbed, but the store is one ` +
             'connection short of where it should be, which usually means its dedicated reader never opened',
@@ -620,6 +622,7 @@ export function defineSqliteStore<
         if (statementErrors.seen(config.name, messageOf(error))) return;
         reportStoreDegradation({
           scope: `${config.name}.statement_error`,
+          group: 'store.statement_error',
           context: `a SQLite \`${op}\` read failed on its own statement and answered empty; the connection is fine, and the read's SQL or the value it parsed is not`,
           error,
           extra: extra({ op, ...(sql ? { sql: sql.slice(0, 500) } : {}) }),
@@ -634,7 +637,7 @@ export function defineSqliteStore<
    * back.
    */
   const leaveUnbound = (context: string, error: unknown, options: BindOptions, more?: Record<string, unknown>): void => {
-    reportStoreDegradation({ scope: `${config.name}.unbound`, context, error, extra: extra(more) });
+    reportStoreDegradation({ scope: `${config.name}.unbound`, group: 'store.unbound', context, error, extra: extra(more) });
     replaceRunning(buildOver(NULL_CONNECTION, false).surface);
     moveBinding('unbound');
     options.recovery?.onLeftFile?.();
@@ -654,6 +657,7 @@ export function defineSqliteStore<
       options.recovery?.onLeftFile?.();
       reportStoreDegradation({
         scope: `${config.name}.in_memory`,
+        group: 'store.in_memory',
         context: `SQLite \`${op}\` kept failing on the database file; the store runs on an in-memory database and refetches into it`,
         error,
         extra: extra({ op }),

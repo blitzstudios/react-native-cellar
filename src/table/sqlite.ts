@@ -55,6 +55,7 @@ function createDiffLostReporter(table: string): () => void {
     reported = true;
     reportStoreDegradation({
       scope: `row_table.diff_lost.${table}`,
+      group: 'row_table.diff_lost',
       context: 'a write found no record of its own diff, so it reported every entity changed; readers repaint rather than show stale rows',
       extra: { table },
     });
@@ -324,11 +325,27 @@ export function createSqliteRowTable<Row extends RowShape>(
         nativeError = error;
       }
     }
+    let parsed: ReplaceRow<Row>[];
+    try {
+      parsed = parseRows(rawJson);
+    } catch (error) {
+      reportStoreDegradation({
+        scope: `row_table.unparseable_body.${schema.table}`,
+        group: 'row_table.unparseable_body',
+        context: 'a fetched body is not valid JSON, most often one cut short in transit; the fetch fails and is retried',
+        error,
+        // A `SyntaxError` is the body; anything else is the store's `toRows`.
+        severity: error instanceof SyntaxError ? 'info' : 'error',
+        extra: { table: schema.table, where: whereMapKey(where), rawLength: rawJson.length },
+      });
+      throw error;
+    }
     // Only a body JS can parse makes the native failure worth reporting.
-    const rows = stampPartition(where, parseRows(rawJson));
+    const rows = stampPartition(where, parsed);
     if (nativeError) {
       reportStoreDegradation({
         scope: `row_table.native_shred.${schema.table}`,
+        group: 'row_table.native_shred',
         context: 'native shred failed; fell back to the JS parse path, which builds the transient object graph the shred exists to avoid',
         error: nativeError,
         extra: { table: schema.table, where: whereMapKey(where), rawLength: rawJson.length },

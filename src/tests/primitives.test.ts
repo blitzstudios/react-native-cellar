@@ -14,6 +14,7 @@ import { itDev, itProd } from '../testing/dev_mode';
 import { makeResult } from '../store_result';
 import { BatchCommand, readRows, runBatch, runBatchAsync, SqliteConnection } from '../table/connection';
 import { resetOnceGuards } from '../diagnostics/once_guard';
+import { setLogLevel } from '../diagnostics/log_level';
 import { createVersionAtom } from '../reactivity/version_atom';
 import { runTracked } from '../reactivity/tracking';
 
@@ -217,8 +218,12 @@ describe('a memo reporting on itself', () => {
     resetOnceGuards();
     warnings = [];
     jest.spyOn(console, 'warn').mockImplementation((message) => warnings.push(String(message)));
+    setLogLevel('verbose');
   });
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    setLogLevel('error');
+  });
 
   const of = (report: string) => warnings.filter((warning) => warning.includes(report));
 

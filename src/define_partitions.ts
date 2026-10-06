@@ -432,6 +432,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     // are parseable should declare `from`; one whose keys are not needs a larger `internMax`.
     reportStoreDegradation({
       scope: `partitions.intern_evicted.${name}`,
+      group: 'partitions.intern_evicted',
       context: `${name}_store: partition ${String(key)} left the key table, so it cannot be addressed again`,
       extra: { internMax: config.internMax ?? INTERN_MAX },
     });

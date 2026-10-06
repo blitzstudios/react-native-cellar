@@ -43,6 +43,11 @@ function callsiteOf(given: string | undefined, kind: 'component' | 'stack' = 'co
 export function reportStoreDegradation(args: {
   /** Where it happened, as a stable, searchable id, such as `row_table.native_shred.<store>`. */
   scope: string;
+  /**
+   * The kind of report `scope` is an instance of, such as `row_table.native_shred`: an error is grouped into one issue
+   * per kind, whichever store it came from. `scope` by default. Notices all share one issue.
+   */
+  group?: string;
   /** What happened, in a sentence. */
   context: string;
   /** The error behind it, if any. */
@@ -100,7 +105,7 @@ export function reportStoreDegradation(args: {
 
   const captureContext = {
     tags: { cellar_degradation: scope },
-    fingerprint: ['cellar-degradation', scope],
+    fingerprint: severity === 'error' ? ['cellar-degradation', args.group ?? scope] : ['cellar-notice'],
     extra: { context, ...extra },
   };
 
