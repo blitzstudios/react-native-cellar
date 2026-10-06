@@ -432,8 +432,9 @@ The core entry runs anywhere React does. Each subpath is declared twice — in `
 `package.json` beside `lib/` — because TypeScript and Metro still resolve the way Node did before `exports`
 existed.
 
-**`lib/` is committed.** Consumers install with `enableScripts: false`, so a gitpkg install never runs `prepare`;
-a change to `src/` is not published until `yarn build` runs and the output is committed and tagged.
+**Releasing.** Bump `version` in `package.json`, then run `npx gitpkg publish`. It builds `lib/` (`prepublishOnly`),
+packs the package's `files` and pushes them as the `react-native-cellar-v<version>-gitpkg` tag, so `lib/` is never
+committed. The plugins in `rozenite-plugin/` and `eslint-plugin/` release the same way, from their own directories.
 
 ## Internals
 

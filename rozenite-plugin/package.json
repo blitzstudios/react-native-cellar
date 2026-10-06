@@ -36,7 +36,8 @@
     "build": "rozenite build",
     "dev": "rozenite dev",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "prepublishOnly": "yarn build"
   },
   "dependencies": {
     "@rozenite/agent-bridge": "2.4.0",

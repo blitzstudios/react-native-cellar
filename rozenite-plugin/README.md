@@ -124,8 +124,9 @@ yarn build       # writes dist/
 For a panel that reloads as you edit it, run `yarn dev` here and start the app's Metro with
 `ROZENITE_DEV_MODE=@sleeperhq/rozenite-plugin-cellar`.
 
-**`dist/` is committed.** An app installs this from a git tag and never builds it, so a change to the source isn't
-released until `yarn build` runs and its output is committed; CI fails when `dist/` doesn't match.
+**Releasing.** Bump `version` in `package.json`, then run `npx gitpkg publish` from this directory. It builds `dist/`
+(`prepublishOnly`) and pushes the package as the `rozenite-plugin-cellar-v<version>-gitpkg` tag, so `dist/` is never
+committed.
 
 ## Release
 
