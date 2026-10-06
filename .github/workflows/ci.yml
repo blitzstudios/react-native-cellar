@@ -63,7 +63,10 @@ jobs:
 
       - run: yarn install --immutable
 
-      # The plugin typechecks against Cellar's committed declarations in lib/, which the job above keeps current.
+      # The plugin typechecks and builds against Cellar's declarations, which are not committed.
+      - run: yarn build:types
+        working-directory: .
+
       - run: yarn typecheck
       - run: yarn test
       - run: yarn build

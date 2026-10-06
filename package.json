@@ -116,7 +116,8 @@
     "test": "jest",
     "test:prod": "jest --config jest.config.prod.js",
     "test:all": "yarn test && yarn test:prod",
-    "prepublishOnly": "yarn build"
+    "prepublishOnly": "yarn build",
+    "build:types": "tsc -p tsconfig.build.json --emitDeclarationOnly --outDir lib/typescript/module"
   },
   "peerDependencies": {
     "@tanstack/query-core": ">=4",
