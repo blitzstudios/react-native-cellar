@@ -780,6 +780,23 @@ describe('row_table — sqlite backend (generated SQL)', () => {
       expect(calls.filter((column) => column.sql.includes('SELECT 1 FROM things LIMIT 1'))).toHaveLength(1);
     });
 
+    it('rebuilds them after a write queued during the shred, rather than while it writes', async () => {
+      const { conn, calls, setReader } = makeConn();
+      setReader(() => []);
+      const { gates, shred } = gatedShred();
+      const logged: SqliteConnection = { ...conn, executeBatch: (commands) => (calls.push({ sql: 'BATCH' }), conn.executeBatch!(commands)) };
+      const table = makeShredStore(logged, shred);
+
+      const ingest = table.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+      await drain();
+      const upsert = table.upsert([row('a', 'us', 'NE', 1)]);
+      gates[0]();
+      await Promise.all([ingest, upsert]);
+
+      const order = calls.map((call) => call.sql).filter((sql) => sql === 'BATCH' || sql.startsWith('CREATE INDEX'));
+      expect(last(order)).toMatch(/^CREATE INDEX/);
+    });
+
     it('drops once and rebuilds once across overlapping ingests, not once each', async () => {
       const { conn, calls, setReader } = makeConn();
       setReader(() => []);

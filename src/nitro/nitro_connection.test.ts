@@ -498,7 +498,7 @@ describe('binding a store — getting SQLite back', () => {
     expect(bindSqlite.mock.calls[2][1]).toEqual(expect.objectContaining({ temporary: true, startup: true }));
     expect(sqlOf(memory)).toContain('PRAGMA temp_store=MEMORY;');
     expect(getOpenSqliteConnections().map((entry) => entry.name)).toContain(':memory:memory.db');
-    expect(lastReport().context).toContain('runs on its in-memory database');
+    expect(lastMessage()).toContain('runs on its in-memory database');
     mockOpen.mockReset();
   });
 

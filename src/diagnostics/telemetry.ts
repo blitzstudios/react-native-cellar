@@ -10,6 +10,7 @@ import { createOnceGuard } from './once_guard';
 import { recordInspectorEvent } from '../inspector/events';
 import type { InspectorDegradationEvent } from '../inspector/events';
 import { renderPhaseOwnerStack } from '../reactivity/render_phase';
+import { STORAGE_FAILURE } from '../table/connection';
 
 const SEVERITY_RANK: Record<Severity, number> = { verbose: 0, info: 1, error: 2 };
 const reportedScopes = createOnceGuard();
@@ -48,7 +49,10 @@ export function reportStoreDegradation(args: {
   error?: unknown;
   /** Details attached to the report. */
   extra?: Record<string, unknown>;
-  /** `error` by default; `info` for an expected event, sent as a message; `verbose` for advice to a developer. */
+  /**
+   * `error` by default, or `info` when `error` is a storage failure (a full disk, or a file the device won't open);
+   * `info` for an expected event, sent as a message; `verbose` for advice to a developer.
+   */
   severity?: Severity;
   /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
   sampleRate?: number;
@@ -61,7 +65,8 @@ export function reportStoreDegradation(args: {
   /** Whether {@linkcode callsite} is a React owner stack (`component`, the default) or a JS stack (`stack`). */
   callsiteKind?: 'component' | 'stack';
 }): void {
-  const { scope, context, error, extra, severity = 'error', sampleRate = 1 } = args;
+  const { scope, context, error, extra, sampleRate = 1 } = args;
+  const severity = args.severity ?? (error !== undefined && STORAGE_FAILURE.test(messageOf(error)) ? 'info' : 'error');
 
   const first = !reportedScopes.seen(scope);
   if (__DEV__) {

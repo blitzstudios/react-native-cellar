@@ -64,6 +64,11 @@ export declare function runBatch(conn: SqliteConnection, commands: ReadonlyArray
  */
 export declare function runBatchAsync(conn: SqliteConnection, commands: ReadonlyArray<BatchCommand>): Promise<void>;
 /**
+ * An error that says the storage under the connection failed, not the statement: the file, the disk, or memory.
+ * Only these make the connection unusable; a statement that is wrong fails the same way on any connection.
+ */
+export declare const STORAGE_FAILURE: RegExp;
+/**
  * Wraps `conn` so every statement returns. A read that fails on its own statement (a query bug, or a value its SQL
  * cannot parse) calls `onStatementError` and answers empty, and the connection carries on. Anything else fails the
  * connection: the first such failure calls `onFatal`, and later calls answer empty. A write fails it even for a bug

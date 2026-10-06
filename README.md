@@ -254,7 +254,8 @@ AppState.addEventListener('change', (state) => state === 'active' && retrySqlite
 
 Each report Cellar files is sent once per session per site. Errors always reach the sink; `info` notices, such as a
 store reopening its database, arrive from nearly every session across a large install base, so `infoSampleRate` (0 to
-1, default 1) lets the host send a sample. `verbose` reports are advice for a developer, such as an oversized partition
+1, default 1) lets the host send a sample. A storage failure, such as a full disk, is sent as an `info` notice: the
+store already moved to memory, and nothing in Cellar can fix it. `verbose` reports are advice for a developer, such as an oversized partition
 fetch, and `minSeverity` (default `verbose`) is the lowest severity sent:
 `errors: { captureException, captureMessage, infoSampleRate: 0.01, minSeverity: 'info' }`.
 

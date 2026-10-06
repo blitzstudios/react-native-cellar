@@ -125,6 +125,13 @@ describe('reportStoreDegradation', () => {
       expect(captureException).toHaveBeenCalledWith(error, expect.anything());
     });
 
+    it('sends a storage failure as a notice, since the device is out of space or won’t open the file', () => {
+      reportStoreDegradation({ scope: 'a.in_memory', context: 'moved to memory', error: new Error('disk I/O error') });
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(captureMessage.mock.calls[0][1].level).toBe('info');
+    });
+
     it('sends nothing below the sink’s minimum severity', () => {
       configureCellar({ errors: { captureException, captureMessage, minSeverity: 'info' } });
       reportStoreDegradation({ scope: 'a.advice', context: 'advice', severity: 'verbose' });

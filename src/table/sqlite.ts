@@ -228,13 +228,15 @@ export function createSqliteRowTable<Row extends RowShape>(
       !!conn.reader && secondaryIndexes.length > 0 && (deferrals > 0 || readRows(conn, `SELECT 1 FROM ${schema.table} LIMIT 1;`).length === 0);
     if (!defer) return write();
     deferrals += 1;
-    // Swallowed: the rebuild below is `IF NOT EXISTS`, so it restores whatever did drop.
-    if (deferrals === 1) await runIndexDdl(dropIndexSql).catch(() => {});
+    // The DDL takes its turn in the write queue: SQLite refuses it as `database table is locked` while another
+    // statement is writing to the table. Swallowed: the rebuild below is `IF NOT EXISTS`, so it restores whatever did
+    // drop.
+    if (deferrals === 1) await serialized(() => runIndexDdl(dropIndexSql)).catch(() => {});
     try {
       return await write();
     } finally {
       deferrals -= 1;
-      if (deferrals === 0) await runIndexDdl((idx) => createIndexSql(schema.table, idx));
+      if (deferrals === 0) await serialized(() => runIndexDdl((idx) => createIndexSql(schema.table, idx)));
     }
   }
 

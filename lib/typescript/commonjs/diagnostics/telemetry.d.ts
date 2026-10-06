@@ -14,7 +14,10 @@ export declare function reportStoreDegradation(args: {
     error?: unknown;
     /** Details attached to the report. */
     extra?: Record<string, unknown>;
-    /** `error` by default; `info` for an expected event, sent as a message; `verbose` for advice to a developer. */
+    /**
+     * `error` by default, or `info` when `error` is a storage failure (a full disk, or a file the device won't open);
+     * `info` for an expected event, sent as a message; `verbose` for advice to a developer.
+     */
     severity?: Severity;
     /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
     sampleRate?: number;
