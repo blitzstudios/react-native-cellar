@@ -15,6 +15,8 @@ export interface CaptureContext {
     /** Details attached to the report. */
     extra?: Record<string, unknown>;
 }
+/** A report's severity, lowest last: a lost benefit, an expected event, or advice to a developer. */
+export type Severity = 'error' | 'info' | 'verbose';
 /**
  * Where Cellar sends error reports. Shaped like Sentry's two capture calls, so the app can pass Sentry's directly.
  */
@@ -23,9 +25,11 @@ export interface ErrorSink {
     captureException: (error: unknown, context: CaptureContext) => void;
     /** Reports a message that isn't an error, such as a one-time notice. */
     captureMessage: (message: string, context: CaptureContext & {
-        /** The report's level, always `info`. */
-        level: 'info';
+        /** `info`, or `debug` for a `verbose` report. */
+        level: 'info' | 'debug';
     }) => void;
+    /** The lowest severity sent; `verbose` by default. */
+    minSeverity?: Severity;
     /**
      * The chance an info-level report reaches {@linkcode ErrorSink.captureMessage | captureMessage}, from 0 to 1; 1 by
      * default. Info reports are expected events sent once per session, so across a large install base the same few arrive

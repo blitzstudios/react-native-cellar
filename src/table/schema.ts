@@ -219,7 +219,8 @@ export function createTableSql<Row extends RowShape>(schema: RowTableSchema<Row>
  */
 export function createMetaTableSql<Row extends RowShape>(meta: MetaDef<Row>, temporary = false): string {
   const keyCols = meta.keyColumns.map((column) => `  ${column} TEXT NOT NULL`);
-  const lines = [...keyCols, `  ${meta.column} TEXT`, `  PRIMARY KEY (${meta.keyColumns.join(', ')})`];
+  const recordCol = meta.recordColumn ? [`  ${meta.recordColumn} TEXT`] : [];
+  const lines = [...keyCols, `  ${meta.column} TEXT`, ...recordCol, `  PRIMARY KEY (${meta.keyColumns.join(', ')})`];
   return `CREATE ${temporary ? 'TEMP ' : ''}TABLE IF NOT EXISTS ${meta.table} (\n${lines.join(',\n')}\n);`;
 }
 

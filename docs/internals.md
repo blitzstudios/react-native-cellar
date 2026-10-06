@@ -25,8 +25,9 @@ store is reaching past its entry point; import it from its own module only if yo
   **The three writes.** `upsert(rows)` merges by primary key and removes nothing, chunked off-thread — what a
   socket delta wants. `overwrite(where, rows)` makes the slice matching `where` be exactly `rows`, deleting first
   in one transaction. `shred(where, rawJson, parse)` is that same replacement from an undecoded body, shredded in
-  C++ so the payload never becomes a JS object graph. Only `overwrite` and `shred` name a slice, because only they
-  delete; and in DEV every row they write is checked against the filter it was written under.
+  C++ so the payload never becomes a JS object graph; with `inJs` it parses with `parse` instead, still in the table's
+  write queue. Only `overwrite` and `shred` name a slice, because only they delete; and in DEV every row they write is
+  checked against the filter it was written under.
 
   **Changing a schema.** Edit the schema and ship it; there is no migration to write. `init` stamps a fingerprint
   of everything it builds — columns, primary key, indexes, the ETag side-table, the shred spec — into

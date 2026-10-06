@@ -834,6 +834,20 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     expect(staged?.[1]).toEqual(['a', 'us', 'NE', 1]);
   });
 
+  it('shred fails without reporting the native shred on a body JS cannot parse either', async () => {
+    const captureException = jest.fn();
+    configureCellar({ errors: { captureException, captureMessage: jest.fn() } });
+    const { conn } = makeConn();
+    const shredJsonArrayAsync = jest.fn(async () => {
+      throw new Error('nitro_shred: JSON parse failed: UNCLOSED_STRING');
+    });
+    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+
+    await expect(db.shred({ region: 'us' }, '[{"id', (raw) => JSON.parse(raw))).rejects.toThrow(SyntaxError);
+    expect(captureException).not.toHaveBeenCalled();
+    configureCellar({ errors: INERT_ERRORS });
+  });
+
   it('shred falls back to parseRows when the scope names a variant the spec table has no entry for', async () => {
     const { conn } = makeConn();
     const shredJsonArrayAsync = jest.fn(async () => 2);
@@ -846,6 +860,23 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     await db.shred({ region: 'us' }, '[]', () => [row('a', 'us', 'NE', 1)]);
 
     expect(shredJsonArrayAsync).not.toHaveBeenCalled();
+  });
+
+  it('shred in JS waits for a native shred still writing, rather than starting a batch inside it', async () => {
+    const { conn, batches } = makeConn();
+    let finish!: (rows: number) => void;
+    const shredJsonArrayAsync = jest.fn(() => new Promise<number>((resolve) => (finish = resolve)));
+    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+
+    const native = db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+    const inJs = db.shred({ region: 'eu' }, '[]', () => [row('x', 'eu', 'BOS', 9)], undefined, true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(batches).toHaveLength(0);
+
+    finish(1);
+    await Promise.all([native, inJs]);
+    expect(shredJsonArrayAsync).toHaveBeenCalledTimes(1);
+    expect(batches.flat().some(([, params]) => params.includes('x'))).toBe(true);
   });
 
   it('shred reports the shred fallback, since callers cannot observe it', async () => {

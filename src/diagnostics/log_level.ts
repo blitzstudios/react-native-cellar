@@ -1,14 +1,14 @@
 /**
- * How much Cellar logs to the console: nothing, errors, warnings too, or notices too. It doesn't affect error
- * reports, which reach the error sink at any level.
+ * How much Cellar logs to the console: nothing, errors, warnings too, notices too, or advice too. It doesn't affect error
+ * reports, which reach the error sink at its own {@linkcode ErrorSink.minSeverity | minSeverity}.
  *
  * The default is `error`, because most warnings and notices can't be acted on where they appear, and logging them on
  * every launch teaches people to ignore the console.
  */
-export type LogLevel = 'silent' | 'error' | 'warn' | 'info';
+export type LogLevel = 'silent' | 'error' | 'warn' | 'info' | 'verbose';
 
 /** Ascending, so a level shows everything at or below its own rank. */
-const RANK: Record<LogLevel, number> = { silent: 0, error: 1, warn: 2, info: 3 };
+const RANK: Record<LogLevel, number> = { silent: 0, error: 1, warn: 2, info: 3, verbose: 4 };
 
 let current: LogLevel = 'error';
 

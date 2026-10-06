@@ -124,5 +124,14 @@ describe('reportStoreDegradation', () => {
       expect(captureMessage).not.toHaveBeenCalled();
       expect(captureException).toHaveBeenCalledWith(error, expect.anything());
     });
+
+    it('sends nothing below the sink’s minimum severity', () => {
+      configureCellar({ errors: { captureException, captureMessage, minSeverity: 'info' } });
+      reportStoreDegradation({ scope: 'a.advice', context: 'advice', severity: 'verbose' });
+      reportStoreDegradation({ scope: 'a.notice', context: 'notice', severity: 'info' });
+
+      expect(captureMessage).toHaveBeenCalledTimes(1);
+      expect(captureMessage.mock.calls[0][0]).toBe('a.notice: notice');
+    });
   });
 });

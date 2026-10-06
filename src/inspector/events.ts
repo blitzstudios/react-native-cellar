@@ -80,8 +80,8 @@ export interface InspectorDegradationEvent extends EventBase {
   scope: string;
   /** What happened, in a sentence. */
   context: string;
-  /** `error` for a fault, `info` for an expected event. */
-  severity: 'error' | 'info';
+  /** `error` for a fault, `info` for an expected event, `verbose` for advice. */
+  severity: 'error' | 'info' | 'verbose';
   /** The error's message, if the report carried one. */
   error?: string;
   /** Whether this is the scope's first report this session; later ones reach neither the console nor the error sink. */

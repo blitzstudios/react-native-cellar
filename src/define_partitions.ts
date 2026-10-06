@@ -9,7 +9,7 @@
  */
 
 
-import { cacheKey, partitionLabel, cacheKeyOf } from './args_key';
+import { cacheKey, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
 import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
@@ -468,26 +468,8 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   async function ingestRaw(key: Key, rawJson: string): Promise<WriteResult> {
     const spec = fetchSpec as PartitionFetchSpec<Row, Key, Descriptor>;
     const partition = describe(key);
-    const rowsWhere = where(key);
     const parse = (raw: string): Row[] => spec.toRows(partition, raw, key) as Row[];
-    const inJs = (): WriteResult => table.overwrite(rowsWhere, parse(rawJson));
-
-    let result: WriteResult;
-    if (spec.canShredNatively?.(partition) === false) {
-      result = inJs();
-    } else {
-      try {
-        result = await table.shred(rowsWhere, rawJson, parse, partition as object);
-      } catch (error) {
-        reportStoreDegradation({
-          scope: `${name}_store.raw_ingest`,
-          context: 'async raw ingest failed; re-parsed and retried through the synchronous path',
-          error,
-          extra: { store: name, partition: partitionLabel(toParts(key)) },
-        });
-        result = inJs();
-      }
-    }
+    const result = await table.shred(where(key), rawJson, parse, partition as object, spec.canShredNatively?.(partition) === false);
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
     return result;
   }

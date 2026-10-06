@@ -432,7 +432,7 @@ describe('createFetchIngest — ingest timing', () => {
     expect(captureMessage).toHaveBeenCalledTimes(1);
     const [message, ctx] = captureMessage.mock.calls[0];
     expect(message).toContain('31430 rows');
-    expect(ctx.level).toBe('info');
+    expect(ctx.level).toBe('debug');
     expect(ctx.extra).toMatchObject({ store: 'test_ingest', partition: 'cfb', rows: 31_430 });
 
     configureCellar({ errors: INERT_ERRORS });

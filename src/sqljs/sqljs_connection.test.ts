@@ -52,6 +52,19 @@ describe('sql.js on the web', () => {
     expect(other.reads.group('g')).toEqual([]);
   });
 
+  it('creates a temporary side table with its record column', () => {
+    const conn = openSqlJsConnection(SQL);
+    const withMeta = { ...schema, meta: { table: 'items_meta', keyColumns: ['group_id' as const], column: 'etag', recordColumn: 'partition' } };
+    const table = () => createSqliteRowTable(withMeta, conn, undefined, { temporary: true });
+    const first = table();
+    first.init();
+    first.setMeta({ group_id: 'g' }, 'etag-1', '{"group_id":"g"}');
+
+    const second = table();
+    second.init();
+    expect(second.getMetaRecord({ group_id: 'g' })).toBe('{"group_id":"g"}');
+  });
+
   it('commits a batch whole, or rolls it back whole', () => {
     const conn = openSqlJsConnection(SQL);
     conn.execute('CREATE TABLE t (x INTEGER PRIMARY KEY);');

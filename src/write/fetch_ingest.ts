@@ -322,7 +322,7 @@ function reportOversizedPrime(store: string, partition: string, rows: number, ch
       'every read of this partition pays this whether it selects one row or all of them. If the reads here want a ' +
       'slice, check whether the payload that named those rows already carries what they render, and declare ' +
       '`prime: false` on the read if so.',
-    severity: 'info',
+    severity: 'verbose',
     extra: {
       store,
       partition,

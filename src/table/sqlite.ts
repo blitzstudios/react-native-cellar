@@ -292,9 +292,10 @@ export function createSqliteRowTable<Row extends RowShape>(
     return [[`DELETE FROM ${schema.table}${sql};`, params], ...syncDiff.insertInto(schema.table, rows)];
   };
 
-  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition: object): Promise<WriteResult> {
+  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition: object, inJs: boolean): Promise<WriteResult> {
     const direct = partitionIsEmpty(where);
-    if (conn.shredJsonArrayAsync && nativeShredSpec) {
+    let nativeError: unknown;
+    if (!inJs && conn.shredJsonArrayAsync && nativeShredSpec) {
       try {
         const variant = nativeShredSpec.variant(partition as Readonly<Record<string, unknown>>);
         const spec = nativeShredSpec.specs[variant];
@@ -318,15 +319,19 @@ export function createSqliteRowTable<Row extends RowShape>(
         return result;
       } catch (error) {
         if (error instanceof ShredSpecMisconfigured) throw error;
-        reportStoreDegradation({
-          scope: `row_table.native_shred.${schema.table}`,
-          context: 'native shred failed; fell back to the JS parse path, which builds the transient object graph the shred exists to avoid',
-          error,
-          extra: { table: schema.table, where: whereMapKey(where), rawLength: rawJson.length },
-        });
+        nativeError = error;
       }
     }
+    // Only a body JS can parse makes the native failure worth reporting.
     const rows = stampPartition(where, parseRows(rawJson));
+    if (nativeError) {
+      reportStoreDegradation({
+        scope: `row_table.native_shred.${schema.table}`,
+        context: 'native shred failed; fell back to the JS parse path, which builds the transient object graph the shred exists to avoid',
+        error: nativeError,
+        extra: { table: schema.table, where: whereMapKey(where), rawLength: rawJson.length },
+      });
+    }
     if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
     let result: WriteResult;
     if (direct) {
@@ -418,10 +423,10 @@ export function createSqliteRowTable<Row extends RowShape>(
       return result;
     },
 
-    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object): Promise<WriteResult> {
+    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object, inJs = false): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where)));
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs)));
     },
 
     getOne(where: Partial<Row>): Row | undefined {

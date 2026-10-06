@@ -171,25 +171,24 @@ describe('definePartitions — bumping', () => {
 });
 
 describe('definePartitions — the shred, and what happens when it cannot run', () => {
-  it('re-parses in JS and reports a degradation when the raw shred throws, rather than losing the partition', async () => {
+  it('fails the fetch when the shred throws, rather than retrying the write outside the table write queue', async () => {
     const real = createTestRowTable(SCHEMA);
     const table: RowTable<EventRow> = {
       ...real,
       shred: jest.fn(async () => {
-        throw new Error('native shred failed');
+        throw new Error('shred failed');
       }),
       overwrite: jest.fn(real.overwrite),
     };
     const harness = makeEvents({ table });
 
-    await harness.events.lifecycle.fetch(US);
+    await expect(harness.events.lifecycle.fetch(US)).rejects.toThrow('shred failed');
 
-    expect(table.overwrite).toHaveBeenCalled();
-    expect(real.find(harness.events.where(US))).toHaveLength(2);
-    expect(degradeMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'events_store.raw_ingest' }));
+    expect(table.overwrite).not.toHaveBeenCalled();
+    expect(real.find(harness.events.where(US))).toHaveLength(0);
   });
 
-  it('skips the raw shred entirely for a body it is told cannot be iterated', async () => {
+  it('parses a body it is told cannot be iterated in JS, inside the table write queue', async () => {
     const real = createTestRowTable(SCHEMA);
     const table: RowTable<EventRow> = { ...real, shred: jest.fn(real.shred), overwrite: jest.fn(real.overwrite) };
     const version = createVersionAtom('define_partitions_no_shred');
@@ -207,8 +206,9 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
 
     await events.lifecycle.fetch(US);
 
-    expect(table.shred).not.toHaveBeenCalled();
-    expect(table.overwrite).toHaveBeenCalled();
+    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), expect.anything(), true);
+    expect(table.overwrite).not.toHaveBeenCalled();
+    expect(real.find(events.where(US))).toHaveLength(1);
     expect(degradeMock).not.toHaveBeenCalled();
   });
 

@@ -3,6 +3,7 @@
  * JS. Each is sent once per session, to the dev console and the error sink. `severity: 'info'` is for expected events
  * that shouldn't read as faults.
  */
+import { type Severity } from '../runtime';
 /** Reports that a store lost a benefit it should have had, at most once per `scope` per session. */
 export declare function reportStoreDegradation(args: {
     /** Where it happened, as a stable, searchable id, such as `row_table.native_shred.<store>`. */
@@ -13,8 +14,8 @@ export declare function reportStoreDegradation(args: {
     error?: unknown;
     /** Details attached to the report. */
     extra?: Record<string, unknown>;
-    /** `error` by default; `info` for an expected event, sent as a message rather than an exception. */
-    severity?: 'error' | 'info';
+    /** `error` by default; `info` for an expected event, sent as a message; `verbose` for advice to a developer. */
+    severity?: Severity;
     /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
     sampleRate?: number;
     /**

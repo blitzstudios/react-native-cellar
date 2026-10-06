@@ -4,13 +4,14 @@
  * that shouldn't read as faults.
  */
 
-import { errorSink } from '../runtime';
+import { errorSink, type Severity } from '../runtime';
 import { shouldLog } from './log_level';
 import { createOnceGuard } from './once_guard';
 import { recordInspectorEvent } from '../inspector/events';
 import type { InspectorDegradationEvent } from '../inspector/events';
 import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 
+const SEVERITY_RANK: Record<Severity, number> = { verbose: 0, info: 1, error: 2 };
 const reportedScopes = createOnceGuard();
 const messageOf = (error: unknown): string => String((error as { message?: unknown })?.message ?? error);
 /** How many times each scope has been reported this session, first report included. Dev only. */
@@ -47,8 +48,8 @@ export function reportStoreDegradation(args: {
   error?: unknown;
   /** Details attached to the report. */
   extra?: Record<string, unknown>;
-  /** `error` by default; `info` for an expected event, sent as a message rather than an exception. */
-  severity?: 'error' | 'info';
+  /** `error` by default; `info` for an expected event, sent as a message; `verbose` for advice to a developer. */
+  severity?: Severity;
   /** The chance the report reaches the error sink, from 0 to 1; 1 by default. */
   sampleRate?: number;
   /**
@@ -80,15 +81,16 @@ export function reportStoreDegradation(args: {
   }
   if (!first) return;
 
-  if (__DEV__ && shouldLog(severity === 'info' ? 'info' : 'error')) {
+  if (__DEV__ && shouldLog(severity)) {
     // An `info` report is something that was always going to happen, not a path that lost the win it exists for, and
     // reading it as the latter sends people looking for a fault.
     // eslint-disable-next-line no-console
-    console.warn(`[cellar ${severity === 'info' ? 'notice' : 'degraded'}] ${scope}: ${context}`, error ?? '', extra ?? '');
+    console.warn(`[cellar ${severity === 'error' ? 'degraded' : 'notice'}] ${scope}: ${context}`, error ?? '', extra ?? '');
   }
 
   const sink = errorSink();
-  const rate = severity === 'info' ? sampleRate * (sink.infoSampleRate ?? 1) : sampleRate;
+  if (SEVERITY_RANK[severity] < SEVERITY_RANK[sink.minSeverity ?? 'verbose']) return;
+  const rate = severity === 'error' ? sampleRate : sampleRate * (sink.infoSampleRate ?? 1);
   if (!(rate >= 1) && Math.random() >= rate) return;
 
   const captureContext = {
@@ -97,6 +99,6 @@ export function reportStoreDegradation(args: {
     extra: { context, ...extra },
   };
 
-  if (severity === 'info') sink.captureMessage(`${scope}: ${context}`, { level: 'info', ...captureContext });
+  if (severity !== 'error') sink.captureMessage(`${scope}: ${context}`, { level: severity === 'info' ? 'info' : 'debug', ...captureContext });
   else sink.captureException(error instanceof Error ? error : new Error(`${scope}: ${context}`), captureContext);
 }
