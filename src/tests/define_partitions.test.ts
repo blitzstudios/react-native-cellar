@@ -52,7 +52,7 @@ function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey,
       where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }),
     },
     fetch: (...args: [EventKey, string?]) => ({
-      ...query(...args),
+      query: query(...args),
       toRows: (raw) => (over.toRows ?? defaultToRows)(args[0], raw),
     }),
     onChanged: (key, version, changes) => {
@@ -199,7 +199,7 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
       version,
       key: { fields: ['region', 'year', 'itemType'], where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }) },
       fetch: (key) => ({
-        queryFn: async () => ({ data: '{"only":"one"}' }),
+        query: { queryFn: async () => ({ data: '{"only":"one"}' }) },
         toRows: () => [{ region: key.region, year: key.year, item_type: key.itemType, event_id: 'one' }],
       }),
     });
@@ -307,7 +307,7 @@ describe('definePartitions — a store whose key is an opaque string', () => {
       version,
       key: { where: (key) => ({ partition_key: key }) },
       fetch: (key) => ({
-        queryFn: async () => ({ data: '["a"]', etag: 'W/"b"' }),
+        query: { queryFn: async () => ({ data: '["a"]', etag: 'W/"b"' }) },
         toRows: (raw) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
       }),
     });
@@ -375,9 +375,11 @@ describe('definePartitions — a store whose partition is a record, interned to 
           queried.records.push(partition);
         }
         return {
-          queryFn: async () => {
-            shredAsked.push(partition);
-            return { data: '["a","b"]' };
+          query: {
+            queryFn: async () => {
+              shredAsked.push(partition);
+              return { data: '["a","b"]' };
+            },
           },
           toRows: (raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
         };
@@ -515,7 +517,7 @@ describe('definePartitions — args that resolve to no partition at all', () => 
       },
       fetch: (partition) => {
         queried.push(partition);
-        return { queryFn: async () => ({ data: '["a"]' }), toRows: (raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })) };
+        return { query: { queryFn: async () => ({ data: '["a"]' }) }, toRows: (raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })) };
       },
     });
     const ids = loose.defineRead<Args, string[]>({

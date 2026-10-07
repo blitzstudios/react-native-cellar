@@ -70,11 +70,11 @@ function playerStore(over: { native?: boolean } = {}) {
       const toRow = (one: Body) => ({ sport: p.sport, player_id: one.player_id, team: one.team ?? null, height: one.height ?? null });
       return p.request === 'player'
         ? {
-            queryFn: async () => ({ data: JSON.stringify(server.detail[p.playerId]) }),
+            query: { queryFn: async () => ({ data: JSON.stringify(server.detail[p.playerId]) }) },
             toRows: (raw: string) => [JSON.parse(raw) as Body].map(toRow),
           }
         : {
-            queryFn: async () => ({ data: JSON.stringify(server.catalog[p.sport]) }),
+            query: { queryFn: async () => ({ data: JSON.stringify(server.catalog[p.sport]) }) },
             toRows: (raw: string) => Object.values(JSON.parse(raw) as Record<string, Body>).map(toRow),
             ...(over.native ? { native: { variant: 'all', binds: [p.sport] } } : {}),
             fills: ['team'] as const,
@@ -212,7 +212,7 @@ function statStore() {
         args.gameId ? { request: 'game', gameId: args.gameId } : args.week ? { request: 'week', week: args.week } : null,
     },
     fetch: (p: StatPartition) => ({
-      queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }),
+      query: { queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }) },
       toRows: (raw) => JSON.parse(raw) as Stat[],
     }),
     push: {

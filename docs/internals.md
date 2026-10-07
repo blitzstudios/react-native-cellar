@@ -81,7 +81,7 @@ store is reaching past its entry point; import it from its own module only if yo
     schema: mySchema,
     partition: { fields: ['groupId', 'itemType'] },
     fetch: (group: MyGroup, etag?: string) => ({
-      ...buildMyRawQuery(group, etag),
+      query: buildMyRawQuery(group, etag),
       toRows: (rawJson) => buildMyRows(group, JSON.parse(rawJson)),
     }),
     build: (cellar) => ({ reads: { … } }),

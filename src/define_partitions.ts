@@ -88,11 +88,13 @@ export interface PartitionKeySpec<Row extends RowShape, Key, Args, Descriptor> {
  * How one partition is fetched and written: the request, and how its response becomes the partition's rows. A fetch
  * replaces the partition: afterwards the rows matching its {@linkcode PartitionKeySpec.where | where} are exactly the
  * response's rows.
- *
- * The request is a {@linkcode RawQuery}: {@linkcode RawQuery.queryFn | queryFn} makes it, sending the partition's
- * stored ETag as `If-None-Match`, and a 304 keeps the rows as they are.
  */
-export interface FetchPlan<Row extends RowShape, Key = string> extends RawQuery {
+export interface FetchPlan<Row extends RowShape, Key = string> {
+  /**
+   * The request: {@linkcode RawQuery.queryFn | queryFn} makes it, sending the partition's stored ETag as
+   * `If-None-Match`, and a 304 keeps the rows as they are.
+   */
+  query: RawQuery;
   /**
    * Turns the response body, as unparsed JSON text, into the partition's rows, in JS: on web, in tests, for a body
    * with no {@linkcode FetchPlan.native | native} program, and when the native shred failed. Every row must match the
@@ -466,9 +468,18 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   /** When each partition's rows last landed. Bounded, and a forgotten timestamp reads as never-fetched. */
   const fetchedAt = createBoundedLru<number>(config.internMax ?? INTERN_MAX);
 
+  /** The plan each request came from, so the write of its body knows how. */
+  const planOfQuery = new WeakMap<RawQuery, FetchPlan<Row, Key>>();
+  const queryFor = (key: Key, ...etag: [string?]): RawQuery => {
+    const plan = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor), ...etag);
+    planOfQuery.set(plan.query, plan);
+    return plan.query;
+  };
+
   /** Replaces the partition's rows, through the native shred where the body allows it and JS parsing otherwise. */
   async function ingestRaw(key: Key, rawJson: string, query: RawQuery): Promise<WriteResult> {
-    const plan = query as FetchPlan<Row, Key>;
+    const plan = planOfQuery.get(query);
+    if (!plan) throw new Error(`${name}_store: a fetched body arrived for a request this store did not plan`);
     const parse = (raw: string): Row[] => plan.toRows(raw, key) as Row[];
     const result = await table.shred(where(key), rawJson, parse, plan.native, !plan.native, plan.fills);
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
@@ -480,7 +491,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
         ingestKeyRoot: `${name}_store_ingest`,
         version,
         toParts,
-        rawQuery: interned ? (key, etag) => fetchSpec(describe(key), etag) : (fetchSpec as unknown as (key: Key, etag?: string) => RawQuery),
+        rawQuery: queryFor,
         getEtag: (key) => table.getMeta(where(key)),
         setEtag: (key, etag) => table.setMeta(where(key), etag),
         ingestRaw,

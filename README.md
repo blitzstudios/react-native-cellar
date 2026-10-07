@@ -127,9 +127,11 @@ export const itemStore = defineSqliteStore({
   schema: itemSchema,
   partition: { fields: ['groupId'] },
   fetch: ({ groupId }: ItemKey, etag?: string) => ({
-    queryFn: async () => {
-      const response = await fetch(`/groups/${groupId}/items`, { headers: etag ? { 'If-None-Match': etag } : {} });
-      return { data: await response.text(), etag: response.headers.get('etag') ?? undefined };
+    query: {
+      queryFn: async () => {
+        const response = await fetch(`/groups/${groupId}/items`, { headers: etag ? { 'If-None-Match': etag } : {} });
+        return { data: await response.text(), etag: response.headers.get('etag') ?? undefined };
+      },
     },
     toRows: (rawJson) => (JSON.parse(rawJson) as RawItem[]).map((item) => itemShred.row(item)),
   }),
@@ -367,7 +369,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 
 | export | what it gives you |
 | --- | --- |
-| a store's `fetch` | `(partition, etag) => FetchPlan`: the request, its `toRows`, and optionally the `native` program that shreds it and the columns it `fills`; leave it off for a store fed only by pushes |
+| a store's `fetch` | `(partition, etag) => FetchPlan`: the request as `query`, its `toRows`, and optionally the `native` program that shreds it and the columns it `fills`; leave it off for a store fed only by pushes |
 | a store's `push` | `idOf`, `toRows(key, items, partition)` and `partitionsOf`, for rows arriving by socket, which `store.push.ingest(items)` takes: an item the store's functions throw on dropped and reported, each other item written to the partitions its `partitionsOf` names that hold rows, or all of them when none does, buffered per partition, deduped, written in bounded chunks off the render path, held while their partition is being fetched, and retiring its ETag at most once every two minutes, so a refetch brings what the socket missed |
 | `ShredSpec`, `ShredOp` | the native shred language, for filling columns without decoding in JS. A store's `nativeShredSpecs` name its programs; a plan's `native` picks one and gives its binds, from 1, since Cellar binds the partition's key as 0 |
 | `RAW_TEXT_RESPONSE_TRANSFORM` | keeps a client from `JSON.parse`-ing a body Cellar wants as text |
