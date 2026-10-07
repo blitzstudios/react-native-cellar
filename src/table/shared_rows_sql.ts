@@ -135,6 +135,8 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     drop: [`DROP VIEW IF EXISTS ${table};`, `DROP TABLE IF EXISTS ${M};`, `DROP TABLE IF EXISTS ${R};`],
     indexes,
     ensure: [
+      // A row leaving the partition is found by probing the stage by identity, which its primary key does not lead with.
+      [`CREATE INDEX IF NOT EXISTS temp.${stageTable}_identity ON ${stageTable} (${ids});`, []],
       [`CREATE TABLE IF NOT EXISTS ${elsewhere} (write_id INTEGER NOT NULL, partition_key TEXT, entity_id);`, []],
       [`CREATE TABLE IF NOT EXISTS ${removed} (${identity.map((c) => `${c} ${typeOf(c)}`).join(', ')});`, []],
     ],
