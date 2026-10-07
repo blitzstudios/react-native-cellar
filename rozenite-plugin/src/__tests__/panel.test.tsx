@@ -49,12 +49,12 @@ it('lists the stores, shows a store’s partitions, and queries a partition’s 
   fireEvent.click(await within(sidebar).findByTitle('panel_games_store'));
 
   expect(await screen.findByRole('heading', { name: 'panel_games' })).toBeTruthy();
-  expect(await screen.findByText('nfl:2026')).toBeTruthy();
+  expect(await screen.findByText('season=2026&sport=nfl')).toBeTruthy();
 
   fireEvent.click(screen.getByTitle("Query this partition's rows"));
   expect(await screen.findByText('KC')).toBeTruthy();
   expect(screen.getByText('BUF')).toBeTruthy();
-  expect((screen.getByLabelText('Params') as HTMLInputElement).value).toBe('["nfl:2026"]');
+  expect((screen.getByLabelText('Params') as HTMLInputElement).value).toBe('["season=2026&sport=nfl"]');
 });
 
 it('shows a refused write as an error, and re-runs a live query when the store writes', async () => {
@@ -88,7 +88,7 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
 
   fireEvent.click(within(sidebar).getByText('Activity'));
   expect(await screen.findByRole('heading', { name: 'Activity' })).toBeTruthy();
-  await waitFor(() => expect(screen.getAllByText('nfl:2026').length).toBeGreaterThan(0), { timeout: 3000 });
+  await waitFor(() => expect(screen.getAllByText('season=2026&sport=nfl').length).toBeGreaterThan(0), { timeout: 3000 });
   expect(screen.getAllByText('panel_activity').length).toBeGreaterThan(0);
 
   fireEvent.click(within(sidebar).getByTitle('panel_activity_store'));
@@ -105,13 +105,13 @@ it('lists one partition’s entities at a time, and moves to another partition u
   fireEvent.click(await within(await screen.findByRole('navigation')).findByTitle('panel_entities_store'));
   fireEvent.click(await screen.findByRole('tab', { name: 'Entities' }));
   const partition = (await screen.findByLabelText('Partition')) as HTMLSelectElement;
-  await waitFor(() => expect(partition.value).toBe('nfl:2026'));
+  await waitFor(() => expect(partition.value).toBe('season=2026&sport=nfl'));
   expect(await screen.findByText('KC')).toBeTruthy();
   fireEvent.click(screen.getByText('MIA'));
   expect(await screen.findByRole('heading', { name: 'MIA' })).toBeTruthy();
 
-  fireEvent.click(await screen.findByRole('button', { name: 'nba:2026' }));
-  await waitFor(() => expect(partition.value).toBe('nba:2026'));
+  fireEvent.click(await screen.findByRole('button', { name: 'season=2026&sport=nba' }));
+  await waitFor(() => expect(partition.value).toBe('season=2026&sport=nba'));
   await waitFor(() => expect(screen.queryByText('KC')).toBeNull());
   expect(screen.getAllByText('MIA').length).toBeGreaterThan(0);
 });

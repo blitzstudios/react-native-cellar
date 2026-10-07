@@ -58,8 +58,8 @@ describe('the calls the panel makes', () => {
     store.lifecycle.setEtag(NFL, 'W/"3"');
 
     expect(await session.rpc.method('partitions').invoke({ store: 'protocol_partitions_store' })).toEqual([
-      { key: 'nba:2026', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
-      { key: 'nfl:2026', partition: NFL, rows: 3, entities: 3, version: 1, etag: 'W/"3"', fetchedAt: null },
+      { key: 'season=2026&sport=nba', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
+      { key: 'season=2026&sport=nfl', partition: NFL, rows: 3, entities: 3, version: 1, etag: 'W/"3"', fetchedAt: null },
     ]);
   });
 
@@ -69,7 +69,7 @@ describe('the calls the panel makes', () => {
 
     const result = await session.rpc
       .method('query')
-      .invoke({ store: 'protocol_query_store', sql: 'SELECT team, score FROM games WHERE partition_key = ? ORDER BY team', params: ['nfl:2026'], limit: 2 });
+      .invoke({ store: 'protocol_query_store', sql: 'SELECT team, score FROM games WHERE partition_key = ? ORDER BY team', params: ['season=2026&sport=nfl'], limit: 2 });
     expect(result).toMatchObject({ columns: ['team', 'score'], rows: [['BUF', 24], ['KC', 27]], truncated: true });
   });
 
@@ -84,7 +84,7 @@ describe('the calls the panel makes', () => {
     const store = await gamesStore('protocol_entities_store');
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 31 }, ...NFL_GAMES.slice(1)]);
-    expect(await session.rpc.method('entityChanges').invoke({ store: 'protocol_entities_store', key: 'nfl:2026' })).toEqual({
+    expect(await session.rpc.method('entityChanges').invoke({ store: 'protocol_entities_store', key: 'season=2026&sport=nfl' })).toEqual({
       version: 2,
       epoch: 1,
       count: 1,
@@ -102,13 +102,13 @@ describe('the calls the panel makes', () => {
     const store = await gamesStore('protocol_entity_store');
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NBA, [{ team: 'KC', sport: 'nba', score: 1 }]);
-    expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', key: 'nfl:2026', id: 'KC' })).toEqual({
-      partition: 'nfl:2026',
+    expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', key: 'season=2026&sport=nfl', id: 'KC' })).toEqual({
+      partition: 'season=2026&sport=nfl',
       id: 'KC',
-      rows: [{ partition_key: 'nfl:2026', team: 'KC', sport: 'nfl', score: 27 }],
+      rows: [{ partition_key: 'season=2026&sport=nfl', team: 'KC', sport: 'nfl', score: 27 }],
       version: 1,
       cacheEntries: [],
-      sameIdIn: ['nba:2026'],
+      sameIdIn: ['season=2026&sport=nba'],
     });
   });
 
@@ -120,7 +120,7 @@ describe('the calls the panel makes', () => {
     expect(cache).toMatchObject({ cache: 'teams', entries: 2, heapPartial: false });
     expect(cache.heapBytes).toBeGreaterThan(0);
     const page = await session.rpc.method('cacheEntries').invoke({ store: 'protocol_cached_store', cache: 'teams' });
-    expect(page).toMatchObject({ total: 2, entries: [{ key: ['nba:2026'], value: ['BOS'] }, { key: ['nfl:2026'], value: ['KC', 'BUF'] }] });
+    expect(page).toMatchObject({ total: 2, entries: [{ key: ['season=2026&sport=nba'], value: ['BOS'] }, { key: ['season=2026&sport=nfl'], value: ['KC', 'BUF'] }] });
   });
 
   it("sends a refused write back as the handler's error", async () => {
@@ -145,9 +145,9 @@ describe('the calls the panel makes', () => {
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.setEtag(NFL, 'W/"3"');
 
-    await session.rpc.method('clearEtag').invoke({ store: 'protocol_etag_store', key: 'nfl:2026' });
+    await session.rpc.method('clearEtag').invoke({ store: 'protocol_etag_store', key: 'season=2026&sport=nfl' });
     expect((await session.rpc.method('partitions').invoke({ store: 'protocol_etag_store' }))[0].etag).toBeNull();
-    expect(await session.rpc.method('refetch').invoke({ store: 'protocol_etag_store', key: 'nfl:2026' })).toBe(false);
+    expect(await session.rpc.method('refetch').invoke({ store: 'protocol_etag_store', key: 'season=2026&sport=nfl' })).toBe(false);
   });
 });
 
@@ -159,7 +159,7 @@ describe('events', () => {
     store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
 
     const events = JSON.parse((await pushed).json) as InspectorEvent[];
-    expect(events.filter((event) => event.kind === 'write').map((event) => event.kind === 'write' && event.partition)).toEqual(['nfl:2026', 'nba:2026']);
+    expect(events.filter((event) => event.kind === 'write').map((event) => event.kind === 'write' && event.partition)).toEqual(['season=2026&sport=nfl', 'season=2026&sport=nba']);
 
     const backlog = await session.rpc.method('events').invoke({});
     expect(backlog.map((event) => event.kind)).toEqual(['binding', 'write', 'write']);

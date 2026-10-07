@@ -12,7 +12,7 @@ export type Season = { sport: string; season: string };
 const SCHEMA: StoreTableSchema<Game> = {
   table: 'games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true }, score: { type: 'INTEGER' } },
-  primaryKey: ['team'],
+  primaryKey: ['sport', 'team'],
   entityId: 'team',
 };
 
@@ -30,7 +30,7 @@ export async function gamesStore(name: string) {
   const store = defineSqliteStore({
     name,
     schema: SCHEMA,
-    partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+    partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
     build: (cellar) => ({
       reads: {
         teams: cellar.defineRead<Season, string[]>({ empty: [], select: (_args, key) => cellar.rows(key).map((row) => row.team, []) }),
@@ -63,7 +63,7 @@ export async function cachedStore(name: string) {
   const store = defineSqliteStore({
     name,
     schema: SCHEMA,
-    partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+    partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
     build: (cellar) => {
       const { teams } = cellar.defineCaches({ teams: byPartition<string[]>({ max: 8 }) });
       return {

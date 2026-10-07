@@ -36,7 +36,7 @@ describe('the agent tools', () => {
       name: 'agent_describe_store',
       table: 'games',
       entityColumn: 'team',
-      primaryKey: ['partition_key', 'team'],
+      primaryKey: ['partition_key', 'sport', 'team'],
       binding: { state: 'database' },
     });
   });
@@ -45,8 +45,8 @@ describe('the agent tools', () => {
     const store = await gamesStore('agent_partitions_store');
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
-    expect(await tools.listPartitions({ store: 'agent_partitions_store', match: 'nfl' })).toMatchObject({ total: 1, partitions: [{ key: 'nfl:2026', rows: 3 }] });
-    expect(await tools.listPartitions({ store: 'agent_partitions_store', limit: 1 })).toMatchObject({ total: 2, partitions: [{ key: 'nba:2026' }] });
+    expect(await tools.listPartitions({ store: 'agent_partitions_store', match: 'nfl' })).toMatchObject({ total: 1, partitions: [{ key: 'season=2026&sport=nfl', rows: 3 }] });
+    expect(await tools.listPartitions({ store: 'agent_partitions_store', limit: 1 })).toMatchObject({ total: 2, partitions: [{ key: 'season=2026&sport=nba' }] });
   });
 
   it('queries, and refuses a write', async () => {
@@ -61,14 +61,14 @@ describe('the agent tools', () => {
     store.lifecycle.put(NFL, NFL_GAMES);
     store.lifecycle.put(NBA, [{ team: 'BOS', sport: 'nba', score: 101 }]);
     const { events } = await tools.recentEvents({ store: 'agent_events_store', kinds: ['write'], limit: 1 });
-    expect(events).toEqual([expect.objectContaining({ kind: 'write', store: 'agent_events_store', partition: 'nba:2026' })]);
+    expect(events).toEqual([expect.objectContaining({ kind: 'write', store: 'agent_events_store', partition: 'season=2026&sport=nba' })]);
   });
 
   it('pages a query, lists entity changes and caches', async () => {
     const store = await gamesStore('agent_more_store');
     store.lifecycle.put(NFL, NFL_GAMES);
     expect(await tools.query({ store: 'agent_more_store', sql: 'SELECT team FROM games ORDER BY team', limit: 1, offset: 1 })).toMatchObject({ rows: [['KC']], truncated: true, offset: 1 });
-    expect(await tools.entityChanges({ store: 'agent_more_store', key: 'nfl:2026' })).toMatchObject({ version: 1, epoch: 1, count: 0 });
+    expect(await tools.entityChanges({ store: 'agent_more_store', key: 'season=2026&sport=nfl' })).toMatchObject({ version: 1, epoch: 1, count: 0 });
     expect(await tools.listCaches({ store: 'agent_more_store' })).toEqual({ caches: [] });
   });
 
