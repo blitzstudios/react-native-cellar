@@ -8,6 +8,7 @@ import { columnNames, FindOpts, IndexDef, ReplaceRow, RowShape, RowTable, RowTab
 import { assertRowsMatchWhere, assertEntityIdColumn, comparator, whereClause } from './query';
 import { ALL_ENTITIES, NO_CHANGES, unionChanges, WriteResult } from './change_set';
 import { stageNames, entityDiffSql, EntityDiffSql, WriteMode } from './entity_diff_sql';
+import { sharedRowsSql, SharedRowsSql, sharedTableNames } from './shared_rows_sql';
 import {
   addColumnSql,
   addedColumns,
@@ -15,6 +16,7 @@ import {
   createMetaTableSql,
   createTableSql,
   dropIndexSql,
+  LiveSchema,
   planSchemaMigration,
   readLiveSchema,
   reportPushFedRebuild,
@@ -95,6 +97,12 @@ function assertDeleteWhereMatches(table: string, variant: string, spec: ShredSpe
   );
 }
 
+/** A shared-rows table's live schema as its view presents it: the rows table's columns behind `partition_key`. */
+function withPartitionColumn(live: LiveSchema): LiveSchema {
+  if (!live.columns.length) return live;
+  return { ...live, columns: [{ name: PARTITION_KEY_COLUMN, type: 'TEXT', notnull: 1 }, ...live.columns] };
+}
+
 /** Options for {@linkcode createSqliteRowTable}. */
 export interface SqliteRowTableOptions {
   /**
@@ -130,8 +138,15 @@ export function createSqliteRowTable<Row extends RowShape>(
 
   const stageFingerprint = schemaFingerprint(schema);
   const asyncStage = stageNames(schema.table, stageFingerprint, 'async');
+  const syncStage = stageNames(schema.table, stageFingerprint, 'sync');
   const asyncDiff = entityDiffSql(schema, asyncStage, MAX_BIND_VARIABLES);
-  const syncDiff = entityDiffSql(schema, stageNames(schema.table, stageFingerprint, 'sync'), MAX_BIND_VARIABLES);
+  const syncDiff = entityDiffSql(schema, syncStage, MAX_BIND_VARIABLES);
+  const shared =
+    schema.partitioned && schema.sharedRows ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
+  let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
+  const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
+  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number, carries?: readonly string[]) =>
+    sharedSql ? sharedSql.diff(mode, where, writeId, carries) : diff.diff(mode, where, writeId);
 
   /**
    * Async writes run one at a time. Each stages its rows and then diffs the stage in a second step, and the native
@@ -162,7 +177,8 @@ export function createSqliteRowTable<Row extends RowShape>(
    * ran — a guarded connection in release answers a failed statement with silence — and the write reports every entity
    * rather than none: a reader woken for nothing costs a render, and one left asleep shows stale data.
    */
-  function readBack(sql: EntityDiffSql, writeId: number): WriteResult {
+  function readBack(sql: EntityDiffSql, writeId: number, sharedSql?: SharedRowsSql): WriteResult {
+    if (sharedSql) noteElsewhere(sharedSql, writeId);
     const [statement, params] = sql.readBack(writeId);
     const result = conn.execute(statement, params);
     const rows = (result.rows?._array ?? []) as Array<{ entity_id: SqlValue; rows: number | null }>;
@@ -178,6 +194,22 @@ export function createSqliteRowTable<Row extends RowShape>(
       return { changes: ALL_ENTITIES, rows: 0 };
     }
     return { changes: changed.size ? changed : NO_CHANGES, rows: count };
+  }
+
+  /** Hands the listener the entities one write changed in partitions other than its own. */
+  function noteElsewhere(sharedSql: SharedRowsSql, writeId: number): void {
+    const [statement, params] = sharedSql.readElsewhere(writeId);
+    const result = conn.execute(statement, params);
+    const rows = (result.rows?._array ?? []) as Array<{ partition_key: string; entity_id: SqlValue }>;
+    result.dispose?.();
+    if (!rows.length || !elsewhereListener) return;
+    const byPartition = new Map<string, Set<string>>();
+    for (const row of rows) {
+      let entities = byPartition.get(row.partition_key);
+      if (!entities) byPartition.set(row.partition_key, (entities = new Set()));
+      entities.add(String(row.entity_id));
+    }
+    elsewhereListener(byPartition);
   }
 
   const presence = createPresence();
@@ -208,7 +240,8 @@ export function createSqliteRowTable<Row extends RowShape>(
     if (!present) conn.execute(`ALTER TABLE ${meta.table} ADD COLUMN ${meta.recordColumn} TEXT;`);
   }
 
-  const secondaryIndexes = schema.indexes ?? [];
+  const indexTable = shared ? sharedTableNames(schema.table).rows : schema.table;
+  const secondaryIndexes = (shared ? shared.async.indexes : schema.indexes ?? []) as ReadonlyArray<IndexDef<Row>>;
   const runIndexDdl = async (sql: (idx: IndexDef<Row>) => string): Promise<void> => {
     for (const idx of secondaryIndexes) {
       // eslint-disable-next-line no-await-in-loop -- DDL must not interleave
@@ -237,7 +270,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       return await write();
     } finally {
       deferrals -= 1;
-      if (deferrals === 0) await serialized(() => runIndexDdl((idx) => createIndexSql(schema.table, idx)));
+      if (deferrals === 0) await serialized(() => runIndexDdl((idx) => createIndexSql(indexTable, idx)));
     }
   }
 
@@ -254,10 +287,15 @@ export function createSqliteRowTable<Row extends RowShape>(
   };
 
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
-  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[]): Promise<WriteResult> {
+  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[], carries?: readonly string[]): Promise<WriteResult> {
     const writeId = nextWriteId();
-    await runBatchAsync(conn, [...asyncDiff.ensure, asyncDiff.clear, ...asyncDiff.stageRows(rows), ...asyncDiff.diff(mode, where, writeId)]);
-    return readBack(asyncDiff, writeId);
+    await runBatchAsync(conn, [
+      ...ensureFor(asyncDiff, shared?.async),
+      asyncDiff.clear,
+      ...asyncDiff.stageRows(rows),
+      ...diffFor(asyncDiff, shared?.async, mode, where, writeId, carries),
+    ]);
+    return readBack(asyncDiff, writeId, shared?.async);
   }
 
   /**
@@ -266,6 +304,8 @@ export function createSqliteRowTable<Row extends RowShape>(
    * new. That is a first load — a cold start, a new week — and it is the one write where staging would double the cost.
    */
   const partitionIsEmpty = (where: Partial<Row>): boolean => {
+    // Shared rows are written through the stage alone: the table is a view, and its rows may be another partition's.
+    if (shared) return false;
     const { sql, params } = whereClause(where);
     const result = conn.execute(`SELECT 1 AS one FROM ${schema.table}${sql} LIMIT 1;`, params);
     const empty = !(result.rows?._array ?? []).length;
@@ -295,7 +335,14 @@ export function createSqliteRowTable<Row extends RowShape>(
     return [[`DELETE FROM ${schema.table}${sql};`, params], ...syncDiff.insertInto(schema.table, rows)];
   };
 
-  async function shredOrParse(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition: object, inJs: boolean): Promise<WriteResult> {
+  async function shredOrParse(
+    where: Partial<Row>,
+    rawJson: string,
+    parseRows: (rawJson: string) => ReplaceRow<Row>[],
+    partition: object,
+    inJs: boolean,
+    carries?: readonly string[],
+  ): Promise<WriteResult> {
     const direct = partitionIsEmpty(where);
     let nativeError: unknown;
     if (!inJs && conn.shredJsonArrayAsync && nativeShredSpec) {
@@ -312,11 +359,11 @@ export function createSqliteRowTable<Row extends RowShape>(
           const landed = await conn.shredJsonArrayAsync(spec, rawJson, binds);
           result = entitiesLanded(where, landed);
         } else {
-          await runBatchAsync(conn, [...asyncDiff.ensure, asyncDiff.clear]);
+          await runBatchAsync(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
           const writeId = nextWriteId();
-          await runBatchAsync(conn, asyncDiff.diff('replace', where, writeId));
-          result = readBack(asyncDiff, writeId);
+          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, carries));
+          result = readBack(asyncDiff, writeId, shared?.async);
         }
         presence.afterDelete(where);
         return result;
@@ -357,7 +404,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       await runBatchAsync(conn, replaceDirectly(where, rows));
       result = { changes: entityIdsOf(rows), rows: rows.length };
     } else {
-      result = await stageAndApply('replace', where, rows);
+      result = await stageAndApply('replace', where, rows, carries);
     }
     presence.afterDelete(where);
     return result;
@@ -373,25 +420,36 @@ export function createSqliteRowTable<Row extends RowShape>(
     entityId: schema.entityId,
 
     init(): void {
+      const create = (temporary: boolean): void => {
+        if (shared) shared.async.create(temporary).forEach((sql) => conn.execute(sql));
+        else conn.execute(createTableSql(schema, temporary));
+      };
       if (options.temporary) {
-        conn.execute(createTableSql(schema, true));
-        for (const idx of secondaryIndexes) conn.execute(createIndexSql(schema.table, idx));
+        create(true);
+        for (const idx of secondaryIndexes) conn.execute(createIndexSql(indexTable, idx));
         if (schema.meta) conn.execute(createMetaTableSql(schema.meta, true));
         return;
       }
-      const live = readLiveSchema(conn, schema.table);
-      const plan = planSchemaMigration(schema, live, nativeShredSpec);
+      const kind = readRows<{ type: string }>(conn, `SELECT type FROM sqlite_master WHERE name = ?;`, [schema.table])[0]?.type;
+      const live = shared && kind === 'view' ? withPartitionColumn(readLiveSchema(conn, indexTable)) : readLiveSchema(conn, schema.table);
+      const layoutMoved = kind !== undefined && (kind === 'view') !== !!shared;
+      const plan = layoutMoved ? 'rebuild' : planSchemaMigration(schema, live, nativeShredSpec);
       if (plan === 'rebuild') {
         if (schema.pushFed) reportPushFedRebuild(schema.table);
         // Drops the table's indexes with it, which is how an index change gets applied.
-        conn.execute(`DROP TABLE IF EXISTS ${schema.table};`);
+        if (kind === 'view') sharedRowsSql(schema, asyncStage, 'async').drop.forEach((sql) => conn.execute(sql));
+        else conn.execute(`DROP TABLE IF EXISTS ${schema.table};`);
         // The etags describe the dropped rows, so keeping them would 304 the refetch away.
         if (schema.meta) conn.execute(`DROP TABLE IF EXISTS ${schema.meta.table};`);
       }
       // A widening keeps every row, so this is the one migration that costs a user nothing.
-      if (plan === 'extend') for (const column of addedColumns(schema, live.columns) ?? []) conn.execute(addColumnSql(schema, column));
-      conn.execute(createTableSql(schema));
-      for (const idx of secondaryIndexes) conn.execute(createIndexSql(schema.table, idx));
+      if (plan === 'extend') {
+        for (const column of addedColumns(schema, live.columns) ?? []) conn.execute(addColumnSql({ ...schema, table: indexTable }, column));
+        // The view names its columns, so it is rebuilt over the widened rows.
+        if (shared) conn.execute(`DROP VIEW IF EXISTS ${schema.table};`);
+      }
+      create(false);
+      for (const idx of secondaryIndexes) conn.execute(createIndexSql(indexTable, idx));
       if (schema.meta) {
         conn.execute(createMetaTableSql(schema.meta));
         ensureRecordColumn(schema.meta);
@@ -427,7 +485,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       return { changes, rows: rows.length };
     },
 
-    overwrite(where: Partial<Row>, replacing: readonly ReplaceRow<Row>[]): WriteResult {
+    overwrite(where: Partial<Row>, replacing: readonly ReplaceRow<Row>[], carries?: ReadonlyArray<keyof Row & string>): WriteResult {
       const rows = stampPartition(where, replacing);
       if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
       if (partitionIsEmpty(where)) {
@@ -436,16 +494,32 @@ export function createSqliteRowTable<Row extends RowShape>(
         return { changes: entityIdsOf(rows), rows: rows.length };
       }
       const writeId = nextWriteId();
-      runBatch(conn, [...syncDiff.ensure, syncDiff.clear, ...syncDiff.stageRows(rows), ...syncDiff.diff('replace', where, writeId)]);
-      const result = readBack(syncDiff, writeId);
+      runBatch(conn, [
+        ...ensureFor(syncDiff, shared?.sync),
+        syncDiff.clear,
+        ...syncDiff.stageRows(rows),
+        ...diffFor(syncDiff, shared?.sync, 'replace', where, writeId, carries),
+      ]);
+      const result = readBack(syncDiff, writeId, shared?.sync);
       presence.afterDelete(where);
       return result;
     },
 
-    async shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object, inJs = false): Promise<WriteResult> {
+    async shred(
+      where: Partial<Row>,
+      rawJson: string,
+      parseRows: (rawJson: string) => ReplaceRow<Row>[],
+      partition?: object,
+      inJs = false,
+      carries?: ReadonlyArray<keyof Row & string>,
+    ): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs)));
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs, carries)));
+    },
+
+    onChangesElsewhere(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void {
+      elsewhereListener = listener;
     },
 
     getOne(where: Partial<Row>): Row | undefined {

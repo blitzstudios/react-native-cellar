@@ -164,6 +164,14 @@ export interface RowTableSchema<Row extends RowShape> {
    * bind 0, so a native shred spec's own binds start at 1.
    */
   partitioned?: boolean;
+  /**
+   * Stores one row per primary key, however many partitions hold it, for a store whose partitions overlap: a catalog
+   * and one item's detail, or a week and one of its games. The primary key is then the row's identity across the whole
+   * table, and has to say everything that tells two rows apart. Each partition keeps the identities its fetch returned,
+   * and the table a store reads is a view over both, so reads still filter on `partition_key`. A row changed through
+   * one partition wakes the readers of every partition holding it.
+   */
+  sharedRows?: boolean;
 }
 
 /**
@@ -229,7 +237,7 @@ export interface RowTable<Row extends RowShape> {
    *
    * Returns the entity ids that were added, removed or changed, and the number of rows given.
    */
-  overwrite(where: Partial<Row>, rows: readonly ReplaceRow<Row>[]): WriteResult;
+  overwrite(where: Partial<Row>, rows: readonly ReplaceRow<Row>[], carries?: ReadonlyArray<keyof Row & string>): WriteResult;
   /**
    * Replaces the rows matching `where` with the rows in a JSON response body, the same way
    * {@linkcode RowTable.overwrite} does. When the connection and the store support it, the native shredder parses the
@@ -237,9 +245,22 @@ export interface RowTable<Row extends RowShape> {
    *
    * Returns the entity ids that were added, removed or changed, and the number of rows written. `partition` is the
    * description the native shred spec picks its variant and binds from; without it, they get `where`. `inJs` always
-   * parses with `parseRows`.
+   * parses with `parseRows`. On {@linkcode RowTableSchema.sharedRows | shared rows}, `carries` lists the columns this
+   * write fills; the rest keep what another partition wrote.
    */
-  shred(where: Partial<Row>, rawJson: string, parseRows: (rawJson: string) => ReplaceRow<Row>[], partition?: object, inJs?: boolean): Promise<WriteResult>;
+  shred(
+    where: Partial<Row>,
+    rawJson: string,
+    parseRows: (rawJson: string) => ReplaceRow<Row>[],
+    partition?: object,
+    inJs?: boolean,
+    carries?: ReadonlyArray<keyof Row & string>,
+  ): Promise<WriteResult>;
+  /**
+   * On {@linkcode RowTableSchema.sharedRows | shared rows}, called after a write with the entities it changed in other
+   * partitions, by partition key.
+   */
+  onChangesElsewhere?(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void;
   /** The first stored row whose columns equal the values in `where`, or `undefined` if none does. */
   getOne(where: Partial<Row>): Row | undefined;
   /**

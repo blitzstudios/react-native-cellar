@@ -13,6 +13,7 @@ import { cacheKey, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
 import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
+import type { RowTableSchema } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -112,6 +113,11 @@ export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
    * native programs can't read, such as one that isn't a JSON array or object of elements.
    */
   canShredNatively?: (partition: Descriptor) => boolean;
+  /**
+   * On a {@linkcode RowTableSchema.sharedRows | shared-rows} table, the columns this partition's body fills, for one
+   * that fills only some: its rows keep the rest from whatever other partition wrote them. Every column by default.
+   */
+  carries?: (partition: Descriptor) => ReadonlyArray<keyof Row & string> | undefined;
   /**
    * Called when a fetch of the partition starts, and returns a function Cellar calls when the fetch has finished.
    * For a store that also receives socket pushes: hold the partition's pushes until the release is called. A fetch
@@ -470,7 +476,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     const spec = fetchSpec as PartitionFetchSpec<Row, Key, Descriptor>;
     const partition = describe(key);
     const parse = (raw: string): Row[] => spec.toRows(partition, raw, key) as Row[];
-    const result = await table.shred(where(key), rawJson, parse, partition as object, spec.canShredNatively?.(partition) === false);
+    const result = await table.shred(where(key), rawJson, parse, partition as object, spec.canShredNatively?.(partition) === false, spec.carries?.(partition));
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
     return result;
   }
@@ -567,4 +573,18 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, DerivedValues, RawQuery, Read, ReadAcrossDef, ReadDef, RowTable, SqliteStoreConfig, addressesPartition, byEntity, byPartition };
+export type {
+  CommonDef,
+  DataResult,
+  DerivedValues,
+  RawQuery,
+  Read,
+  ReadAcrossDef,
+  ReadDef,
+  RowTable,
+  RowTableSchema,
+  SqliteStoreConfig,
+  addressesPartition,
+  byEntity,
+  byPartition,
+};

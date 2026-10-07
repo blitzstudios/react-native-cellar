@@ -206,7 +206,7 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
 
     await events.lifecycle.fetch(US);
 
-    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), expect.anything(), true);
+    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), expect.anything(), true, undefined);
     expect(table.overwrite).not.toHaveBeenCalled();
     expect(real.find(events.where(US))).toHaveLength(1);
     expect(degradeMock).not.toHaveBeenCalled();

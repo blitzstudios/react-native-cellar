@@ -5,6 +5,7 @@
  * tests), and can move between databases during a session without its callers noticing.
  */
 
+import { notifyManager } from '@tanstack/query-core';
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { createVersionAtom, entityChangesOf, VersionAtom } from './reactivity/version_atom';
 import { FindOpts, RowShape, RowTable } from './table/types';
@@ -469,7 +470,7 @@ export function defineSqliteStore<
         },
         where,
       },
-      fetch: config.fetch && { ...(config.fetch as StoreFetchSpec<StoredRow, Partition>), holdWrites },
+      fetch: config.fetch && { ...(config.fetch as unknown as StoreFetchSpec<StoredRow, Partition>), holdWrites },
       internMax: config.internMax,
       remember: (key, partition) => {
         const rowsWhere = where(key);
@@ -477,6 +478,7 @@ export function defineSqliteStore<
       },
       ...(__DEV__ && { onChanged: recordWrite }),
     });
+    table.onChangesElsewhere?.((changes) => notifyManager.batch(() => changes.forEach((entities, key) => partitions.bump(key, entities))));
     const surface = config.build({
       defineRead: partitions.defineRead,
       defineReadAcross: partitions.defineReadAcross,

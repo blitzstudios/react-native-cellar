@@ -107,7 +107,7 @@ function structureCanonical<Row extends RowShape>(schema: RowTableSchema<Row>, s
   // Sorted, so only a real index change moves the fingerprint.
   const indexes = (schema.indexes ?? []).map((index) => `${index.name}(${index.columns.join(',')})`).sort();
   const meta = schema.meta ? `${schema.meta.table}(${schema.meta.keyColumns.join(',')}):${schema.meta.column}` : '';
-  return [`pk(${schema.primaryKey.join(',')})`, indexes.join('|'), meta, shredPart];
+  return [`pk(${schema.primaryKey.join(',')})`, indexes.join('|'), meta, shredPart, ...(schema.sharedRows ? ['shared'] : [])];
 }
 
 /**
