@@ -64,7 +64,6 @@ function playerStore(over: { native?: boolean } = {}) {
     partition: {
       fields: ['sport'],
       fromArgs: ({ sport }: { sport?: string }): PlayerPartition | null => (sport ? { sport } : null),
-      toKey: (p: PlayerPartition) => (p.request === 'player' ? `player:${p.sport}:${p.playerId}` : p.sport),
     },
     fetch: (p: PlayerPartition) => {
       type Body = { player_id: string; team: string; height?: string };
@@ -211,7 +210,6 @@ function statStore() {
     partition: {
       fromArgs: (args: { week?: number; gameId?: string }): StatPartition | null =>
         args.gameId ? { request: 'game', gameId: args.gameId } : args.week ? { request: 'week', week: args.week } : null,
-      toKey: (p: StatPartition) => (p.request === 'game' ? `game:${p.gameId}` : `week:${p.week}`),
     },
     fetch: (p: StatPartition) => ({
       queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }),

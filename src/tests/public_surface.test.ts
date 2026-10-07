@@ -40,7 +40,7 @@ describe('the core entry point', () => {
       'TrackedValueOptions', 'VersionAtom', 'WindowedBlock', 'WithReadSpec', 'WriteResult',
       'byEntity', 'byPartition', 'configureCellar', 'createBoundedLru', 'createCoverage', 'createOnceGuard',
       'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
-      'makeResult', 'pairRead', 'pinnedReader', 'reactQueryRuntime', 'readRows',
+      'makeResult', 'pairRead', 'partitionKeyOf', 'pinnedReader', 'reactQueryRuntime', 'readRows',
       'readRowsIn', 'reportStoreDegradation', 'rowsOf', 'runTracked', 'shallowEqualArray',
       'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue', 'shredColumnValue', 'useTrackedValue', 'withRead',
     ]);

@@ -18,7 +18,7 @@ export type { QueryRuntime } from './runtime';
 export { configureCellar, reactQueryRuntime } from './runtime';
 
 // Declaring a store.
-export { defineSqliteStore } from './define_sqlite_store';
+export { defineSqliteStore, partitionKeyOf } from './define_sqlite_store';
 export type { PartitionSpec, SqliteStore, CellarContext, StoreFetchSpec, StoreFunctions, StorePush, StorePushOf, StorePushSpec, StoreSurface } from './define_sqlite_store';
 export type { FetchPlan } from './define_partitions';
 export type { PartitionLifecycle } from './define_partitions';

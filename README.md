@@ -108,7 +108,7 @@ and is indexed with the entity id, and a side table (`items_meta`) holding each 
 ### 2. Declare the store: its partitions and its reads
 
 `partition` names the args that describe one partition, here `groupId`, and Cellar derives the rest from them: the
-partition's key (the fields' values joined with `:`, here the group id itself), what a fetch replaces, where the ETag
+partition's key (the description serialized, here `groupId=g1`), what a fetch replaces, where the ETag
 goes, what a write bumps. `fetch` gets the description. `build` declares the reads, which turn a partition's rows into
 whatever the screen actually wants, and the caches that hold what they build, with what its one argument, `cellar`,
 hands it.
@@ -157,9 +157,8 @@ one of the store's caches: here, every caller of one group shares one list. `emp
 partition has rows, so it has to be a stable reference. The store's `lifecycle` (priming, fetching, refetching,
 forgetting) comes from Cellar; `build` returns only the reads, and any pushes or lifecycle functions of its own.
 
-The partition's type comes from `fetch.query`'s parameter, here `ItemKey`. A store whose args aren't the description
-itself gives `partition.fromArgs`, such as a sport that shares another sport's players, and one whose descriptions
-are more than a few small fields gives `partition.toKey` too. A read of several partitions at once, such as one
+The partition's type comes from `fetch`'s parameter, here `ItemKey`. A store whose args aren't the description
+itself gives `partition.fromArgs`, such as a sport that shares another sport's players. A read of several partitions at once, such as one
 player's stats across several weeks, is a `defineReadAcross`, whose `partitions` names them from the args.
 
 Until it is bound, a store runs over a connection that answers nothing, so each read gives back its `empty`. Startup

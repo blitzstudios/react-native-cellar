@@ -90,9 +90,8 @@ store is reaching past its entry point; import it from its own module only if yo
 
   The partition's **description** (`{ groupId, itemType }`) is what a fetch is made from: `fetch` is handed it, and
   answers with everything about that request. Its **key** is the string Cellar identifies it by, derived from the
-  description: one field's value as it is, several fields' values joined with `:` (`g1:regular`), each escaped only
-  where it holds a `:` or `%` of its own, or
-  `partition.toKey`'s answer for a description too big for that. Keys name partitions, and ids name entities.
+  description by `partitionKeyOf`: each field `name=value`, in name order, joined with `&` (`groupId=g1&itemType=regular`),
+  names and values escaped, a list's values joined with `,`, and a field left `undefined` the same as one left out. Keys name partitions, and ids name entities.
 
   The key locates the partition for every operation Cellar runs on the store's behalf. A row is stored once, by its
   primary key, which is its identity across every partition, so a store without one is refused; each partition keeps

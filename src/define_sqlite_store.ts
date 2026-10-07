@@ -63,22 +63,22 @@ export interface StoreSurface {
 }
 
 /**
- * How a read's args name a partition, and the partition's key. A partition is the set of rows one fetch returns and
- * replaces, and its description (the `Partition`) is what the fetch is made from, such as `{ sport: 'nfl' }`. Its key
- * is the string Cellar identifies it by everywhere: in the `partition_key` column of its rows, its ETag, its version,
- * and its request.
+ * How a read's args name a partition. A partition is the set of rows one fetch returns, and its description (the
+ * `Partition`) is what the fetch is made from, such as `{ sport: 'nfl' }`. Its key is the description serialized
+ * ({@linkcode partitionKeyOf}), the string Cellar identifies it by everywhere: its rows' membership, its ETag, its
+ * version, and its request.
  *
  * Most stores name {@linkcode PartitionSpec.fields | fields}: the args fields that are the description, such as
- * `['sport', 'season', 'seasonType']`, and the key is their values joined with `:`, such as `nfl:2025:regular`. A store
- * whose args need translating into a description names {@linkcode PartitionSpec.fromArgs | fromArgs}, and one
- * whose descriptions don't fit in a few small fields names {@linkcode PartitionSpec.toKey | toKey}.
+ * `['sport', 'season', 'seasonType']`. A store whose args need translating into a description names
+ * {@linkcode PartitionSpec.fromArgs | fromArgs}. A description that holds a list holds it in one order, so that one
+ * partition is never two keys.
  */
 export type PartitionSpec<Args, Partition> =
   | {
       /**
-       * The description's fields, in key order. A read's args carry them unless
-       * {@linkcode PartitionSpec.fromArgs | fromArgs} builds the description instead, and a read whose args are
-       * missing one of them (undefined, null or `''`) reads nothing and fetches nothing until it has a value.
+       * The description's fields. A read's args carry them unless {@linkcode PartitionSpec.fromArgs | fromArgs} builds
+       * the description instead, and a read whose args are missing one of them (undefined, null or `''`) reads nothing
+       * and fetches nothing until it has a value. Those that are also columns hold one value across a partition's rows.
        */
       fields: readonly (keyof Partition & string)[];
       /**
@@ -88,17 +88,10 @@ export type PartitionSpec<Args, Partition> =
        * until then. Returning the same object for the same args lets Cellar derive its key once.
        */
       fromArgs?: (args: Loose<Args>) => Partition | null | undefined;
-      /**
-       * Turns a description into its key, where {@linkcode PartitionSpec.fields | fields} joined with `:` would not do.
-       * It must give equal keys for equal descriptions and different keys for different ones. Nothing turns a key back
-       * into a description: Cellar keeps each description under its key itself.
-       */
-      toKey?: (partition: Partition) => string;
     }
   | {
       fields?: undefined;
       fromArgs: (args: Loose<Args>) => Partition | null | undefined;
-      toKey: (partition: Partition) => string;
     };
 
 /**
@@ -442,9 +435,9 @@ export function defineSqliteStore<
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
   const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
   const nativeShredSpec = nativeSpecOf(config.nativeShredSpecs);
-  const { fields, fromArgs, toKey } = config.partition;
+  const { fields, fromArgs } = config.partition;
   const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
-  const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
+  const keyOfPartition = partitionKeyOf as (partition: Partition) => string;
 
   /** Logs a write that changed a partition, for the inspector. Wired in development builds only. */
   const recordWrite = (partition: string, next: number, changes: ChangeSet): void => {
@@ -783,17 +776,19 @@ function partitionFromFields<Args, Partition>(fields: readonly string[]): (args:
 }
 
 /**
- * The default {@linkcode PartitionSpec.toKey | toKey}: one field's value as it is, or several fields' values joined with
- * `:`, each escaped only where it holds a `:` or `%` of its own.
+ * A partition's key: its description, serialized. Each field that holds a value is written `name=value`, in name order,
+ * joined with `&`, and a list's values are joined with `,`, so equal descriptions give equal keys and different ones
+ * different keys. A field left `undefined` is the same as one left out. Names and values are escaped, so no value can
+ * read as a separator.
  */
-function keyFromFields<Partition>(fields: readonly string[]): (partition: Partition) => string {
-  const part = (value: unknown): string => {
-    const text = String(value);
-    return /[:%]/.test(text) ? encodeURIComponent(text) : text;
-  };
-  return fields.length === 1
-    ? (partition) => String((partition as Record<string, unknown>)[fields[0]])
-    : (partition) => fields.map((field) => part((partition as Record<string, unknown>)[field])).join(':');
+export function partitionKeyOf(partition: object): string {
+  const part = (value: unknown): string =>
+    Array.isArray(value) ? value.map(part).join(',') : encodeURIComponent(typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value));
+  return Object.keys(partition)
+    .filter((name) => (partition as Record<string, unknown>)[name] !== undefined)
+    .sort()
+    .map((name) => `${encodeURIComponent(name)}=${part((partition as Record<string, unknown>)[name])}`)
+    .join('&');
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a

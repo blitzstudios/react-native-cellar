@@ -145,8 +145,8 @@ describe('partitions', () => {
 
     const inspected = inspectedStore('partitioned_store')!;
     expect(await inspected.partitions()).toEqual([
-      { key: 'nba:2026', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
-      { key: 'nfl:2026', partition: NFL, rows: 2, entities: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
+      { key: 'season=2026&sport=nba', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
+      { key: 'season=2026&sport=nfl', partition: NFL, rows: 2, entities: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
     ]);
     expect(await inspected.summary()).toMatchObject({ binding: { state: 'database' }, rows: 3, partitions: 2 });
     expect((await inspected.summary()).databaseBytes).toBeGreaterThan(0);
@@ -167,7 +167,7 @@ describe('partitions', () => {
       { team: 'KC', sport: 'nfl', score: 30 },
       { team: 'BUF', sport: 'nfl', score: 21 },
     ]);
-    expect(inspectedStore('entity_changes_store')!.entityChanges('nfl:2026')).toEqual({
+    expect(inspectedStore('entity_changes_store')!.entityChanges('season=2026&sport=nfl')).toEqual({
       version: 3,
       epoch: 1,
       count: 2,
@@ -185,15 +185,15 @@ describe('partitions', () => {
     store.lifecycle.put(NFL, [{ team: 'BUF', sport: 'nfl', score: 21 }, { team: 'KC', sport: 'nfl', score: 27 }]);
     store.lifecycle.put(NBA, [{ team: 'BUF', sport: 'nba', score: 99 }]);
     const inspected = inspectedStore('entity_lookup_store')!;
-    expect(await inspected.entity('nfl:2026', 'BUF')).toEqual({
-      partition: 'nfl:2026',
+    expect(await inspected.entity('season=2026&sport=nfl', 'BUF')).toEqual({
+      partition: 'season=2026&sport=nfl',
       id: 'BUF',
-      rows: [{ partition_key: 'nfl:2026', team: 'BUF', sport: 'nfl', score: 21 }],
+      rows: [{ partition_key: 'season=2026&sport=nfl', team: 'BUF', sport: 'nfl', score: 21 }],
       version: 2,
       cacheEntries: [],
-      sameIdIn: ['nba:2026'],
+      sameIdIn: ['season=2026&sport=nba'],
     });
-    expect(await inspected.entity('nba:2026', 'BUF')).toMatchObject({ rows: [{ sport: 'nba', score: 99 }], version: 1, sameIdIn: ['nfl:2026'] });
+    expect(await inspected.entity('season=2026&sport=nba', 'BUF')).toMatchObject({ rows: [{ sport: 'nba', score: 99 }], version: 1, sameIdIn: ['season=2026&sport=nfl'] });
   });
 
   it('clears a partition ETag, and says a store without fetches cannot refetch', async () => {
@@ -203,9 +203,9 @@ describe('partitions', () => {
     store.lifecycle.setEtag(NFL, 'W/"7"');
     const inspected = inspectedStore('etag_store')!;
 
-    inspected.clearEtag('nfl:2026');
+    inspected.clearEtag('season=2026&sport=nfl');
     expect((await inspected.partitions())[0].etag).toBeNull();
-    expect(inspected.refetch('nfl:2026')).toBe(false);
+    expect(inspected.refetch('season=2026&sport=nfl')).toBe(false);
   });
 
   it('is empty while the store is unbound', async () => {
@@ -231,7 +231,7 @@ describe('queries', () => {
 
   it('returns the columns and each row as values in column order, blobs described', async () => {
     const { inspected } = seeded('query_store');
-    const result = await inspected.query("SELECT team, score, CASE team WHEN 'KC' THEN x'deadbeef' END AS logo FROM inspected_games WHERE partition_key = ? ORDER BY team", ['nfl:2026']);
+    const result = await inspected.query("SELECT team, score, CASE team WHEN 'KC' THEN x'deadbeef' END AS logo FROM inspected_games WHERE partition_key = ? ORDER BY team", ['season=2026&sport=nfl']);
     expect(result).toMatchObject({
       columns: ['team', 'score', 'logo'],
       rows: [
@@ -326,7 +326,7 @@ describe('queries', () => {
     store.bindSqlite(nitroLike((names) => ({ '': { name: names[0], index: 0 } })));
     store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
     const result = await inspectedStore('short_metadata_store')!.query('SELECT score * 2 AS doubled, score, partition_key, team FROM inspected_games');
-    expect(result).toMatchObject({ columns: ['partition_key', 'team', 'score', 'doubled'], rows: [['nfl:2026', 'KC', 27, 54]] });
+    expect(result).toMatchObject({ columns: ['partition_key', 'team', 'score', 'doubled'], rows: [['season=2026&sport=nfl', 'KC', 27, 54]] });
   });
 
   it("keeps the row's own order for a driver without metadata", async () => {
@@ -365,12 +365,12 @@ describe('the event log', () => {
 
     const writes = heard.filter((event) => event.kind === 'write');
     expect(writes).toEqual([
-      expect.objectContaining({ store: 'logged_store', partition: 'nfl:2026', version: 1, entities: ['KC'], entityCount: 1 }),
-      expect.objectContaining({ store: 'logged_store', partition: 'nfl:2026', version: 2, entities: ['BUF'], entityCount: 1 }),
+      expect.objectContaining({ store: 'logged_store', partition: 'season=2026&sport=nfl', version: 1, entities: ['KC'], entityCount: 1 }),
+      expect.objectContaining({ store: 'logged_store', partition: 'season=2026&sport=nfl', version: 2, entities: ['BUF'], entityCount: 1 }),
     ]);
     const logged = recentInspectorEvents().filter((event) => event.kind === 'write');
     expect(logged).toHaveLength(3);
-    expect(recentInspectorEvents(writes[1].id).map((event) => event.kind === 'write' && event.partition)).toEqual(['nba:2026']);
+    expect(recentInspectorEvents(writes[1].id).map((event) => event.kind === 'write' && event.partition)).toEqual(['season=2026&sport=nba']);
   });
 
   itDev('records every degradation report, marking the first of each scope', () => {
@@ -451,9 +451,9 @@ describe('the event log', () => {
     expect(inspected.caches()[0].heapBytes).toBeUndefined();
 
     const page = inspected.cacheEntries('teams', { limit: 1 });
-    expect(page).toMatchObject({ total: 2, offset: 0, entries: [{ key: ['nba:2026'], version: 0, value: { names: ['BOS'] } }] });
+    expect(page).toMatchObject({ total: 2, offset: 0, entries: [{ key: ['season=2026&sport=nba'], version: 0, value: { names: ['BOS'] } }] });
     expect(page.entries[0].heapBytes).toBeGreaterThan(0);
-    expect(inspected.cacheEntries('teams', { offset: 1 }).entries[0].key).toEqual(['nfl:2026']);
+    expect(inspected.cacheEntries('teams', { offset: 1 }).entries[0].key).toEqual(['season=2026&sport=nfl']);
   });
 
   itDev("totals a store's caches in its summary", async () => {
