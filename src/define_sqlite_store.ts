@@ -106,7 +106,10 @@ export type PartitionSpec<Args, Partition> =
  * and its rows. A fetch replaces the partition: afterwards its rows are exactly the response's rows, each with its
  * `partition_key` filled in by Cellar. While it is in flight, the partition's pushes wait.
  */
-export type StoreFetchSpec<Row extends RowShape, Partition> = (partition: Partition, etag?: string) => FetchPlan<Row>;
+export type StoreFetchSpec<Row extends RowShape, Partition> = (
+  partition: Partition,
+  etag?: string,
+) => FetchPlan<Row> | FetchPlan<Row & PartitionKeyColumn>;
 
 /**
  * How items pushed to a store from outside a fetch, such as a socket's, become rows: {@linkcode PushIngestConfig}, less
