@@ -8,12 +8,12 @@
 import { notifyManager } from '@tanstack/query-core';
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { createVersionAtom, entityChangesOf, VersionAtom } from './reactivity/version_atom';
-import { FindOpts, RowShape, RowTable, SqlValue } from './table/types';
-import { NativeShredSpec, ShredSpec } from './write/shred_spec';
+import { FindOpts, RowShape, RowTable } from './table/types';
+import { ShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
 import { createOnceGuard } from './diagnostics/once_guard';
 import { createSqliteRowTable } from './table/sqlite';
-import { PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
+import { nativeSpecOf, PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
 import { definePartitions } from './define_partitions';
 import type { FetchPlan, PartitionLifecycle, Partitions } from './define_partitions';
 import { isArgPresent } from './args_key';
@@ -438,12 +438,7 @@ export function defineSqliteStore<
   const extra = (more?: Record<string, unknown>) => ({ store: config.name, table: schema.table, ...more });
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
   const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
-  // A plan names its program and binds itself, so the table's spec only reads them back.
-  const nativeShredSpec: NativeShredSpec | undefined = config.nativeShredSpecs && {
-    specs: config.nativeShredSpecs,
-    variant: (native) => String(native.variant),
-    binds: (native) => [...((native.binds as SqlValue[] | undefined) ?? [])],
-  };
+  const nativeShredSpec = nativeSpecOf(config.nativeShredSpecs);
   const { fields, fromArgs, toKey } = config.partition;
   const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
   const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
