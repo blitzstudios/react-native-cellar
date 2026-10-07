@@ -264,6 +264,24 @@ describe('shared rows — the layout on disk', () => {
     expect(readRows(conn, 'SELECT * FROM players;')).toEqual([]);
   });
 
+  it('reads a filtered partition from the rows table’s index rather than walking the partition', () => {
+    const conn = createSqlJsConnection({ capabilities: 'minimal' });
+    const define = () => defineSqliteStore({ name: 'players_store', schema: PLAYERS, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) });
+    define().testing.over(conn);
+    const plan = () =>
+      readRows<{ detail: string }>(conn, `EXPLAIN QUERY PLAN SELECT * FROM players WHERE partition_key = 'sport=nfl' AND team = 'SF';`)
+        .map((row) => row.detail)
+        .join(' | ');
+
+    expect(plan()).toMatch(/^SEARCH r USING INDEX idx_players_team \(team=\?\)/);
+
+    const stats = () => readRows(conn, `SELECT idx, stat FROM sqlite_stat1 WHERE tbl = 'players__members' ORDER BY idx;`);
+    const written = stats();
+    define().testing.over(conn);
+    expect(stats()).toEqual(written);
+    expect(written).toHaveLength(2);
+  });
+
   it('refuses a table without a primary key, which has no identity to share rows by', () => {
     expect(() =>
       defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, primaryKey: [] }, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(

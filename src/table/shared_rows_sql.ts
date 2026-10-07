@@ -33,6 +33,12 @@ export interface SharedRowsSql {
   indexes: Array<IndexDef<RowShape>>;
   /** Creates the TEMP tables and the stage index a write uses. */
   ensure: BatchCommand[];
+  /**
+   * The `sqlite_stat1` rows for the membership table: a partition holds many rows, and a row few partitions. Without
+   * them the planner reads a filtered view by walking the whole partition and checking each row, so a lookup of one
+   * entity costs a read of all of them; with them it starts from the rows table's index and checks membership.
+   */
+  planStats: ReadonlyArray<{ idx: string; stat: string }>;
   /** Compares the stage with the stored rows and applies it, recording the entities that changed here and elsewhere. */
   diff: (mode: WriteMode, where: Partial<RowShape>, writeId: number, carries?: readonly string[]) => BatchCommand[];
   /** Reads back and deletes one write's changes in other partitions. */
@@ -156,6 +162,10 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       [`CREATE INDEX IF NOT EXISTS temp.${stageTable}_identity ON ${stageTable} (${ids});`, []],
       [`CREATE TABLE IF NOT EXISTS ${elsewhere} (write_id INTEGER NOT NULL, partition_key TEXT, entity_id);`, []],
       [`CREATE TABLE IF NOT EXISTS ${removed} (rid INTEGER);`, []],
+    ],
+    planStats: [
+      { idx: M, stat: '1000000 10000 1' },
+      { idx: `${table}__members_rid`, stat: '1000000 2' },
     ],
     diff,
     readElsewhere: (id) => [`DELETE FROM ${elsewhere} WHERE write_id = ? RETURNING partition_key, entity_id;`, [id]],

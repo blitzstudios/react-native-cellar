@@ -242,6 +242,26 @@ export function createSqliteRowTable<Row extends RowShape>(
     if (!present) conn.execute(`ALTER TABLE ${meta.table} ADD COLUMN ${meta.recordColumn} TEXT;`);
   }
 
+  /**
+   * Writes the membership table's planner stats when they are missing or differ, which is once per database: a rebuild
+   * drops a table's stats with it. SQLite reads stats when a handle loads the schema, and the reader has loaded it
+   * by now, so both handles reload them.
+   */
+  function ensurePlanStats(sharedSql: SharedRowsSql): void {
+    const { members } = sharedTableNames(schema.table);
+    const hasStatTable = readRows(conn, `SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1';`).length > 0;
+    const stored = hasStatTable ? readRows<{ idx: string; stat: string }>(conn, `SELECT idx, stat FROM sqlite_stat1 WHERE tbl = ? ORDER BY idx;`, [members]) : [];
+    const wanted = [...sharedSql.planStats].sort((left, right) => (left.idx < right.idx ? -1 : 1));
+    if (stored.length === wanted.length && stored.every((row, index) => row.idx === wanted[index].idx && row.stat === wanted[index].stat)) return;
+    // Analyzes nothing, since SQLite skips its own tables: it creates `sqlite_stat1` if missing and reloads it.
+    const reload = 'ANALYZE sqlite_schema;';
+    if (!hasStatTable) conn.execute(reload);
+    conn.execute(`DELETE FROM sqlite_stat1 WHERE tbl = ?;`, [members]);
+    for (const { idx, stat } of wanted) conn.execute(`INSERT INTO sqlite_stat1 (tbl, idx, stat) VALUES (?, ?, ?);`, [members, idx, stat]);
+    conn.execute(reload);
+    conn.reader?.execute(reload);
+  }
+
   const indexTable = shared ? sharedTableNames(schema.table).rows : schema.table;
   const secondaryIndexes = (shared ? shared.async.indexes : schema.indexes ?? []) as ReadonlyArray<IndexDef<Row>>;
   const runIndexDdl = async (sql: (idx: IndexDef<Row>) => string): Promise<void> => {
@@ -452,6 +472,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       }
       create(false);
       for (const idx of secondaryIndexes) conn.execute(createIndexSql(indexTable, idx));
+      if (shared) ensurePlanStats(shared.async);
       if (schema.meta) {
         conn.execute(createMetaTableSql(schema.meta));
         ensureRecordColumn(schema.meta);
