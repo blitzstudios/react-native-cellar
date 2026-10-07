@@ -1,7 +1,7 @@
 /**
  * A table's columns, declared once as a list and turned into everything else that has to agree with them. A store
  * needs its columns in three places: the table's schema (names and SQLite types), the JS row builder (how each value is
- * computed from a response element), and the native shred program (the same computation, as an op the C++ shredder
+ * computed from a response element), and the native shred spec (the same computation, as an op the C++ shredder
  * runs). Declaring each column once, with all three, keeps them from drifting apart.
  */
 
@@ -161,10 +161,10 @@ type ColumnDefsOf<Columns extends readonly ShredColumn<never, never>[]> = {
  * {@linkcode ShredColumn.op | op}.
  */
 export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, never>[], Src, Ctx> {
-  /** The column list as it was declared, for building a native shred program from these columns plus others. */
+  /** The column list as it was declared, for building a native shred spec from these columns plus others. */
   columns: Columns;
   /**
-   * The column names, in declared order. Use it as a native shred program's
+   * The column names, in declared order. Use it as a native shred spec's
    * {@linkcode ShredColumnsBase.columns | columns}, alongside {@linkcode NativeShredColumns.ops | ops}, which comes
    * from the same list in the same order, so `ops[i]` always computes `names[i]`.
    */
@@ -172,7 +172,7 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
   /**
    * The columns' SQLite declarations (type, and `NOT NULL` where set), as a map by name: the
    * {@linkcode ShredColumnsBase.columns | columns} of the table's {@linkcode RowTableSchema}. The table's columns then
-   * come from the same list as the row builder and the shred program.
+   * come from the same list as the row builder and the shred spec.
    */
   columnDefs: ColumnDefsOf<Columns>;
   /**
@@ -202,18 +202,18 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
 }
 
 /**
- * The parts of a native shred program generated from a column list; present only when every column has an
+ * The parts of a native shred spec generated from a column list; present only when every column has an
  * {@linkcode ShredColumn.op | op}.
  */
 export interface NativeShredColumns {
   /**
-   * Each column's name and op, in declared order. Use it to build a program from these columns plus others, then split
-   * the combined list into the program's {@linkcode ShredSpec.columns | columns} and
+   * Each column's name and op, in declared order. Use it to build a spec from these columns plus others, then split
+   * the combined list into the spec's {@linkcode ShredSpec.columns | columns} and
    * {@linkcode NativeShredColumns.ops | ops}.
    */
   namedOps: { name: string; op: ShredOp }[];
   /**
-   * Each column's op, in declared order: a native shred program's {@linkcode NativeShredColumns.ops | ops}, used with
+   * Each column's op, in declared order: a native shred spec's {@linkcode NativeShredColumns.ops | ops}, used with
    * {@linkcode ShredColumnsBase.names | names} as its {@linkcode ShredSpec.columns | columns}, so `ops[i]` computes
    * `names[i]`.
    */
@@ -232,7 +232,7 @@ type EveryColumnShreds<Columns extends readonly ShredColumn<never, never>[]> = C
  * Everything {@linkcode defineShredColumns} generates from one column list: the table's column declarations
  * ({@linkcode ShredColumnsBase.columnDefs | columnDefs}), the column names
  * ({@linkcode ShredColumnsBase.names | names}), the JS row builder ({@linkcode ShredColumnsBase.row | row}), and, when
- * every column has an {@linkcode ShredColumn.op | op}, the ops for a native shred program
+ * every column has an {@linkcode ShredColumn.op | op}, the ops for a native shred spec
  * ({@linkcode NativeShredColumns.ops | ops}, {@linkcode NativeShredColumns.namedOps | namedOps}).
  */
 export type ShredColumns<Columns extends readonly ShredColumn<never, never>[], Src, Ctx> = ShredColumnsBase<Columns, Src, Ctx> &
@@ -278,7 +278,7 @@ function readsOnlyTheElement(op: ShredOp | undefined): boolean {
 
 /**
  * Generates everything that has to agree with a table's columns from one list of {@linkcode ShredColumn}s: the schema's
- * column declarations, the JS row builder, and the native shred program's names and ops. Call it with the element type
+ * column declarations, the JS row builder, and the native shred spec's names and ops. Call it with the element type
  * (one item of the response) and the context type (what the store passes per write) first, then the column list:
  *
  * ```ts

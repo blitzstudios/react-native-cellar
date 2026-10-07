@@ -81,7 +81,7 @@ describe('the testing entry point', () => {
     expect(exportedFrom('testing/index.ts')).toEqual([
       'SqlJsCapabilities', 'SqlJsConnection', 'createSqlJsConnection', 'createStoreTable', 'createTestRowTable',
       'createTestRowTableWithConnection', 'createTestStoreTable', 'createTestStoreTableWithConnection',
-      'createTestVersionAtom', 'createVersionAtom', 'evalShredElement', 'initSqlJs', 'installTestRuntime', 'itDev', 'resetOnceGuards', 'storeShredProgram', 'testCache',
+      'createTestVersionAtom', 'createVersionAtom', 'evalShredElement', 'initSqlJs', 'installTestRuntime', 'itDev', 'resetOnceGuards', 'storeShredSpec', 'testCache',
     ]);
   });
 });

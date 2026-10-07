@@ -25,5 +25,5 @@ export { itDev } from './dev_mode';
 // between cases.
 export { createVersionAtom } from '../reactivity/version_atom';
 export { evalShredElement } from '../write/shred_spec';
-export { storeShredProgram } from '../table/partitioned';
+export { storeShredSpec } from '../table/partitioned';
 export { resetOnceGuards } from '../diagnostics/once_guard';

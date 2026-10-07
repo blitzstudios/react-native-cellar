@@ -93,7 +93,10 @@ export interface FetchPlan<Row extends RowShape, Key = string> {
    * {@linkcode FetchPlan.native | native}, and when the native shred fails.
    */
   toRows: (rawJson: string, key: Key) => readonly Row[];
-  /** The store's native program that shreds the body in C++, and its binds from index 1 (bind 0 is the partition key). */
+  /**
+   * The store's native shred spec for the body, which the C++ shredder runs, and its binds from index 1 (bind 0 is the
+   * partition key).
+   */
   native?: { variant: string; binds?: readonly SqlValue[] };
   /** The columns the body fills, when it fills only some; the rest keep their stored values. Every column by default. */
   fills?: ReadonlyArray<keyof Row & string>;

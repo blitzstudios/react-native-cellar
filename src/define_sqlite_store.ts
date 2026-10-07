@@ -187,7 +187,7 @@ export interface SqliteStoreConfig<
    */
   push?: StorePushSpec<Item, Row & PartitionKeyColumn, Partition>;
   /**
-   * The store's native shred programs, by the name a {@linkcode FetchPlan.native | plan's native} picks. Omit it to
+   * The store's native shred specs, by the name a {@linkcode FetchPlan.native | plan's native} picks. Omit it to
    * build every row in JS with the plan's {@linkcode FetchPlan.toRows | toRows}.
    */
   nativeShredSpecs?: Readonly<Record<string, ShredSpec>>;

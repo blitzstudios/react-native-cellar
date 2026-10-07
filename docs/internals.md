@@ -98,7 +98,7 @@ store is reaching past its entry point; import it from its own module only if yo
   the rows its fetch returned in a membership table, and the table a store reads by name is a view joining the two,
   with `partition_key` as its first column. A replace (`overwrite`, `shred`) fills in each staged row's
   `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0, so a
-  store's programs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
+  store's specs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
   `partition` turns a read's args into the description of the partition the read reads — `{ groupId }` from
@@ -111,7 +111,7 @@ store is reaching past its entry point; import it from its own module only if yo
   `fetch` is the store's real fetch behaviour and nothing else: the request, and how a body becomes rows.
   Everything mechanical around it belongs here — trying the native shred, falling back to a JS parse and
   reporting the degradation when it can't run, holding the ETag, recording when rows landed, bumping, and holding the
-  partition's pushes while it is in flight. A plan names its native program, or leaves it out for a body the native
+  partition's pushes while it is in flight. A plan names its native shred spec, or leaves it out for a body the native
   pass can't iterate, and names the columns it `fills` when it fills only some. Leave `fetch` off entirely for a
   push-fed store.
 

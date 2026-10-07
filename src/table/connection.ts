@@ -37,7 +37,7 @@ export interface SqliteConnection {
   /** Runs several statements in one transaction, off the JS thread. */
   executeBatchAsync?(commands: ReadonlyArray<[string, ReadonlyArray<string | number | null>]>): Promise<void>;
   /**
-   * Parses a JSON response and writes its rows with a native shred program, off the JS thread; resolves to the number
+   * Parses a JSON response and writes its rows with a native shred spec, off the JS thread; resolves to the number
    * of rows written.
    */
   shredJsonArrayAsync?(spec: ShredSpec, rawJson: string, binds: ReadonlyArray<string | number | null>): Promise<number>;

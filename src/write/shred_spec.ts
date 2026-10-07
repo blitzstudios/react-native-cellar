@@ -1,5 +1,5 @@
 /**
- * The format of a native shred program. "Shredding" is turning a JSON response body into table rows. A store can do it
+ * The format of a native shred spec. "Shredding" is turning a JSON response body into table rows. A store can do it
  * in JS (`JSON.parse` the body, then build each row with the columns' {@linkcode ShredColumn.js | js} functions), or
  * natively: our fork of `react-native-nitro-sqlite` has a C++ shredder that parses the body and inserts the rows
  * straight into SQLite, so no JS object is ever created for them. For a large body, such as every player in a sport,
@@ -8,7 +8,7 @@
  *
  * The C++ shredder has no store code to run, so a store describes each row as data instead: a {@linkcode ShredSpec} per
  * table, listing each column and the {@linkcode ShredOp} that computes it from one element of the body. The functions
- * below ({@linkcode evalShredElement}, {@linkcode evalShredSpec}) run a program in JS exactly as the C++ does; a parity
+ * below ({@linkcode evalShredElement}, {@linkcode evalShredSpec}) run a spec in JS exactly as the C++ does; a parity
  * test compares the two, so a new op has to be added on both sides.
  */
 
@@ -48,7 +48,7 @@ export type ShredOp =
   | {
       /**
        * Uses a value supplied for the whole write rather than read from the element, the same for every row: the
-       * `index`th value of the program's {@linkcode NativeShredSpec.binds | binds}. It fills the columns that say which
+       * `index`th value of the spec's {@linkcode NativeShredSpec.binds | binds}. It fills the columns that say which
        * partition a row belongs to, such as `league` in a table of players fetched one league at a time, since the
        * elements themselves don't carry it.
        */
@@ -165,7 +165,7 @@ export type ShredOp =
 /**
  * One condition of the `DELETE` a native shred runs before inserting its rows, which removes the partition's old rows
  * so the new ones replace them. It matches rows whose {@linkcode ShredDeleteClause.column | column} equals the write's
- * `binds[bindIndex]`. A program's conditions together must name exactly the columns of the partition's
+ * `binds[bindIndex]`. A spec's conditions together must name exactly the columns of the partition's
  * {@linkcode PartitionKeySpec.where | where} (checked in dev), so the native and JS paths replace the same rows.
  */
 export interface ShredDeleteClause {
@@ -179,7 +179,7 @@ export interface ShredDeleteClause {
 }
 
 /**
- * A native shred program for one table: everything the C++ shredder needs to turn a JSON response body into rows. For
+ * A native shred spec for one table: everything the C++ shredder needs to turn a JSON response body into rows. For
  * each element of the body it skips the element if {@linkcode ShredSpec.whereGuard | whereGuard} says to, then computes
  * one row, filling `columns[i]` with the result of `ops[i]`. Before inserting, it deletes the partition's old rows
  * ({@linkcode ShredSpec.deleteWhere | deleteWhere}), so the body replaces the partition.
@@ -188,11 +188,11 @@ export interface ShredDeleteClause {
  * rather than by hand, so the two lists stay aligned with the table's columns and with the JS row builder.
  */
 export interface ShredSpec {
-  /** The version of the program format; always 1. */
+  /** The version of the spec format; always 1. */
   version: 1;
   /**
    * The table the rows are written to: the row table's name. When the partition already holds rows, Cellar points
-   * the program at a staging table instead, so it can compare the new rows with the old ones before applying them.
+   * the spec at a staging table instead, so it can compare the new rows with the old ones before applying them.
    */
   table: string;
   /**
@@ -231,29 +231,29 @@ export interface ShredSpec {
 }
 
 /**
- * A store's native shred programs, passed to {@linkcode defineSqliteStore} as
+ * A store's native shred specs, passed to {@linkcode defineSqliteStore} as
  * {@linkcode SqliteStoreConfig.nativeShredSpec | nativeShredSpec}. With it, a partition fetch on a device writes the
  * body with the C++ shredder instead of `JSON.parse` and the JS row builders, so no JS object is built per row. Worth
  * it for a large body; a small one can skip it. Web and tests always use the JS path.
  *
- * A store can have several programs, one per variant, when different partitions need different columns (stats for
+ * A store can have several specs, one per variant, when different partitions need different columns (stats for
  * different sports fill different stat columns). For each write, {@linkcode NativeShredSpec.variant | variant} picks
- * the program and {@linkcode NativeShredSpec.binds | binds} supplies the values its `bind` ops and
+ * the spec and {@linkcode NativeShredSpec.binds | binds} supplies the values its `bind` ops and
  * {@linkcode ShredSpec.deleteWhere | deleteWhere} conditions use. When {@linkcode NativeShredSpec.variant | variant}
  * returns a name that isn't in {@linkcode NativeShredSpec.specs | specs}, or the native shred fails, that partition is
  * written through the JS path instead.
  */
 export interface NativeShredSpec<Partition extends object = Readonly<Record<string, unknown>>> {
-  /** The programs, by variant name, such as `{ all: {...} }` for a store with a single program. */
+  /** The specs, by variant name, such as `{ all: {...} }` for a store with a single spec. */
   specs: Readonly<Record<string, ShredSpec>>;
   /**
-   * Picks the program for the partition being written, given its description (such as `{ sport: 'nfl' }`): returns a
+   * Picks the spec for the partition being written, given its description (such as `{ sport: 'nfl' }`): returns a
    * key of {@linkcode NativeShredSpec.specs | specs}. A name not in {@linkcode NativeShredSpec.specs | specs} sends
    * that partition through the JS path.
    */
   variant: (partition: Partition) => string;
   /**
-   * The values the program's `bind` ops refer to by index, given the partition's description. In a store, bind 0 is
+   * The values the spec's `bind` ops refer to by index, given the partition's description. In a store, bind 0 is
    * the partition's key, which Cellar supplies, and these fill bind 1 onward: for `{ sport: 'nfl' }` this is typically
    * `['nfl']`, so a `bind` op with index 1 fills a row's `league` column. A spec with no `bind` ops of its own returns
    * `[]`.
@@ -354,9 +354,9 @@ function passesGuard(spec: ShredSpec, element: unknown): boolean {
 }
 
 /**
- * Runs a native shred program on one element of a response body, in JS, and returns the row the C++ shredder produces
- * for it: an object from each of the program's {@linkcode ShredSpec.columns | columns} to the value its op computes.
- * Returns `undefined` when the program's {@linkcode ShredSpec.whereGuard | whereGuard} skips the element. A store's
+ * Runs a native shred spec on one element of a response body, in JS, and returns the row the C++ shredder produces
+ * for it: an object from each of the spec's {@linkcode ShredSpec.columns | columns} to the value its op computes.
+ * Returns `undefined` when the spec's {@linkcode ShredSpec.whereGuard | whereGuard} skips the element. A store's
  * parity test compares this row with the one its {@linkcode ShredColumn.js | js} functions build, so the native and JS
  * paths are known to write the same rows.
  */
@@ -370,9 +370,9 @@ export function evalShredElement(spec: ShredSpec, element: unknown, binds: reado
 }
 
 /**
- * Runs a native shred program on every element of a response body, in JS, and returns the rows the C++ shredder
+ * Runs a native shred spec on every element of a response body, in JS, and returns the rows the C++ shredder
  * produces, skipping the elements its {@linkcode ShredSpec.whereGuard | whereGuard} rejects. Pass the elements, not the
- * body: the parsed array, or `Object.values(body)` for an `objectValues` program.
+ * body: the parsed array, or `Object.values(body)` for an `objectValues` spec.
  */
 export function evalShredSpec(spec: ShredSpec, elements: readonly unknown[], binds: readonly SqlValue[]): Record<string, SqlValue>[] {
   const out: Record<string, SqlValue>[] = [];
