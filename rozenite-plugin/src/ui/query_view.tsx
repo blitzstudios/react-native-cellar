@@ -40,7 +40,11 @@ function snippetsFor(store: StoreOverview): Snippet[] {
     { label: 'Rows per partition', sql: `SELECT partition_key, COUNT(*) AS rows, COUNT(DISTINCT ${quoteName(entityColumn)}) AS entities\nFROM ${t}\nGROUP BY partition_key\nORDER BY rows DESC` },
     { label: `One ${entityColumn} across partitions`, sql: `SELECT *\nFROM ${t}\nWHERE ${quoteName(entityColumn)} = ?\nORDER BY partition_key`, params: '[""]' },
     { label: 'ETags and descriptions', sql: `SELECT *\nFROM ${quoteName(metaTable)}\nORDER BY partition_key` },
-    { label: 'Table and index definitions', sql: `SELECT type, name, sql\nFROM ${master}\nWHERE tbl_name IN (?, ?)`, params: JSON.stringify([table, metaTable]) },
+    {
+      label: 'Table and index definitions',
+      sql: `SELECT type, name, sql\nFROM ${master}\nWHERE tbl_name IN (?, ?, ?, ?)`,
+      params: JSON.stringify([table, `${table}__rows`, `${table}__members`, metaTable]),
+    },
     { label: 'Query plan', sql: `EXPLAIN QUERY PLAN\nSELECT *\nFROM ${t}\nWHERE partition_key = ?`, params: '[""]' },
     { label: 'Columns as SQLite sees them', sql: `PRAGMA table_xinfo(${quoteName(table)})` },
   ];

@@ -29,8 +29,9 @@ const rowsOf = async <T>(session: Session, sql: string): Promise<T[]> => ((await
  * Copies the tables of every database a store runs on into one new database, `name` in nitro's directory (replacing
  * a dump already there under that name), and resolves with where it is and what it holds. A table keeps its name
  * unless an earlier database had one of the same name, when it takes its database's name as a prefix. Only the rows
- * are copied, not indexes or keys. Stores on the in-memory fallback aren't included: their rows are visible only to
- * their own connection.
+ * are copied, not indexes or keys, and a store's table is copied as it reads, one row per partition holding it, with
+ * `partition_key` first. Stores on the in-memory fallback aren't included: their rows are visible only to their own
+ * connection.
  *
  * Each database is attached to the dump's own connection, so the copy reads a committed snapshot alongside the
  * store's writes rather than through the store's connection.
@@ -61,7 +62,17 @@ export async function dumpSqliteStores(options: { name?: string } = {}): Promise
       session.attach(database, 'src');
       try {
         // eslint-disable-next-line no-await-in-loop
-        const names = await rowsOf<{ name: string }>(session, "SELECT name FROM src.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+        const objects = await rowsOf<{ name: string; type: string }>(
+          session,
+          "SELECT name, type FROM src.sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        );
+        // A store's rows are read through its view, which the dump keeps as one flat table under the store's name, in
+        // place of the rows and membership tables beneath it.
+        const views = new Set(objects.filter((object) => object.type === 'view').map((object) => object.name));
+        const names = objects.filter((object) => {
+          const beneath = /^(.+)__(rows|members)$/.exec(object.name);
+          return !(object.type === 'table' && beneath && views.has(beneath[1]));
+        });
         for (const { name: table } of names) {
           const as = used.has(table) ? `${baseName(database)}_${table}` : table;
           used.add(as);

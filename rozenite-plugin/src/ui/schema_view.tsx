@@ -17,7 +17,11 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
     if (!rpc) return;
     rpc
       .method('query')
-      .invoke({ store: store.name, sql: `SELECT type, name, sql FROM ${master} WHERE tbl_name IN (?, ?) ORDER BY type DESC, name`, params: [schema.table, schema.metaTable] })
+      .invoke({
+        store: store.name,
+        sql: `SELECT type, name, sql FROM ${master} WHERE tbl_name IN (?, ?, ?, ?) ORDER BY type DESC, name`,
+        params: [schema.table, `${schema.table}__rows`, `${schema.table}__members`, schema.metaTable],
+      })
       .then((result) => {
         const at = (column: string) => result.columns.indexOf(column);
         const [type, name, sql] = [at('type'), at('name'), at('sql')];

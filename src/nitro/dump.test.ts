@@ -5,10 +5,21 @@ import { getOpenSqliteConnections } from './nitro_connection';
 jest.mock('react-native-nitro-sqlite', () => ({ open: jest.fn(), NitroSQLite: { native: { close: jest.fn(), drop: jest.fn() } } }));
 jest.mock('./nitro_connection', () => ({ getOpenSqliteConnections: jest.fn() }));
 
-const tablesOf: Record<string, string[]> = {
-  'players.db': ['players', 'players_meta'],
-  'player_stats.db': ['player_stats', 'player_stats_meta'],
-  'other.db': ['players'],
+/** Each database's objects, as `sqlite_master` lists them: a store's view, the tables beneath it, and its ETag table. */
+const objectsOf: Record<string, Array<{ name: string; type: string }>> = {
+  'players.db': [
+    { name: 'players', type: 'view' },
+    { name: 'players__members', type: 'table' },
+    { name: 'players__rows', type: 'table' },
+    { name: 'players_meta', type: 'table' },
+  ],
+  'player_stats.db': [
+    { name: 'player_stats', type: 'view' },
+    { name: 'player_stats__members', type: 'table' },
+    { name: 'player_stats__rows', type: 'table' },
+    { name: 'player_stats_meta', type: 'table' },
+  ],
+  'other.db': [{ name: 'players', type: 'table' }],
 };
 
 function fakeSession() {
@@ -26,7 +37,7 @@ function fakeSession() {
     executeAsync: jest.fn(async (sql: string) => {
       executed.push(sql);
       const rows = (_array: unknown[]) => ({ rows: { _array } });
-      if (sql.includes('src.sqlite_master')) return rows((tablesOf[attached!] ?? []).map((name) => ({ name })));
+      if (sql.includes('src.sqlite_master')) return rows(objectsOf[attached!] ?? []);
       if (sql.startsWith('SELECT COUNT(*)')) return rows([{ rows: 3 }]);
       if (sql === 'PRAGMA database_list') return rows([{ name: 'main', file: '/data/NitroSQLite/cellar-dump.db' }]);
       if (sql === 'PRAGMA page_count') return rows([{ page_count: 10 }]);
@@ -41,7 +52,7 @@ const connections = (names: string[]) => (getOpenSqliteConnections as jest.Mock)
 
 beforeEach(() => jest.clearAllMocks());
 
-it("copies every store database's tables into one file, prefixing a name an earlier database already used", async () => {
+it("copies every store database's tables into one file, each store's as it reads, prefixing a name an earlier database already used", async () => {
   const session = fakeSession();
   (open as jest.Mock).mockReturnValue(session);
   connections(['players.db', 'player_stats.db', ':memory:schedule.db', 'other.db']);
