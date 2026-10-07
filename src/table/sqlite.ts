@@ -141,8 +141,10 @@ export function createSqliteRowTable<Row extends RowShape>(
   const syncStage = stageNames(schema.table, stageFingerprint, 'sync');
   const asyncDiff = entityDiffSql(schema, asyncStage, MAX_BIND_VARIABLES);
   const syncDiff = entityDiffSql(schema, syncStage, MAX_BIND_VARIABLES);
-  const shared =
-    schema.partitioned && schema.sharedRows ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
+  if (schema.partitioned && schema.primaryKey.length <= 1) {
+    throw new Error(`row_table: \`${schema.table}\` needs a primary key: it is each row's identity across the store's partitions.`);
+  }
+  const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
   const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
   const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number, carries?: readonly string[]) =>

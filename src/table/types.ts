@@ -165,23 +165,11 @@ export interface RowTableSchema<Row extends RowShape> {
    */
   partitioned?: boolean;
   /**
-   * Stores one row per identity, however many partitions hold it, for a store whose partitions overlap: a catalog and
-   * one item's detail, or a week and one of its games. The identity is the primary key, which is unique within a
-   * partition, together with {@linkcode SharedRows.across | across}, the columns that make it unique across the table.
-   * Each partition keeps the identities its fetch returned, and the table a store reads is a view over both, so reads
-   * still filter on `partition_key`. A row changed through one partition wakes the readers of every partition holding
-   * it.
+   * A column that grows with each newer copy of a row, such as `updated_at`. A write never replaces a stored row with a
+   * copy whose value here is lower, so a body fetched before a push landed cannot undo it. Without one, the last write
+   * wins.
    */
-  sharedRows?: SharedRows<Row>;
-}
-
-/** How a {@linkcode RowTableSchema.sharedRows | shared-rows} table tells one row from another across partitions. */
-export interface SharedRows<Row extends RowShape> {
-  /**
-   * The columns that, with the primary key, identify a row across every partition, such as `['sport']` for players
-   * whose ids are unique only within a sport. Leave it out where the primary key already is.
-   */
-  across?: ReadonlyArray<keyof Row & string>;
+  newerBy?: keyof Row & string;
 }
 
 /**
@@ -255,8 +243,8 @@ export interface RowTable<Row extends RowShape> {
    *
    * Returns the entity ids that were added, removed or changed, and the number of rows written. `partition` is the
    * description the native shred spec picks its variant and binds from; without it, they get `where`. `inJs` always
-   * parses with `parseRows`. On {@linkcode RowTableSchema.sharedRows | shared rows}, `carries` lists the columns this
-   * write fills; the rest keep what another partition wrote.
+   * parses with `parseRows`. `carries` lists the columns this write fills, where it fills only some; the rest keep what
+   * another partition wrote.
    */
   shred(
     where: Partial<Row>,
@@ -266,10 +254,7 @@ export interface RowTable<Row extends RowShape> {
     inJs?: boolean,
     carries?: ReadonlyArray<keyof Row & string>,
   ): Promise<WriteResult>;
-  /**
-   * On {@linkcode RowTableSchema.sharedRows | shared rows}, called after a write with the entities it changed in other
-   * partitions, by partition key.
-   */
+  /** Called after a write with the entities it changed in other partitions holding the same rows, by partition key. */
   onChangesElsewhere?(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void;
   /** The first stored row whose columns equal the values in `where`, or `undefined` if none does. */
   getOne(where: Partial<Row>): Row | undefined;

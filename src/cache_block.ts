@@ -47,6 +47,8 @@ export interface EntityCacheSource<Row extends RowShape, Key, Partition = unknow
   filter: (key: Key) => Partial<Row>;
   /** The description of the partition a key names, which a {@linkcode byEntity} cache's `fromRows` is handed. */
   partitionOf: (key: Key) => Partition;
+  /** Columns that hold one value across a partition's rows. */
+  fixed?: readonly string[];
 }
 
 /**
@@ -67,7 +69,17 @@ export function bindCaches<Key, Row extends RowShape, D extends Record<string, C
       if (!source) throw new Error(`[${store}] '${name}' is a byEntity cache, which reads a store's rows; declare it in the store's partitions.defineCaches block`);
       const memo = createMemos(store, binding, { [name]: derivedValueMemo(decl.def.max) })[name] as DerivedValueMemo<Key, unknown>;
       out[name] = createDerivedValues<Row, Key, unknown, Partition>(
-        { store, name, table: source.table, filter: source.filter, partitionOf: source.partitionOf, memo, parts: binding.parts, version: binding.version },
+        {
+          store,
+          name,
+          table: source.table,
+          filter: source.filter,
+          partitionOf: source.partitionOf,
+          fixed: source.fixed,
+          memo,
+          parts: binding.parts,
+          version: binding.version,
+        },
         decl.def as EntityCacheDeclaration<Row, unknown, Partition>['def'],
       );
     } else {

@@ -23,10 +23,9 @@ const PLAYERS: StoreTableSchema<Player> = {
     team: { type: 'TEXT' },
     height: { type: 'TEXT' },
   },
-  primaryKey: ['player_id'],
+  primaryKey: ['sport', 'player_id'],
   entityId: 'player_id',
   indexes: [{ name: 'idx_players_team', columns: ['partition_key', 'team'] }],
-  sharedRows: { across: ['sport'] },
 };
 
 const CATALOG_NATIVE: NativeShredSpec<PlayerPartition> = {
@@ -106,7 +105,7 @@ function playerStore(over: { native?: boolean } = {}) {
   const conn = createSqlJsConnection({ capabilities: over.native ? 'full' : 'minimal' });
   const { surface, table } = store.testing.over(conn);
   const fetchCatalog = () => surface.lifecycle.fetch({ sport: 'nfl' } as never, { staleTime: 0 });
-  const stored = () => readRows<Player>(conn, 'SELECT * FROM players__rows ORDER BY player_id;');
+  const stored = () => readRows<Player>(conn, 'SELECT sport, player_id, team, height FROM players__rows ORDER BY player_id;');
   return { surface, table, conn, server, fetchCatalog, stored };
 }
 
@@ -199,7 +198,6 @@ const STATS: StoreTableSchema<Stat> = {
   },
   primaryKey: ['week', 'game_id', 'player_id'],
   entityId: 'player_id',
-  sharedRows: {},
   pushFed: true,
 };
 
@@ -239,7 +237,7 @@ function statStore() {
   });
   const conn = createSqlJsConnection({ capabilities: 'minimal' });
   const { surface } = store.testing.over(conn);
-  const stored = () => readRows<Stat>(conn, 'SELECT * FROM stats__rows ORDER BY game_id;');
+  const stored = () => readRows<Stat>(conn, 'SELECT week, game_id, player_id, pts FROM stats__rows ORDER BY game_id;');
   return { surface, conn, stored };
 }
 
@@ -264,22 +262,51 @@ describe('shared rows — a week and one of its games', () => {
 });
 
 describe('shared rows — the layout on disk', () => {
-  it('rebuilds a table from the old layout into the shared one, and back', () => {
+  it('rebuilds a table from the layout before rows were shared', () => {
     const conn = createSqlJsConnection({ capabilities: 'minimal' });
     conn.execute('CREATE TABLE players (partition_key TEXT NOT NULL, sport TEXT NOT NULL, player_id TEXT NOT NULL, PRIMARY KEY (partition_key, player_id));');
+    conn.execute(`INSERT INTO players VALUES ('nfl', 'nfl', 'p1');`);
 
-    const shared = defineSqliteStore({ name: 'players_store', schema: PLAYERS, partition: { fields: ['sport'] }, build: () => ({ reads: {} }) });
-    shared.testing.over(conn);
+    const store = defineSqliteStore({ name: 'players_store', schema: PLAYERS, partition: { fields: ['sport'] }, build: () => ({ reads: {} }) });
+    store.testing.over(conn);
+
     expect(readRows<{ type: string }>(conn, `SELECT type FROM sqlite_master WHERE name = 'players';`)[0].type).toBe('view');
+    expect(readRows(conn, 'SELECT * FROM players;')).toEqual([]);
+  });
 
-    const plain = defineSqliteStore({
-      name: 'players_store',
-      schema: { ...PLAYERS, sharedRows: undefined },
-      partition: { fields: ['sport'] },
+  it('refuses a table without a primary key, which has no identity to share rows by', () => {
+    expect(() =>
+      defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, primaryKey: [] }, partition: { fields: ['sport'] }, build: () => ({ reads: {} }) }).testing.over(
+        createSqlJsConnection({ capabilities: 'minimal' }),
+      ),
+    ).toThrow(/needs a primary key/);
+  });
+
+  it('keeps a stored row a staged copy is older than', async () => {
+    const conn = createSqlJsConnection({ capabilities: 'minimal' });
+    type Line = { game_id: string; player_id: string; pts: number | null; updated_at: number | null };
+    const store = defineSqliteStore({
+      name: 'lines_store',
+      schema: {
+        table: 'lines',
+        columns: {
+          game_id: { type: 'TEXT', notNull: true },
+          player_id: { type: 'TEXT', notNull: true },
+          pts: { type: 'REAL' },
+          updated_at: { type: 'INTEGER' },
+        },
+        primaryKey: ['game_id', 'player_id'],
+        entityId: 'player_id',
+        newerBy: 'updated_at',
+      } as StoreTableSchema<Line>,
+      partition: { fields: ['game_id'] },
       build: () => ({ reads: {} }),
     });
-    plain.testing.over(conn);
-    expect(readRows<{ type: string }>(conn, `SELECT type FROM sqlite_master WHERE name = 'players';`)[0].type).toBe('table');
-    expect(readRows(conn, `SELECT name FROM sqlite_master WHERE name GLOB 'players__*';`)).toEqual([]);
+    const { table } = store.testing.over(conn);
+    table.overwrite({ partition_key: 'g1' }, [{ game_id: 'g1', player_id: 'a', pts: 12, updated_at: 200 }]);
+    table.overwrite({ partition_key: 'week' }, [{ game_id: 'g1', player_id: 'a', pts: 10, updated_at: 100 }]);
+
+    expect(readRows(conn, 'SELECT pts, updated_at FROM lines__rows;')).toEqual([{ pts: 12, updated_at: 200 }]);
+    expect(table.find({ partition_key: 'week' })).toHaveLength(1);
   });
 });

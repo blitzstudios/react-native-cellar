@@ -362,7 +362,7 @@ describe('defineSqliteStore — a table declared before Cellar owned its partiti
     binds: () => [],
   };
 
-  it('keeps its rows and ETags, adding the description column in place', () => {
+  it('rebuilds it as shared rows, dropping the ETags that described its rows', () => {
     const conn = createSqlJsConnection({ capabilities: 'full' });
     const legacy = createSqliteRowTable(LEGACY, conn, LEGACY_NATIVE);
     legacy.init();
@@ -372,8 +372,8 @@ describe('defineSqliteStore — a table declared before Cellar owned its partiti
     const table = createSqliteRowTable(partitionedSchema(SCHEMA), conn, NATIVE as NativeShredSpec);
     table.init();
 
-    expect(table.find({ partition_key: 'nfl:2025' })).toEqual([{ partition_key: 'nfl:2025', team: 'a', sport: 'nfl' }]);
-    expect(table.getMeta({ partition_key: 'nfl:2025' })).toBe('W/"1"');
+    expect(table.find({ partition_key: 'nfl:2025' })).toEqual([]);
+    expect(table.getMeta({ partition_key: 'nfl:2025' })).toBeUndefined();
     expect(readRows<{ name: string }>(conn, 'PRAGMA table_info(games_meta);').map((column) => column.name)).toContain('partition');
   });
 });

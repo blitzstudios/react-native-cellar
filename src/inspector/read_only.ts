@@ -129,7 +129,14 @@ export function parseReadStatement(sql: string): ReadStatement {
  */
 export function assertCompilesToRead(conn: SqliteConnection, statement: ReadStatement, params: ReadonlyArray<string | number | null>): void {
   if (statement.verb === 'EXPLAIN' || statement.verb === 'PRAGMA') return;
-  const program = readRows<{ opcode: string; p2: number }>(conn, `EXPLAIN ${statement.sql}`, params);
+  let program: Array<{ opcode: string; p2: number }>;
+  try {
+    program = readRows<{ opcode: string; p2: number }>(conn, `EXPLAIN ${statement.sql}`, params);
+  } catch (error) {
+    // A store's table is a view, and SQLite refuses to compile a write to one.
+    if (/because it is a view/.test(String((error as Error)?.message))) throw new ReadOnlyViolation('That statement writes to the database; only reads run here.');
+    throw error;
+  }
   if (program.some((step) => step.opcode === 'Transaction' && Number(step.p2) !== 0)) {
     throw new ReadOnlyViolation('That statement writes to the database; only reads run here.');
   }

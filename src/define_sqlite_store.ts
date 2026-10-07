@@ -477,6 +477,7 @@ export function defineSqliteStore<
         if (table.getMetaRecord(rowsWhere) === undefined) table.setMeta(rowsWhere, table.getMeta(rowsWhere), JSON.stringify(partition));
       },
       ...(__DEV__ && { onChanged: recordWrite }),
+      fixedColumns: (fields ?? []).filter((field) => field in config.schema.columns),
     });
     table.onChangesElsewhere?.((changes) => notifyManager.batch(() => changes.forEach((entities, key) => partitions.bump(key, entities))));
     const surface = config.build({

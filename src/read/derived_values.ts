@@ -159,6 +159,8 @@ export interface DerivedValuesContext<Row extends RowShape, Key, V, Partition = 
   filter: (key: Key) => Partial<Row>;
   /** The description of the partition a key names, which `fromRows` is handed. */
   partitionOf: (key: Key) => Partition;
+  /** Columns that hold one value across a partition's rows, which leave an entity no more rows than its id does. */
+  fixed?: readonly string[];
   memo: DerivedValueMemo<Key, V>;
   /** A partition key's parts, which identify the partition in the lists the cache keeps. */
   parts: (key: Key) => readonly string[];
@@ -207,7 +209,7 @@ export function createDerivedValues<Row extends RowShape, Key, V, Partition = un
   let singleRow: boolean | undefined;
   const isSingleRow = (key: Key): boolean => {
     if (singleRow === undefined) {
-      const fixed = new Set(Object.keys(filter(key)));
+      const fixed = new Set([...Object.keys(filter(key)), ...(ctx.fixed ?? [])]);
       const rest = table.primaryKey.filter((column) => !fixed.has(column));
       singleRow = rest.length === 1 && rest[0] === idColumn;
     }

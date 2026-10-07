@@ -34,7 +34,7 @@ describe('the core entry point', () => {
       'NativeShredColumns', 'NativeShredSpec', 'PairedRead', 'PairedReadAcross', 'PartitionKeyColumn',
       'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'QueryClient',
       'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RAW_TEXT_RESPONSE_TRANSFORM', 'RawQuery', 'ReadAcross', 'ReadGate',
-      'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'SharedRows', 'ShredColumn', 'ShredColumns',
+      'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
       'ShredColumnsBase', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'SqliteStore', 'StoreFetchSpec',
       'StoreFunctions', 'StorePush', 'StorePushOf', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema',
       'TrackedValueOptions', 'VersionAtom', 'WindowedBlock', 'WithReadSpec', 'WriteResult',

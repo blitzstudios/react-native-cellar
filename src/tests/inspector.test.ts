@@ -21,7 +21,7 @@ type Season = { sport: string; season: string };
 const SCHEMA: StoreTableSchema<Game> = {
   table: 'inspected_games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true }, score: { type: 'INTEGER' } },
-  primaryKey: ['team'],
+  primaryKey: ['sport', 'team'],
   entityId: 'team',
   indexes: [{ name: 'idx_inspected_games_sport', columns: ['sport'] }],
 };
@@ -70,7 +70,7 @@ describe('the store list', () => {
         { name: 'sport', type: 'TEXT', notNull: true },
         { name: 'score', type: 'INTEGER', notNull: false },
       ],
-      primaryKey: ['partition_key', 'team'],
+      primaryKey: ['partition_key', 'sport', 'team'],
       entityColumn: 'team',
       indexes: [
         { name: 'idx_inspected_games_partition', columns: ['partition_key', 'team'] },

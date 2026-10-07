@@ -13,7 +13,6 @@ import { cacheKey, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
 import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
 import { RowShape, RowTable } from './table/types';
-import type { RowTableSchema } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -114,8 +113,8 @@ export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
    */
   canShredNatively?: (partition: Descriptor) => boolean;
   /**
-   * On a {@linkcode RowTableSchema.sharedRows | shared-rows} table, the columns this partition's body fills, for one
-   * that fills only some: its rows keep the rest from whatever other partition wrote them. Every column by default.
+   * The columns this partition's body fills, for one that fills only some: its rows keep the rest from whatever other
+   * partition wrote them. Every column by default.
    */
   carries?: (partition: Descriptor) => ReadonlyArray<keyof Row & string> | undefined;
   /**
@@ -172,6 +171,8 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    * can keep the record somewhere {@linkcode PartitionKeySpec.from | from} can find it again.
    */
   remember?: (key: Key, descriptor: Descriptor) => void;
+  /** Columns that hold one value across a partition's rows, such as the `sport` a partition is named by. */
+  fixedColumns?: readonly string[];
 }
 
 /**
@@ -531,7 +532,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   return {
     defineRead: surface.read,
     defineReadAcross: readAcrossOf as Partitions<Row, Key, Args, Descriptor>['defineReadAcross'],
-    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where, partitionOf: describe }),
+    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where, partitionOf: describe, fixed: config.fixedColumns }),
     where,
     keyOf,
     partitionOf: describe,
@@ -582,7 +583,6 @@ export type {
   ReadAcrossDef,
   ReadDef,
   RowTable,
-  RowTableSchema,
   SqliteStoreConfig,
   addressesPartition,
   byEntity,
