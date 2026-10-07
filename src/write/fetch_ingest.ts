@@ -2,7 +2,7 @@
  * The fetch ingest: how a store fetches a partition (the set of rows one fetch returns and replaces) and writes the
  * response. There is one React Query query per partition. Its query function sends the partition's stored ETag, writes
  * the response body as the partition's rows (with the native shredder or the store's
- * {@linkcode FetchPlan.toRows | toRows}), stores the new ETag, and bumps the partition's version with the
+ * {@linkcode PartitionFetch.toRows | toRows}), stores the new ETag, and bumps the partition's version with the
  * write's change set, which re-renders the readers of the changed entities.
  */
 
@@ -19,7 +19,7 @@ import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 import { queryRuntime } from '../runtime';
 import type { QueryRuntime } from '../runtime';
 import { ChangeSet, isUnchanged, WriteResult } from '../table/change_set';
-import type { FetchPlan, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
+import type { PartitionFetch, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
 import type { DataResult } from '../store_result';
 import type { IngestTiming } from '../diagnostics/ingest_timing';
 import type { CommonDef, ReadCallOptions } from '../read/surface';
@@ -559,4 +559,4 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, IngestTiming, FetchPlan, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };
+export type { CommonDef, DataResult, IngestTiming, PartitionFetch, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };

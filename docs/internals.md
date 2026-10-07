@@ -70,7 +70,7 @@ store is reaching past its entry point; import it from its own module only if yo
   **The shred specs are part of the fingerprint, which is why a store declares them as a map, `nativeShredSpecs`,
   keyed by variant.** The fingerprint has to hash every spec a store can shred through, so the specs have to be
   enumerable. If your spec varies — different columns per category, say — enumerate the variants, and have each
-  fetch plan's `native` name one. Naming a variant that isn't in the map falls back to the JS parse path rather than
+  partition fetch's `native` name one. Naming a variant that isn't in the map falls back to the JS parse path rather than
   shredding through `undefined`.
 - **Partitions** — **how a store's rows are divided into partitions it can fetch.** A store answers one question —
   *which args describe one partition?* — and Cellar derives the rest of the plumbing from the answer:
@@ -111,7 +111,7 @@ store is reaching past its entry point; import it from its own module only if yo
   `fetch` is the store's real fetch behaviour and nothing else: the request, and how a body becomes rows.
   Everything mechanical around it belongs here — trying the native shred, falling back to a JS parse and
   reporting the degradation when it can't run, holding the ETag, recording when rows landed, bumping, and holding the
-  partition's pushes while it is in flight. A plan names its native shred spec, or leaves it out for a body the native
+  partition's pushes while it is in flight. A partition fetch names its native shred spec, or leaves it out for a body the native
   pass can't iterate, and names the columns it `fills` when it fills only some. Leave `fetch` off entirely for a
   push-fed store.
 

@@ -8,7 +8,7 @@
 import { ColumnDef, ColumnType, SqlValue } from '../table/types';
 import { evalShredOp, ShredOp } from './shred_spec';
 import type { RowTableSchema } from '../table/types';
-import type { FetchPlan } from '../define_partitions';
+import type { PartitionFetch } from '../define_partitions';
 import type { ShredSpec } from './shred_spec';
 
 /**
@@ -179,7 +179,7 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
    * Builds one table row from one element of a response body, in JS: runs every column's
    * {@linkcode ShredColumn.js | js} function on the element and `ctx`, or for a column without one its
    * {@linkcode ShredColumn.op | op}, and returns an object with each column's value.
-   * A store's {@linkcode FetchPlan.toRows | toRows} uses it for every element, which is how rows are built on
+   * A store's {@linkcode PartitionFetch.toRows | toRows} uses it for every element, which is how rows are built on
    * web, in tests, and on a device when the native shred can't run.
    */
   row: (src: Src, ctx: Ctx) => RowOf<Columns>;
@@ -341,4 +341,4 @@ export function defineShredColumns<Src, Ctx = void>() {
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { FetchPlan, RowTableSchema, ShredSpec };
+export type { PartitionFetch, RowTableSchema, ShredSpec };

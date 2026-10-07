@@ -68,7 +68,7 @@ function withPartitionKey(spec: ShredSpec): ShredSpec {
   };
 }
 
-/** The shred spec a fetch plan picks from its store, and its binds from index 1. */
+/** The shred spec a partition fetch picks from its store, and its binds from index 1. */
 export type NativeShredChoice = { variant: string; binds?: readonly SqlValue[] };
 
 /** A store's specs as the row table takes them. */

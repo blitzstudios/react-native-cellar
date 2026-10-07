@@ -15,7 +15,7 @@ import { createOnceGuard } from './diagnostics/once_guard';
 import { createSqliteRowTable } from './table/sqlite';
 import { nativeSpecOf, PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
 import { definePartitions } from './define_partitions';
-import type { FetchPlan, PartitionLifecycle, Partitions } from './define_partitions';
+import type { PartitionFetch, PartitionLifecycle, Partitions } from './define_partitions';
 import { labelReads } from './read/surface';
 import type { CommonDef, Read } from './read/surface';
 import type { Loose, pairRead } from './read/facade';
@@ -70,10 +70,12 @@ export interface StoreSurface {
 export type PartitionSpec<Args, Partition> = (args: Loose<Args>) => Partition | null | undefined;
 
 /**
- * A partition's {@linkcode FetchPlan}, given its description. A fetch replaces the partition's rows with the
+ * A partition's {@linkcode PartitionFetch}, given its description. A fetch replaces the partition's rows with the
  * response's, and holds the partition's pushes while it is in flight.
  */
-export type StoreFetchSpec<Row extends RowShape, Partition> = (partition: Partition) => FetchPlan<Row> | FetchPlan<Row & PartitionKeyColumn>;
+export type StoreFetchSpec<Row extends RowShape, Partition> = (
+  partition: Partition,
+) => PartitionFetch<Row> | PartitionFetch<Row & PartitionKeyColumn>;
 
 /**
  * How items pushed to a store from outside a fetch, such as a socket's, become rows: {@linkcode PushIngestConfig}, less
@@ -187,8 +189,8 @@ export interface SqliteStoreConfig<
    */
   push?: StorePushSpec<Item, Row & PartitionKeyColumn, Partition>;
   /**
-   * The store's native shred specs, by the name a {@linkcode FetchPlan.native | plan's native} picks. Omit it to
-   * build every row in JS with the plan's {@linkcode FetchPlan.toRows | toRows}.
+   * The store's native shred specs, by the name a {@linkcode PartitionFetch.native | partition fetch's native} picks. Omit it to
+   * build every row in JS with the partition fetch's {@linkcode PartitionFetch.toRows | toRows}.
    */
   nativeShredSpecs?: Readonly<Record<string, ShredSpec>>;
   /**

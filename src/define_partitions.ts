@@ -85,12 +85,12 @@ export interface PartitionKeySpec<Row extends RowShape, Key, Args, Descriptor> {
 }
 
 /** How one partition is fetched and written. A fetch replaces the partition's rows with the response's. */
-export interface FetchPlan<Row extends RowShape, Key = string> {
+export interface PartitionFetch<Row extends RowShape, Key = string> {
   /** The request. Its `queryFn` gets the stored ETag to send as `If-None-Match`; a 304 keeps the rows. */
   query: RawQuery;
   /**
    * Turns the body, as unparsed JSON text, into rows: on web, in tests, without
-   * {@linkcode FetchPlan.native | native}, and when the native shred fails.
+   * {@linkcode PartitionFetch.native | native}, and when the native shred fails.
    */
   toRows: (rawJson: string, key: Key) => readonly Row[];
   /**
@@ -124,8 +124,8 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    * ({@linkcode PartitionKeySpec.where | where}).
    */
   key: PartitionKeySpec<Row, Key, Args, Descriptor>;
-  /** The plan for a partition, given its record. Omit it for a store fed only by pushes. */
-  fetch?: (partition: Descriptor) => FetchPlan<Row, Key>;
+  /** The fetch for a partition, given its record. Omit it for a store fed only by pushes. */
+  fetch?: (partition: Descriptor) => PartitionFetch<Row, Key>;
   /**
    * Called when a fetch starts; returns the release Cellar calls when it finishes. Holds the partition's pushes in
    * between, which the older response would otherwise overwrite. Return nothing when there are no pushes to hold.
@@ -351,7 +351,7 @@ const NO_DESCRIPTORS: readonly never[] = Object.freeze([]);
  * such as every player in one league.
  *
  * From the config it builds one React Query query per partition that fetches the partition (sending its stored ETag,
- * and writing the response with the native shredder or {@linkcode FetchPlan.toRows | toRows}), and bumps the
+ * and writing the response with the native shredder or {@linkcode PartitionFetch.toRows | toRows}), and bumps the
  * partition's version with the entities the write changed, which re-renders the readers of those entities. It returns
  * the functions that declare the store's reads and caches on those partitions, and the
  * {@linkcode Partitions.lifecycle | lifecycle} operations to publish. Call it from a store's
@@ -448,20 +448,20 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   /** When each partition's rows last landed. Bounded, and a forgotten timestamp reads as never-fetched. */
   const fetchedAt = createBoundedLru<number>(config.internMax ?? INTERN_MAX);
 
-  /** The plan each query came from. */
-  const planOfQuery = new WeakMap<RawQuery, FetchPlan<Row, Key>>();
+  /** The partition fetch each query came from. */
+  const fetchOfQuery = new WeakMap<RawQuery, PartitionFetch<Row, Key>>();
   const queryFor = (key: Key): RawQuery => {
-    const plan = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor));
-    planOfQuery.set(plan.query, plan);
-    return plan.query;
+    const partitionFetch = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor));
+    fetchOfQuery.set(partitionFetch.query, partitionFetch);
+    return partitionFetch.query;
   };
 
   /** Replaces the partition's rows, through the native shred where the body allows it and JS parsing otherwise. */
   async function ingestRaw(key: Key, rawJson: string, query: RawQuery): Promise<WriteResult> {
-    const plan = planOfQuery.get(query);
-    if (!plan) throw new Error(`${name}_store: a fetched body arrived for a request this store did not plan`);
-    const parse = (raw: string): Row[] => plan.toRows(raw, key) as Row[];
-    const result = await table.shred(where(key), rawJson, parse, plan.native, !plan.native, plan.fills);
+    const partitionFetch = fetchOfQuery.get(query);
+    if (!partitionFetch) throw new Error(`${name}_store: a fetched body arrived for a request this store did not make`);
+    const parse = (raw: string): Row[] => partitionFetch.toRows(raw, key) as Row[];
+    const result = await table.shred(where(key), rawJson, parse, partitionFetch.native, !partitionFetch.native, partitionFetch.fills);
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
     return result;
   }

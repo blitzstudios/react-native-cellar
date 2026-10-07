@@ -16,7 +16,7 @@ export function createTestRowTable<Row extends RowShape>(schema: RowTableSchema<
 }
 
 /**
- * A store's table as {@linkcode defineSqliteStore} builds it, over `conn`. Its `shred` takes a fetch plan's `native`
+ * A store's table as {@linkcode defineSqliteStore} builds it, over `conn`. Its `shred` takes a partition fetch's `native`
  * choice. Call its {@linkcode RowTable.init | init} first.
  */
 export function createStoreTable<Row extends RowShape>(
