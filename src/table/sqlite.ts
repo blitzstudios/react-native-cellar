@@ -243,9 +243,8 @@ export function createSqliteRowTable<Row extends RowShape>(
   }
 
   /**
-   * Writes the membership table's planner stats when they are missing or differ, which is once per database: a rebuild
-   * drops a table's stats with it. SQLite reads stats when a handle loads the schema, and the reader has loaded it
-   * by now, so both handles reload them.
+   * Writes the membership table's planner stats when they are missing or differ, and reloads them on both handles,
+   * which each loaded the schema already.
    */
   function ensurePlanStats(sharedSql: SharedRowsSql): void {
     const { members } = sharedTableNames(schema.table);
@@ -253,7 +252,7 @@ export function createSqliteRowTable<Row extends RowShape>(
     const stored = hasStatTable ? readRows<{ idx: string; stat: string }>(conn, `SELECT idx, stat FROM sqlite_stat1 WHERE tbl = ? ORDER BY idx;`, [members]) : [];
     const wanted = [...sharedSql.planStats].sort((left, right) => (left.idx < right.idx ? -1 : 1));
     if (stored.length === wanted.length && stored.every((row, index) => row.idx === wanted[index].idx && row.stat === wanted[index].stat)) return;
-    // Analyzes nothing, since SQLite skips its own tables: it creates `sqlite_stat1` if missing and reloads it.
+    // Creates `sqlite_stat1` if missing and reloads it. SQLite skips its own tables, so this analyzes nothing.
     const reload = 'ANALYZE sqlite_schema;';
     if (!hasStatTable) conn.execute(reload);
     conn.execute(`DELETE FROM sqlite_stat1 WHERE tbl = ?;`, [members]);
@@ -326,7 +325,7 @@ export function createSqliteRowTable<Row extends RowShape>(
    * new. That is a first load — a cold start, a new week — and it is the one write where staging would double the cost.
    */
   const partitionIsEmpty = (where: Partial<Row>): boolean => {
-    // Shared rows are written through the stage alone: the table is a view, and its rows may be another partition's.
+    // A view can't be written directly, and its rows may be another partition's.
     if (shared) return false;
     const { sql, params } = whereClause(where);
     const result = conn.execute(`SELECT 1 AS one FROM ${schema.table}${sql} LIMIT 1;`, params);

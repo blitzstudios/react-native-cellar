@@ -166,8 +166,7 @@ export interface RowTableSchema<Row extends RowShape> {
   partitioned?: boolean;
   /**
    * A column that grows with each newer copy of a row, such as `updated_at`. A write never replaces a stored row with a
-   * copy whose value here is lower, so a body fetched before a push landed cannot undo it. Without one, the last write
-   * wins.
+   * copy whose value here is lower. Without one, the last write wins.
    */
   newerBy?: keyof Row & string;
 }

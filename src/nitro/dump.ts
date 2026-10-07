@@ -29,9 +29,8 @@ const rowsOf = async <T>(session: Session, sql: string): Promise<T[]> => ((await
  * Copies the tables of every database a store runs on into one new database, `name` in nitro's directory (replacing
  * a dump already there under that name), and resolves with where it is and what it holds. A table keeps its name
  * unless an earlier database had one of the same name, when it takes its database's name as a prefix. Only the rows
- * are copied, not indexes or keys, and a store's table is copied as it reads, one row per partition holding it, with
- * `partition_key` first. Stores on the in-memory fallback aren't included: their rows are visible only to their own
- * connection.
+ * are copied, and a store's table as its view reads, with `partition_key` first. Stores on the in-memory fallback
+ * aren't included: their rows are visible only to their own connection.
  *
  * Each database is attached to the dump's own connection, so the copy reads a committed snapshot alongside the
  * store's writes rather than through the store's connection.
@@ -66,8 +65,7 @@ export async function dumpSqliteStores(options: { name?: string } = {}): Promise
           session,
           "SELECT name, type FROM src.sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
         );
-        // A store's rows are read through its view, which the dump keeps as one flat table under the store's name, in
-        // place of the rows and membership tables beneath it.
+        // A store's view is copied as one flat table; the rows and membership tables beneath it are left out.
         const views = new Set(objects.filter((object) => object.type === 'view').map((object) => object.name));
         const names = objects.filter((object) => {
           const beneath = /^(.+)__(rows|members)$/.exec(object.name);

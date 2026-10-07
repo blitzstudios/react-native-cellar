@@ -16,9 +16,8 @@ export function createTestRowTable<Row extends RowShape>(schema: RowTableSchema<
 }
 
 /**
- * A store's table as {@linkcode defineSqliteStore} builds it from the store's schema and its `nativeShredSpecs`, over
- * `conn`: for a test that picks its own connection. Its `shred` takes a fetch plan's `native` choice in place of a
- * partition. Call its {@linkcode RowTable.init | init} first.
+ * A store's table as {@linkcode defineSqliteStore} builds it, over `conn`. Its `shred` takes a fetch plan's `native`
+ * choice. Call its {@linkcode RowTable.init | init} first.
  */
 export function createStoreTable<Row extends RowShape>(
   schema: StoreTableSchema<Row>,
@@ -28,7 +27,7 @@ export function createStoreTable<Row extends RowShape>(
   return createSqliteRowTable(partitionedSchema(schema), conn, nativeSpecOf(nativeShredSpecs));
 }
 
-/** A store's table as {@linkcode defineSqliteStore} builds it from the store's schema, on a new sql.js database, built and ready. */
+/** A store's table as {@linkcode defineSqliteStore} builds it, on a new sql.js database, initialized. */
 export function createTestStoreTable<Row extends RowShape>(
   schema: StoreTableSchema<Row>,
   nativeShredSpecs?: Readonly<Record<string, ShredSpec>>,

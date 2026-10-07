@@ -5,7 +5,7 @@ import { getOpenSqliteConnections } from './nitro_connection';
 jest.mock('react-native-nitro-sqlite', () => ({ open: jest.fn(), NitroSQLite: { native: { close: jest.fn(), drop: jest.fn() } } }));
 jest.mock('./nitro_connection', () => ({ getOpenSqliteConnections: jest.fn() }));
 
-/** Each database's objects, as `sqlite_master` lists them: a store's view, the tables beneath it, and its ETag table. */
+/** Each database's objects, as `sqlite_master` lists them. */
 const objectsOf: Record<string, Array<{ name: string; type: string }>> = {
   'players.db': [
     { name: 'players', type: 'view' },

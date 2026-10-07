@@ -62,14 +62,10 @@ export interface StoreSurface {
 }
 
 /**
- * Which partition a read's args name: the description of the partition the store's reads read, such as
- * `{ sport: 'nfl' }` from `{ sport: 'nfl', playerId: '4046' }`. Args beyond it, such as the `playerId`, pick rows within
- * the partition; a read that wants a different partition, such as one player's own, names it with its own `partition`.
- *
- * It gets the args as loosely as a screen holds them: return `null` or `undefined` until they are complete, and the
- * read reads nothing and fetches nothing until then. A partition is the set of rows one fetch returns, and its key is
- * its description serialized ({@linkcode partitionKeyOf}), so a description that holds a list holds it in one order.
- * Returning the same object for the same args lets Cellar derive its key once.
+ * The partition a read's args name, as its description: `{ sport: 'nfl' }` from `{ sport: 'nfl', playerId: '4046' }`.
+ * Args beyond it pick rows within the partition; a read of another partition names it with its own `partition`.
+ * Return `null` or `undefined` until the args are complete, and the read reads and fetches nothing until then. The
+ * partition's key is its description serialized by {@linkcode partitionKeyOf}, so a list in it must be in one order.
  */
 export type PartitionSpec<Args, Partition> = (args: Loose<Args>) => Partition | null | undefined;
 
@@ -191,9 +187,8 @@ export interface SqliteStoreConfig<
    */
   push?: StorePushSpec<Item, Row & PartitionKeyColumn, Partition>;
   /**
-   * The store's native shred programs, by the name a {@linkcode FetchPlan.native | plan's native} picks one by. They
-   * let the C++ shredder write a response's rows without building JS objects for them. Omit it to always build rows in
-   * JS with the plan's {@linkcode FetchPlan.toRows | toRows}.
+   * The store's native shred programs, by the name a {@linkcode FetchPlan.native | plan's native} picks. Omit it to
+   * build every row in JS with the plan's {@linkcode FetchPlan.toRows | toRows}.
    */
   nativeShredSpecs?: Readonly<Record<string, ShredSpec>>;
   /**
@@ -735,10 +730,8 @@ export function defineSqliteStore<
 }
 
 /**
- * A partition's key: its description, serialized. Each field that holds a value is written `name=value`, in name order,
- * joined with `&`, and a list's values are joined with `,`, so equal descriptions give equal keys and different ones
- * different keys. A field left `undefined` is the same as one left out. Names and values are escaped, so no value can
- * read as a separator.
+ * A partition's key: its description as `name=value` pairs in name order, joined with `&`, with a list's values joined
+ * with `,`. An `undefined` field is left out, and names and values are escaped.
  */
 export function partitionKeyOf(partition: object): string {
   const part = (value: unknown): string =>

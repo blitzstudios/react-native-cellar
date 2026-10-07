@@ -40,10 +40,7 @@ const NOTIFY_ON_PRIME_STATE = ['isInitialLoading', 'isError'] as const;
 
 /** What a partition's request resolves to: the response body, its ETag, and whether the server answered 304. */
 export interface RawFetchResponse {
-  /**
-   * The response body. Best as the unparsed JSON text, which the native shredder writes without building JS objects;
-   * a parsed body is turned back into text with `JSON.stringify` first.
-   */
+  /** The response body, best as unparsed JSON text. A parsed body is turned back into text first. */
   data?: unknown;
   /** The response's ETag header. It is stored for the partition and sent as `If-None-Match` on the next request. */
   etag?: string;
@@ -54,15 +51,9 @@ export interface RawFetchResponse {
   __etagMatch?: boolean;
 }
 
-/**
- * A partition's request, described but not run, as a partition's {@linkcode PartitionsConfig.fetch | fetch} plan
- * returns it. Cellar runs it as the query function of the partition's React Query query, with these timings.
- */
+/** A partition's request, described but not run. Cellar runs it in the partition's React Query query. */
 export interface RawQuery {
-  /**
-   * Makes the request, sending `etag`, the partition's stored ETag, as `If-None-Match`. Resolves to the response body,
-   * its ETag, and whether the server answered 304.
-   */
+  /** Makes the request with the partition's stored ETag, as `If-None-Match`, and resolves to the response. */
   queryFn: (request: { etag?: string }) => Promise<RawFetchResponse | undefined>;
   /**
    * How long after a fetch the partition counts as fresh, in ms: a component mounting within that time uses the

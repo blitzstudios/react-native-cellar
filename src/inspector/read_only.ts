@@ -133,7 +133,7 @@ export function assertCompilesToRead(conn: SqliteConnection, statement: ReadStat
   try {
     program = readRows<{ opcode: string; p2: number }>(conn, `EXPLAIN ${statement.sql}`, params);
   } catch (error) {
-    // A store's table is a view, and SQLite refuses to compile a write to one.
+    // SQLite refuses to compile a write to a view, which a store's table is.
     if (/because it is a view/.test(String((error as Error)?.message))) throw new ReadOnlyViolation('That statement writes to the database; only reads run here.');
     throw error;
   }

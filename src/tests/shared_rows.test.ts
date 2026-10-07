@@ -44,7 +44,6 @@ const CATALOG_NATIVE: Record<string, ShredSpec> = {
   },
 };
 
-/** What the server answers: the catalog per sport, and each player's own record. */
 function playerServer() {
   const catalog: Record<string, Record<string, { player_id: string; team: string }>> = {
     nfl: { p1: { player_id: 'p1', team: 'SF' }, p2: { player_id: 'p2', team: 'KC' } },

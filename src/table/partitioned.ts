@@ -68,10 +68,10 @@ function withPartitionKey(spec: ShredSpec): ShredSpec {
   };
 }
 
-/** Which of a store's programs a fetch plan shreds through, and the binds it fills from 1. */
+/** The store program a fetch plan shreds through, and its binds from index 1. */
 export type NativeProgramChoice = { variant: string; binds?: readonly SqlValue[] };
 
-/** A store's programs as the row table takes them: the variant and binds are read off the plan's choice. */
+/** A store's programs as the row table takes them. */
 export function nativeSpecOf(specs: Readonly<Record<string, ShredSpec>> | undefined): NativeShredSpec | undefined {
   if (!specs) return undefined;
   return {
@@ -81,10 +81,7 @@ export function nativeSpecOf(specs: Readonly<Record<string, ShredSpec>> | undefi
   };
 }
 
-/**
- * The program and binds the native shredder is handed for one partition of a store: the program `choice` names,
- * extended to fill `partition_key`, and the key followed by the choice's binds.
- */
+/** The program `choice` names, extended to fill `partition_key`, and its binds after the partition's key. */
 export function storeShredProgram(
   specs: Readonly<Record<string, ShredSpec>>,
   choice: NativeProgramChoice,

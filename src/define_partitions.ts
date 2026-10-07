@@ -89,14 +89,11 @@ export interface FetchPlan<Row extends RowShape, Key = string> {
   /** The request. Its `queryFn` gets the stored ETag to send as `If-None-Match`; a 304 keeps the rows. */
   query: RawQuery;
   /**
-   * The body, as unparsed JSON text, to rows. Runs on web, in tests, without {@linkcode FetchPlan.native | native}, and
-   * when the native shred fails.
+   * Turns the body, as unparsed JSON text, into rows: on web, in tests, without
+   * {@linkcode FetchPlan.native | native}, and when the native shred fails.
    */
   toRows: (rawJson: string, key: Key) => readonly Row[];
-  /**
-   * The store's native program that shreds the body in C++, and its binds from index 1 (bind 0 is the partition key).
-   * Omit it for a body the shred can't iterate, such as a single object.
-   */
+  /** The store's native program that shreds the body in C++, and its binds from index 1 (bind 0 is the partition key). */
   native?: { variant: string; binds?: readonly SqlValue[] };
   /** The columns the body fills, when it fills only some; the rest keep their stored values. Every column by default. */
   fills?: ReadonlyArray<keyof Row & string>;
@@ -448,7 +445,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   /** When each partition's rows last landed. Bounded, and a forgotten timestamp reads as never-fetched. */
   const fetchedAt = createBoundedLru<number>(config.internMax ?? INTERN_MAX);
 
-  /** Each request's plan, which writes its body. */
+  /** The plan each query came from. */
   const planOfQuery = new WeakMap<RawQuery, FetchPlan<Row, Key>>();
   const queryFor = (key: Key): RawQuery => {
     const plan = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor));

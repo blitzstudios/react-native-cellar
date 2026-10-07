@@ -198,11 +198,9 @@ export function createDerivedValues<Row extends RowShape, Key, V, Partition = un
   const listKeyOf = (key: Key, method: string, of: unknown): string => `${cacheKeyOf(parts(key))}${KEY_SEP}${method}${KEY_SEP}${stableKey(of)}`;
 
   /**
-   * Whether the partition holds one row per entity, which is what decides if a filtered read can share its view model
-   * with an unfiltered one. With one row per entity, a filter either includes the entity's row or not, so every read
-   * builds the same view model from it. With several, a filter can include some of an entity's rows — a traded player's
-   * games for one team — and the view model built from those is a different one, held under the filter. Asked of the
-   * rows, once per version of the partition.
+   * Whether each partition holds one row per entity, checked once per version. If it does, a filtered read shares the
+   * unfiltered read's view model; if not, a filter can pick some of an entity's rows (a traded player's games for one
+   * team), and its view model is held under the filter.
    */
   const singleRow = createBoundedLru<{ version: number; value: boolean }>(LISTS_MAX);
   const isSingleRow = (key: Key): boolean => {

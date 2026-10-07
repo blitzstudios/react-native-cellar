@@ -1,17 +1,11 @@
 /**
- * How a store's rows are stored: once each, however many partitions hold them. A row's identity is its primary key, and
- * a partition is the set of rows its fetch returned, kept in a membership table by row id. The table a store reads by
- * name is a view joining the two, so every read, and every store's own SQL, still filters on `partition_key`.
+ * The SQL for a store's shared rows: each row stored once by its primary key, however many partitions hold it. A
+ * membership table lists each partition's row ids, and the store's table is a view joining the two.
  *
- * Writes stage their rows the way every write does, and then one transaction compares the stage with the stored rows by
- * identity: the columns a fetch doesn't carry are copied into the stage first, so a fetch of fewer columns never blanks
- * the rest; a staged copy older than the stored one by `newerBy` takes the stored values; the rows that differ are
- * updated in place, so their ids hold; the partition's membership becomes the stage's rows; and a row no partition
- * holds anymore is deleted. A row that changed and that other partitions also hold is recorded per partition, so
- * their readers are woken too.
- *
- * Identities are matched with `IS`, so a key column that is null for some rows, such as the week of a season total,
- * still names one row.
+ * A write stages its rows, then in one transaction: fills the columns the fetch leaves out from the stored rows, keeps
+ * a stored row that is newer by `newerBy`, updates changed rows in place, replaces the partition's membership, deletes
+ * rows no partition holds, and records the changed rows other partitions hold. Identities match with `IS`, so a null
+ * key column still names one row.
  */
 
 import { columnNames, IndexDef, RowShape, RowTableSchema } from './types';
@@ -27,16 +21,14 @@ export function sharedTableNames(table: string): { rows: string; members: string
 export interface SharedRowsSql {
   /** Creates the rows and membership tables, their indexes, and the view. */
   create: (temporary: boolean) => string[];
-  /** Drops the view and the two tables under it. */
   drop: string[];
   /** The declared secondary indexes, without `partition_key`, on the rows table. */
   indexes: Array<IndexDef<RowShape>>;
   /** Creates the TEMP tables and the stage index a write uses. */
   ensure: BatchCommand[];
   /**
-   * The `sqlite_stat1` rows for the membership table: a partition holds many rows, and a row few partitions. Without
-   * them the planner reads a filtered view by walking the whole partition and checking each row, so a lookup of one
-   * entity costs a read of all of them; with them it starts from the rows table's index and checks membership.
+   * The membership table's `sqlite_stat1` rows: a partition holds many rows, and a row few partitions. They let the
+   * planner start a filtered read from the rows table's index.
    */
   planStats: ReadonlyArray<{ idx: string; stat: string }>;
   /** Compares the stage with the stored rows and applies it, recording the entities that changed here and elsewhere. */
@@ -102,7 +94,7 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     commands.push(
       // New, or moved.
       [`INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s LEFT JOIN ${R} r ON ${on('r', 's')} WHERE r.rid IS NULL OR ${moved};`, [id]],
-      // Stored already, for another partition, and joining this one.
+      // Stored for another partition, and joining this one.
       [
         `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} ` +
           `WHERE NOT EXISTS (SELECT 1 FROM ${M} m WHERE m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} AND m.rid = r.rid);`,
@@ -158,7 +150,7 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     drop: [`DROP VIEW IF EXISTS ${table};`, `DROP TABLE IF EXISTS ${M};`, `DROP TABLE IF EXISTS ${R};`],
     indexes,
     ensure: [
-      // Rows leaving the partition are found by probing the stage by identity, which its primary key does not lead with.
+      // Leaving rows are found by identity, which the stage's primary key doesn't lead with.
       [`CREATE INDEX IF NOT EXISTS temp.${stageTable}_identity ON ${stageTable} (${ids});`, []],
       [`CREATE TABLE IF NOT EXISTS ${elsewhere} (write_id INTEGER NOT NULL, partition_key TEXT, entity_id);`, []],
       [`CREATE TABLE IF NOT EXISTS ${removed} (rid INTEGER);`, []],
