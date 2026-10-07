@@ -2,7 +2,7 @@
  * The fetch ingest: how a store fetches a partition (the set of rows one fetch returns and replaces) and writes the
  * response. There is one React Query query per partition. Its query function sends the partition's stored ETag, writes
  * the response body as the partition's rows (with the native shredder or the store's
- * {@linkcode PartitionFetchSpec.toRows | toRows}), stores the new ETag, and bumps the partition's version with the
+ * {@linkcode FetchPlan.toRows | toRows}), stores the new ETag, and bumps the partition's version with the
  * write's change set, which re-renders the readers of the changed entities.
  */
 
@@ -19,7 +19,7 @@ import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 import { queryRuntime } from '../runtime';
 import type { QueryRuntime } from '../runtime';
 import { ChangeSet, isUnchanged, WriteResult } from '../table/change_set';
-import type { PartitionFetchSpec, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
+import type { FetchPlan, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
 import type { DataResult } from '../store_result';
 import type { IngestTiming } from '../diagnostics/ingest_timing';
 import type { CommonDef, ReadCallOptions } from '../read/surface';
@@ -55,7 +55,7 @@ export interface RawFetchResponse {
 }
 
 /**
- * A partition's request, described but not run, as a partition's {@linkcode PartitionFetchSpec.query | fetch.query}
+ * A partition's request, described but not run, as a partition's {@linkcode PartitionsConfig.fetch | fetch} plan
  * returns it. Cellar runs it as the query function of the partition's React Query query, with these timings.
  */
 export interface RawQuery {
@@ -96,9 +96,10 @@ export interface FetchIngestConfig<Key> {
   setEtag: (key: Key, etag: string) => void;
   /**
    * Writes the response body as the partition's rows, replacing what it held, and returns the write's change set (the
-   * entity id of each row added, changed or removed) and how many rows the body held.
+   * entity id of each row added, changed or removed) and how many rows the body held. `query` is the request the body
+   * answered, which says how to write it.
    */
-  ingestRaw: (key: Key, rawJson: string) => Promise<WriteResult>;
+  ingestRaw: (key: Key, rawJson: string, query: RawQuery) => Promise<WriteResult>;
   /**
    * Bumps the partition's version with the write's change set and returns the new version. Defaults to
    * {@linkcode VersionAtom.bump | version.bump}; {@linkcode definePartitions} passes its own, which also calls
@@ -393,7 +394,8 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     const parts = cfg.toParts(key);
     const etag = cfg.getEtag(key);
     const startedAt = Date.now();
-    const res = await cfg.rawQuery(key, etag).queryFn();
+    const query = cfg.rawQuery(key, etag);
+    const res = await query.queryFn();
     const fetchedAt = Date.now();
     const recordTiming = (rows: number, chars: number | null): void => {
       const at = Date.now();
@@ -437,7 +439,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
       return { version: cfg.version.get(parts), count: ROWS_UNCHANGED };
     }
 
-    const { changes, rows } = await cfg.ingestRaw(key, rawJson);
+    const { changes, rows } = await cfg.ingestRaw(key, rawJson, query);
     recordTiming(rows, rawJson.length);
     if (identified) {
       if (ingestedBodies.size >= FINGERPRINT_CAPACITY) ingestedBodies.clear();
@@ -570,4 +572,4 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, IngestTiming, PartitionFetchSpec, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };
+export type { CommonDef, DataResult, IngestTiming, FetchPlan, Partitions, PartitionsConfig, PrimeState, QueryRuntime, ReadCallOptions, VersionAtom, definePartitions };

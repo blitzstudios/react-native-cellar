@@ -151,7 +151,7 @@ describe('createFetchIngest — timings never reach React Query as present-but-u
     renderHook(() => ingest.usePrime('week'));
     await useFocusGatedQueryMock.mock.calls[0][0].queryFn();
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('week', '[{"x":1}]');
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('week', '[{"x":1}]', expect.objectContaining({ queryFn: expect.any(Function) }));
   });
 
   it('omits them when the store cannot describe the request, rather than forcing every mount to fetch', () => {
@@ -587,7 +587,7 @@ describe('createFetchIngest — successful ingest (200)', () => {
 
     const out = await ingest.prefetch('us');
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"item_id":"a"}]');
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"item_id":"a"}]', expect.objectContaining({ queryFn: expect.any(Function) }));
     expect(harness.cfg.setEtag).toHaveBeenCalledWith('us', 'W/"new"');
     expect(harness.version.bump).toHaveBeenCalledTimes(1);
     expect(out).toEqual({ version: 1, count: 5 });
@@ -600,7 +600,7 @@ describe('createFetchIngest — successful ingest (200)', () => {
 
     await ingest.prefetch('us');
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', JSON.stringify({ items: [1, 2] }));
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', JSON.stringify({ items: [1, 2] }), expect.objectContaining({ queryFn: expect.any(Function) }));
   });
 
   it('refuses the etag from a 200 that carried no body, so the next launch is a real fetch', async () => {
@@ -621,7 +621,7 @@ describe('createFetchIngest — successful ingest (200)', () => {
 
     await ingest.prefetch('us');
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[]');
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[]', expect.objectContaining({ queryFn: expect.any(Function) }));
     expect(harness.cfg.setEtag).toHaveBeenCalledWith('us', 'e');
   });
 
@@ -750,7 +750,7 @@ describe('createFetchIngest — usePrime (reactive wiring)', () => {
     const { queryFn } = useFocusGatedQueryMock.mock.calls[0][0];
     const out = await queryFn();
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"x":1}]');
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"x":1}]', expect.objectContaining({ queryFn: expect.any(Function) }));
     expect(out).toEqual({ version: 1, count: 5 });
   });
 
@@ -913,7 +913,7 @@ describe('createFetchIngest — usePrimeMany (a partition set whose size varies 
     renderHook(() => ingest.usePrimeMany(['us']));
     const out = await useFocusGatedQueriesMock.mock.calls[0][0].queries[0].queryFn();
 
-    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"x":1}]');
+    expect(harness.cfg.ingestRaw).toHaveBeenCalledWith('us', '[{"x":1}]', expect.objectContaining({ queryFn: expect.any(Function) }));
     expect(out).toEqual({ version: 1, count: 5 });
   });
 });

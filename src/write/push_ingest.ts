@@ -14,7 +14,7 @@ import { chunkList, getOrCreate } from '../collections';
 import { RowShape, RowTable } from '../table/types';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
 import { ChangeSet, isUnchanged, NO_CHANGES, unionChanges } from '../table/change_set';
-import type { PartitionFetchSpec, PartitionKeySpec } from '../define_partitions';
+import type { PartitionKeySpec, PartitionsConfig } from '../define_partitions';
 
 const DEFAULT_CHUNK = 250;
 const DEFAULT_RETRY_DELAY_MS = 1000;
@@ -68,7 +68,7 @@ export interface PushIngest<Item, Key> {
   queue: (key: Key, item: Item) => void;
   /**
    * Holds the partition's queued items (they stay queued and unwritten) until the returned function is called, which
-   * then writes them. Pass it as the partition's {@linkcode PartitionFetchSpec.holdWrites | fetch.holdWrites}: a fetch
+   * then writes them. Pass it as the partition's {@linkcode PartitionsConfig.holdWrites | holdWrites}: a fetch
    * replaces the whole partition, so an item written while the request was in flight would be overwritten by the older
    * response. Holds on one partition can overlap, and the items are written once every hold is released; calling a
    * release twice does nothing.
@@ -209,4 +209,4 @@ export function createPushIngest<Item, Row extends RowShape, Key>(config: PushIn
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { PartitionFetchSpec, PartitionKeySpec, RowTable };
+export type { PartitionKeySpec, PartitionsConfig, RowTable };

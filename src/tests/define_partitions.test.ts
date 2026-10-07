@@ -30,6 +30,9 @@ const SCHEMA: RowTableSchema<EventRow> = {
 const US: EventKey = { region: 'us', year: '2025', itemType: 'regular' };
 const OTHER: EventKey = { ...US, year: '2024' };
 
+const defaultToRows = (key: EventKey, raw: string): EventRow[] =>
+  (JSON.parse(raw) as string[]).map((id) => ({ region: key.region, year: key.year, item_type: key.itemType, event_id: id }));
+
 function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey, raw: string) => EventRow[]; body?: string; internMax?: number } = {}) {
   const table = over.table ?? createTestRowTable(SCHEMA);
   table.init();
@@ -48,12 +51,10 @@ function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey,
       fields: ['region', 'year', 'itemType'],
       where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }),
     },
-    fetch: {
-      query,
-      toRows:
-        over.toRows ??
-        ((key, raw) => (JSON.parse(raw) as string[]).map((id) => ({ region: key.region, year: key.year, item_type: key.itemType, event_id: id }))),
-    },
+    fetch: (...args: [EventKey, string?]) => ({
+      ...query(...args),
+      toRows: (raw) => (over.toRows ?? defaultToRows)(args[0], raw),
+    }),
     onChanged: (key, version, changes) => {
       changed.push({ key, version });
       changedEntities.push(changes);
@@ -197,16 +198,15 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
       table,
       version,
       key: { fields: ['region', 'year', 'itemType'], where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }) },
-      fetch: {
-        query: () => ({ queryFn: async () => ({ data: '{"only":"one"}' }) }),
-        toRows: (key) => [{ region: key.region, year: key.year, item_type: key.itemType, event_id: 'one' }],
-        canShredNatively: () => false,
-      },
+      fetch: (key) => ({
+        queryFn: async () => ({ data: '{"only":"one"}' }),
+        toRows: () => [{ region: key.region, year: key.year, item_type: key.itemType, event_id: 'one' }],
+      }),
     });
 
     await events.lifecycle.fetch(US);
 
-    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), expect.anything(), true, undefined);
+    expect(table.shred).toHaveBeenCalledWith(expect.anything(), '{"only":"one"}', expect.any(Function), undefined, true, undefined);
     expect(table.overwrite).not.toHaveBeenCalled();
     expect(real.find(events.where(US))).toHaveLength(1);
     expect(degradeMock).not.toHaveBeenCalled();
@@ -306,10 +306,10 @@ describe('definePartitions — a store whose key is an opaque string', () => {
       table,
       version,
       key: { where: (key) => ({ partition_key: key }) },
-      fetch: {
-        query: () => ({ queryFn: async () => ({ data: '["a"]', etag: 'W/"b"' }) }),
-        toRows: (key, raw) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
-      },
+      fetch: (key) => ({
+        queryFn: async () => ({ data: '["a"]', etag: 'W/"b"' }),
+        toRows: (raw) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
+      }),
     });
     return { blobs, table };
   };
@@ -369,19 +369,18 @@ describe('definePartitions — a store whose partition is a record, interned to 
       table,
       version: createVersionAtom(`define_partitions_intern_${Math.random()}`),
       key: { of: (args) => args.partition, id: specKey, where: (key) => ({ partition_key: key }) },
-      fetch: {
-        query: (partition) => {
-          if (!byKey.has(specKey(partition))) {
-            byKey.set(specKey(partition), partition);
-            queried.records.push(partition);
-          }
-          return { queryFn: async () => ({ data: '["a","b"]' }) };
-        },
-        toRows: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
-        canShredNatively: (partition) => {
-          shredAsked.push(partition);
-          return false;
-        },
+      fetch: (partition) => {
+        if (!byKey.has(specKey(partition))) {
+          byKey.set(specKey(partition), partition);
+          queried.records.push(partition);
+        }
+        return {
+          queryFn: async () => {
+            shredAsked.push(partition);
+            return { data: '["a","b"]' };
+          },
+          toRows: (raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
+        };
       },
     });
     return { metrics, table, queried: queried.records, shredAsked };
@@ -514,13 +513,9 @@ describe('definePartitions — args that resolve to no partition at all', () => 
         id: (spec) => `${spec.region}:${spec.week}`,
         where: (key) => ({ partition_key: key }),
       },
-      fetch: {
-        query: (partition) => {
-          queried.push(partition);
-          return { queryFn: async () => ({ data: '["a"]' }) };
-        },
-        toRows: (_partition, raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })),
-        canShredNatively: () => false,
+      fetch: (partition) => {
+        queried.push(partition);
+        return { queryFn: async () => ({ data: '["a"]' }), toRows: (raw, key) => (JSON.parse(raw) as string[]).map((id) => ({ partition_key: key, id })) };
       },
     });
     const ids = loose.defineRead<Args, string[]>({

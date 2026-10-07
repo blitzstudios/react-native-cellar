@@ -44,14 +44,15 @@ function gameStore(
     name: 'games_store',
     schema: SCHEMA,
     partition: { fields: ['sport', 'season'], fromArgs: over.fromArgs, toKey: over.toKey },
-    fetch: {
-      query: (season: Season, etag?: string) => {
-        queried.push(season);
-        return { queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]', etag: etag ? undefined : 'W/"1"' }) };
-      },
-      toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+    fetch: (season: Season, etag?: string) => {
+      queried.push(season);
+      return {
+        queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]', etag: etag ? undefined : 'W/"1"' }),
+        toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+        ...(over.native ? { native: { variant: 'all', binds: [season.sport] } } : {}),
+      };
     },
-    nativeShredSpec: over.native ? NATIVE : undefined,
+    nativeShredSpecs: over.native ? { all: GAME_SPEC } : undefined,
     internMax: over.internMax,
     build: (cellar) => ({
       reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) },
@@ -142,10 +143,10 @@ describe('defineSqliteStore — caches', () => {
       name: 'described_store',
       schema: SCHEMA,
       partition: { fields: ['sport', 'season'] },
-      fetch: {
-        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]' }) }),
-        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
-      },
+      fetch: (season: Season) => ({
+        queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]' }),
+        toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      }),
       build: (cellar) => {
         const { teams } = cellar.defineCaches({ teams: byEntity({ max: 8, fromRows: ([row], season) => `${row.team}@${season.season}` }) });
         return {
@@ -231,10 +232,10 @@ describe('defineSqliteStore — pushes', () => {
       name: 'held_store',
       schema: SCHEMA,
       partition: { fields: ['sport', 'season'] },
-      fetch: {
-        query: (_season: Season) => ({ queryFn: () => new Promise<{ data: string }>((resolve) => (respond = resolve)) }),
-        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
-      },
+      fetch: (season: Season) => ({
+        queryFn: () => new Promise<{ data: string }>((resolve) => (respond = resolve)),
+        toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      }),
       push: { idOf: (game: Game) => game.team, partitionsOf: () => [NFL_2025], toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) },
       build: (cellar) => ({ reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) } }),
     });
@@ -262,10 +263,10 @@ describe('defineSqliteStore — pushes and ETags', () => {
       name: 'etag_store',
       schema: SCHEMA,
       partition: { fields: ['sport', 'season'] },
-      fetch: {
-        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"}]', etag: 'W/"1"' }) }),
-        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
-      },
+      fetch: (season: Season) => ({
+        queryFn: async () => ({ data: '[{"team":"a"}]', etag: 'W/"1"' }),
+        toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      }),
       push: { idOf: (game: Game) => game.team, partitionsOf: () => [NFL_2025], toRows: (key, games) => games.map((game) => ({ ...game, partition_key: key })) },
       build: (cellar) => ({
         reads: { Teams: cellar.defineRead<Season, number>({ select: () => 0, empty: 0 }) },
@@ -297,10 +298,10 @@ describe('defineSqliteStore — pushes and ETags', () => {
       name: 'routed_store',
       schema: SCHEMA,
       partition: { fields: ['sport', 'season'] },
-      fetch: {
-        query: (_season: Season) => ({ queryFn: async () => ({ data: '[{"team":"a"}]' }) }),
-        toRows: (season, raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
-      },
+      fetch: (season: Season) => ({
+        queryFn: async () => ({ data: '[{"team":"a"}]' }),
+        toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
+      }),
       push: {
         idOf: (game: Game) => game.team,
         partitionsOf: () => [NFL_2025, NFL_2024],

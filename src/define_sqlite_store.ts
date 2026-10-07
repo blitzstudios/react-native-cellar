@@ -8,14 +8,14 @@
 import { notifyManager } from '@tanstack/query-core';
 import { reportStoreDegradation } from './diagnostics/telemetry';
 import { createVersionAtom, entityChangesOf, VersionAtom } from './reactivity/version_atom';
-import { FindOpts, RowShape, RowTable } from './table/types';
-import { NativeShredSpec } from './write/shred_spec';
+import { FindOpts, RowShape, RowTable, SqlValue } from './table/types';
+import { NativeShredSpec, ShredSpec } from './write/shred_spec';
 import { guardedConnection, SqliteConnection } from './table/connection';
 import { createOnceGuard } from './diagnostics/once_guard';
 import { createSqliteRowTable } from './table/sqlite';
 import { PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
 import { definePartitions } from './define_partitions';
-import type { PartitionFetchSpec, PartitionLifecycle, Partitions } from './define_partitions';
+import type { FetchPlan, PartitionLifecycle, Partitions } from './define_partitions';
 import { isArgPresent } from './args_key';
 import { labelReads } from './read/surface';
 import type { CommonDef, Read } from './read/surface';
@@ -102,11 +102,11 @@ export type PartitionSpec<Args, Partition> =
     };
 
 /**
- * How a store fetches one partition: the request to make, and how the response becomes the partition's rows. A fetch
- * replaces the partition: afterwards its rows are exactly the response's rows, each with its `partition_key` filled in
- * by Cellar. While it is in flight, the partition's pushes wait. Omit it for a store fed only by pushes.
+ * How a store fetches one partition: given its description and stored ETag, the {@linkcode FetchPlan} for its request
+ * and its rows. A fetch replaces the partition: afterwards its rows are exactly the response's rows, each with its
+ * `partition_key` filled in by Cellar. While it is in flight, the partition's pushes wait.
  */
-export type StoreFetchSpec<Row extends RowShape, Partition> = Omit<PartitionFetchSpec<Row, string, Partition>, 'holdWrites'>;
+export type StoreFetchSpec<Row extends RowShape, Partition> = (partition: Partition, etag?: string) => FetchPlan<Row>;
 
 /**
  * How items pushed to a store from outside a fetch, such as a socket's, become rows: {@linkcode PushIngestConfig}, less
@@ -220,10 +220,11 @@ export interface SqliteStoreConfig<
    */
   push?: StorePushSpec<Item, Row & PartitionKeyColumn, Partition>;
   /**
-   * The store's native shred programs, which let the C++ shredder write a fetched response's rows without building JS
-   * objects for them. Omit it to always build rows in JS with the fetch's {@linkcode PartitionFetchSpec.toRows | toRows}.
+   * The store's native shred programs, by the name a {@linkcode FetchPlan.native | plan's native} picks one by. They
+   * let the C++ shredder write a response's rows without building JS objects for them. Omit it to always build rows in
+   * JS with the plan's {@linkcode FetchPlan.toRows | toRows}.
    */
-  nativeShredSpec?: NativeShredSpec<Partition>;
+  nativeShredSpecs?: Readonly<Record<string, ShredSpec>>;
   /**
    * Builds the store's {@linkcode StoreCapabilities} (objects that need the database connection, such as a ranker that
    * runs its own SQL) each time the store is built over a connection.
@@ -437,6 +438,12 @@ export function defineSqliteStore<
   const extra = (more?: Record<string, unknown>) => ({ store: config.name, table: schema.table, ...more });
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
   const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
+  // A plan names its program and binds itself, so the table's spec only reads them back.
+  const nativeShredSpec: NativeShredSpec | undefined = config.nativeShredSpecs && {
+    specs: config.nativeShredSpecs,
+    variant: (native) => String(native.variant),
+    binds: (native) => [...((native.binds as SqlValue[] | undefined) ?? [])],
+  };
   const { fields, fromArgs, toKey } = config.partition;
   const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
   const keyOfPartition = toKey ?? keyFromFields<Partition>(fields!);
@@ -470,7 +477,8 @@ export function defineSqliteStore<
         },
         where,
       },
-      fetch: config.fetch && { ...(config.fetch as unknown as StoreFetchSpec<StoredRow, Partition>), holdWrites },
+      fetch: config.fetch as unknown as StoreFetchSpec<StoredRow, Partition> | undefined,
+      holdWrites,
       internMax: config.internMax,
       remember: (key, partition) => {
         const rowsWhere = where(key);
@@ -572,7 +580,7 @@ export function defineSqliteStore<
     atom: VersionAtom = version,
     raw: SqliteConnection = conn,
   ): { surface: Functions; table: RowTable<StoredRow> } => {
-    const table = createSqliteRowTable(schema, conn, config.nativeShredSpec as NativeShredSpec | undefined, { temporary });
+    const table = createSqliteRowTable(schema, conn, nativeShredSpec, { temporary });
     return { surface: buildOn(table, atom, capabilitiesOf(conn), raw), table };
   };
 
@@ -736,7 +744,7 @@ export function defineSqliteStore<
     createInspectedStore({
       name: config.name,
       schema,
-      nativeShred: !!config.nativeShredSpec,
+      nativeShred: !!config.nativeShredSpecs,
       binding: () => binding,
       running: () => (running ? inspectable.get(running) : undefined),
     }),
@@ -792,4 +800,4 @@ function keyFromFields<Partition>(fields: readonly string[]): (partition: Partit
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, PartitionFetchSpec, Partitions, Read, bindSqliteStore, pairRead };
+export type { CommonDef, Partitions, Read, bindSqliteStore, pairRead };

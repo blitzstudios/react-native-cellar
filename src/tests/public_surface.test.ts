@@ -30,7 +30,7 @@ describe('the core entry point', () => {
     expect(exportedFrom('index.ts')).toEqual([
       'ALL_ENTITIES', 'BoundedLru', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'CellarContext', 'ChangeSet',
       'ColumnDef', 'Coverage', 'CoverageProviderProps', 'DATA_RESULT_KEYS', 'DataResult', 'DataStatus', 'DecodedRow', 'Dep',
-      'DerivedValues', 'DerivedValuesDef', 'EachOf', 'EntityCacheDeclaration', 'Loose', 'MaybeId', 'NO_CHANGES',
+      'DerivedValues', 'DerivedValuesDef', 'EachOf', 'EntityCacheDeclaration', 'FetchPlan', 'Loose', 'MaybeId', 'NO_CHANGES',
       'NativeShredColumns', 'NativeShredSpec', 'PairedRead', 'PairedReadAcross', 'PartitionKeyColumn',
       'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'QueryClient',
       'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RAW_TEXT_RESPONSE_TRANSFORM', 'RawQuery', 'ReadAcross', 'ReadGate',

@@ -5,7 +5,7 @@ import { byEntity } from '../read/derived_values';
 import { runTracked } from '../reactivity/tracking';
 import { readRows } from '../table/connection';
 import { StoreTableSchema } from '../table/partitioned';
-import { NativeShredSpec } from '../write/shred_spec';
+import { ShredSpec } from '../write/shred_spec';
 
 jest.mock('../diagnostics/telemetry', () => ({ reportStoreDegradation: jest.fn() }));
 
@@ -28,24 +28,20 @@ const PLAYERS: StoreTableSchema<Player> = {
   indexes: [{ name: 'idx_players_team', columns: ['partition_key', 'team'] }],
 };
 
-const CATALOG_NATIVE: NativeShredSpec<PlayerPartition> = {
-  specs: {
-    all: {
-      version: 1,
-      table: 'players',
-      insertVerb: 'INSERT OR REPLACE',
-      source: 'objectValues',
-      columns: ['sport', 'player_id', 'team', 'height'],
-      ops: [
-        { op: 'bind', index: 1 },
-        { op: 'text', path: 'player_id' },
-        { op: 'text', path: 'team' },
-        { op: 'text', path: 'height' },
-      ],
-    },
+const CATALOG_NATIVE: Record<string, ShredSpec> = {
+  all: {
+    version: 1,
+    table: 'players',
+    insertVerb: 'INSERT OR REPLACE',
+    source: 'objectValues',
+    columns: ['sport', 'player_id', 'team', 'height'],
+    ops: [
+      { op: 'bind', index: 1 },
+      { op: 'text', path: 'player_id' },
+      { op: 'text', path: 'team' },
+      { op: 'text', path: 'height' },
+    ],
   },
-  variant: () => 'all',
-  binds: ({ sport }) => [sport],
 };
 
 /** What the server answers: the catalog per sport, and each player's own record. */
@@ -70,19 +66,22 @@ function playerStore(over: { native?: boolean } = {}) {
       fromArgs: ({ sport }: { sport?: string }): PlayerPartition | null => (sport ? { sport } : null),
       toKey: (p: PlayerPartition) => (p.request === 'player' ? `player:${p.sport}:${p.playerId}` : p.sport),
     },
-    fetch: {
-      query: (p: PlayerPartition) => ({
-        queryFn: async () => ({ data: JSON.stringify(p.request === 'player' ? server.detail[p.playerId] : server.catalog[p.sport]) }),
-      }),
-      toRows: (p, raw) => {
-        const body = JSON.parse(raw) as Record<string, { player_id: string; team: string; height?: string }> | { player_id: string } | null;
-        const players = p.request === 'player' ? (body ? [body as { player_id: string; team: string; height?: string }] : []) : Object.values(body ?? {});
-        return players.map((one) => ({ sport: p.sport, player_id: one.player_id, team: one.team ?? null, height: one.height ?? null }));
-      },
-      canShredNatively: (p) => p.request !== 'player',
-      carries: (p) => (p.request === 'player' ? undefined : ['team']),
+    fetch: (p: PlayerPartition) => {
+      type Body = { player_id: string; team: string; height?: string };
+      const toRow = (one: Body) => ({ sport: p.sport, player_id: one.player_id, team: one.team ?? null, height: one.height ?? null });
+      return p.request === 'player'
+        ? {
+            queryFn: async () => ({ data: JSON.stringify(server.detail[p.playerId]) }),
+            toRows: (raw: string) => [JSON.parse(raw) as Body].map(toRow),
+          }
+        : {
+            queryFn: async () => ({ data: JSON.stringify(server.catalog[p.sport]) }),
+            toRows: (raw: string) => Object.values(JSON.parse(raw) as Record<string, Body>).map(toRow),
+            ...(over.native ? { native: { variant: 'all', binds: [p.sport] } } : {}),
+            fills: ['team'] as const,
+          };
     },
-    nativeShredSpec: over.native ? CATALOG_NATIVE : undefined,
+    nativeShredSpecs: over.native ? CATALOG_NATIVE : undefined,
     build: (cellar) => {
       const { cards } = cellar.defineCaches({
         cards: byEntity({ max: 64, fromRows: ([row]) => (row ? { id: row.player_id, team: row.team, height: row.height } : undefined) }),
@@ -214,12 +213,10 @@ function statStore() {
         args.gameId ? { request: 'game', gameId: args.gameId } : args.week ? { request: 'week', week: args.week } : null,
       toKey: (p: StatPartition) => (p.request === 'game' ? `game:${p.gameId}` : `week:${p.week}`),
     },
-    fetch: {
-      query: (p: StatPartition) => ({
-        queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }),
-      }),
-      toRows: (_p, raw) => JSON.parse(raw) as Stat[],
-    },
+    fetch: (p: StatPartition) => ({
+      queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }),
+      toRows: (raw) => JSON.parse(raw) as Stat[],
+    }),
     push: {
       idOf: (stat: Stat) => `${stat.game_id}_${stat.player_id}`,
       partitionsOf: (stat: Stat) => [{ request: 'week', week: stat.week } as StatPartition],

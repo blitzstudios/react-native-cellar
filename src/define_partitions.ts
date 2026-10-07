@@ -12,7 +12,7 @@
 import { cacheKey, cacheKeyOf } from './args_key';
 import { createFetchIngest, FetchIngest, RawQuery } from './write/fetch_ingest';
 import { createReadSurface, Read, ReadAcross, ReadAcrossDef, ReadDef, ReadyArgs } from './read/surface';
-import { RowShape, RowTable } from './table/types';
+import { RowShape, RowTable, SqlValue } from './table/types';
 import { createBoundedLru } from './caches';
 import { bindCaches, CacheFactory } from './cache_block';
 import { addressesPartition, VersionAtom } from './reactivity/version_atom';
@@ -85,46 +85,31 @@ export interface PartitionKeySpec<Row extends RowShape, Key, Args, Descriptor> {
 }
 
 /**
- * How a store fetches one partition: the request to make, and how the response becomes the partition's rows. A fetch
+ * How one partition is fetched and written: the request, and how its response becomes the partition's rows. A fetch
  * replaces the partition: afterwards the rows matching its {@linkcode PartitionKeySpec.where | where} are exactly the
- * response's rows. Omit it for a store fed only by socket pushes.
+ * response's rows.
+ *
+ * The request is a {@linkcode RawQuery}: {@linkcode RawQuery.queryFn | queryFn} makes it, sending the partition's
+ * stored ETag as `If-None-Match`, and a 304 keeps the rows as they are.
  */
-export interface PartitionFetchSpec<Row extends RowShape, Key, Descriptor> {
+export interface FetchPlan<Row extends RowShape, Key = string> extends RawQuery {
   /**
-   * Describes the request for one partition, without running it: returns a {@linkcode RawQuery} whose
-   * {@linkcode RawQuery.queryFn | queryFn} makes the request, and whose {@linkcode RawQuery.staleTime | staleTime} and
-   * {@linkcode RawQuery.cacheTime | cacheTime} are the partition's React Query timings. `etag` is the partition's
-   * stored ETag, if it has one; send it as `If-None-Match`, and a 304 response keeps the partition's rows as they are.
-   * `partition` is the partition's key, or its record for a store keyed with {@linkcode PartitionKeySpec.of | of} and
-   * {@linkcode PartitionKeySpec.id | id}.
+   * Turns the response body, as unparsed JSON text, into the partition's rows, in JS: on web, in tests, for a body
+   * with no {@linkcode FetchPlan.native | native} program, and when the native shred failed. Every row must match the
+   * partition's {@linkcode PartitionKeySpec.where | where}.
    */
-  query: (partition: Descriptor, etag?: string) => RawQuery;
+  toRows: (rawJson: string, key: Key) => readonly Row[];
   /**
-   * Turns a response body, as unparsed JSON text, into the partition's rows, in JS. The rows replace everything the
-   * partition held. It runs on web, in tests, and on a device whenever the native shred isn't used for this partition
-   * (no native program, {@linkcode PartitionFetchSpec.canShredNatively | canShredNatively} returns false, or the native
-   * shred failed). Every row must match the partition's {@linkcode PartitionKeySpec.where | where}.
+   * Which of the store's native programs writes the body in C++, without building JS objects for its rows, and the
+   * values its `bind` ops read from index 1 on (bind 0 is the partition's key). Leave it out for a body only
+   * {@linkcode FetchPlan.toRows | toRows} can read, such as one that is a single object rather than a list or a map.
    */
-  toRows: (partition: Descriptor, rawJson: string, key: Key) => readonly Row[];
+  native?: { variant: string; binds?: readonly SqlValue[] };
   /**
-   * Whether this partition's response can be written by the native C++ shredder instead of
-   * {@linkcode PartitionFetchSpec.toRows | toRows}; true by default. Return false for a partition whose body the store's
-   * native programs can't read, such as one that isn't a JSON array or object of elements.
+   * The columns the body fills, for one that fills only some, such as a catalog that leaves out what each item's own
+   * record carries: its rows keep the rest from whatever other partition wrote them. Every column by default.
    */
-  canShredNatively?: (partition: Descriptor) => boolean;
-  /**
-   * The columns this partition's body fills, for one that fills only some: its rows keep the rest from whatever other
-   * partition wrote them. Every column by default.
-   */
-  carries?: (partition: Descriptor) => ReadonlyArray<keyof Row & string> | undefined;
-  /**
-   * Called when a fetch of the partition starts, and returns a function Cellar calls when the fetch has finished.
-   * For a store that also receives socket pushes: hold the partition's pushes until the release is called. A fetch
-   * replaces the whole partition, so a push written while the request was in flight would otherwise be overwritten by
-   * the older response. Returns nothing when there are no pushes to hold, and the fetch then skips checking whether its
-   * body is the one it last wrote, which only a partition taking pushes needs.
-   */
-  holdWrites?: (key: Key) => (() => void) | undefined;
+  fills?: ReadonlyArray<keyof Row & string>;
 }
 
 /**
@@ -150,9 +135,18 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    */
   key: PartitionKeySpec<Row, Key, Args, Descriptor>;
   /**
-   * How a partition is fetched: its request, and how its response becomes rows. Omit it for a store fed only by pushes.
+   * How a partition is fetched: its request, and how its response becomes rows, given its record and stored ETag.
+   * Omit it for a store fed only by pushes.
    */
-  fetch?: PartitionFetchSpec<Row, Key, Descriptor>;
+  fetch?: (partition: Descriptor, etag?: string) => FetchPlan<Row, Key>;
+  /**
+   * Called when a fetch of the partition starts, and returns a function Cellar calls when the fetch has finished.
+   * For a store that also receives socket pushes: hold the partition's pushes until the release is called. A fetch
+   * replaces the whole partition, so a push written while the request was in flight would otherwise be overwritten by
+   * the older response. Returns nothing when there are no pushes to hold, and the fetch then skips checking whether its
+   * body is the one it last wrote, which only a partition taking pushes needs.
+   */
+  holdWrites?: (key: Key) => (() => void) | undefined;
   /**
    * Called after a write changes a partition's rows, with the partition's key, its new version, and the entities the
    * write changed (the entity ids whose rows were added, changed or removed). Not called for a write that changed
@@ -375,7 +369,7 @@ const NO_DESCRIPTORS: readonly never[] = Object.freeze([]);
  * such as every player in one league.
  *
  * From the config it builds one React Query query per partition that fetches the partition (sending its stored ETag,
- * and writing the response with the native shredder or {@linkcode PartitionFetchSpec.toRows | toRows}), and bumps the
+ * and writing the response with the native shredder or {@linkcode FetchPlan.toRows | toRows}), and bumps the
  * partition's version with the entities the write changed, which re-renders the readers of those entities. It returns
  * the functions that declare the store's reads and caches on those partitions, and the
  * {@linkcode Partitions.lifecycle | lifecycle} operations to publish. Call it from a store's
@@ -473,11 +467,10 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   const fetchedAt = createBoundedLru<number>(config.internMax ?? INTERN_MAX);
 
   /** Replaces the partition's rows, through the native shred where the body allows it and JS parsing otherwise. */
-  async function ingestRaw(key: Key, rawJson: string): Promise<WriteResult> {
-    const spec = fetchSpec as PartitionFetchSpec<Row, Key, Descriptor>;
-    const partition = describe(key);
-    const parse = (raw: string): Row[] => spec.toRows(partition, raw, key) as Row[];
-    const result = await table.shred(where(key), rawJson, parse, partition as object, spec.canShredNatively?.(partition) === false, spec.carries?.(partition));
+  async function ingestRaw(key: Key, rawJson: string, query: RawQuery): Promise<WriteResult> {
+    const plan = query as FetchPlan<Row, Key>;
+    const parse = (raw: string): Row[] => plan.toRows(raw, key) as Row[];
+    const result = await table.shred(where(key), rawJson, parse, plan.native, !plan.native, plan.fills);
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
     return result;
   }
@@ -487,12 +480,12 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
         ingestKeyRoot: `${name}_store_ingest`,
         version,
         toParts,
-        rawQuery: interned ? (key, etag) => fetchSpec.query(describe(key), etag) : (fetchSpec.query as unknown as (key: Key, etag?: string) => RawQuery),
+        rawQuery: interned ? (key, etag) => fetchSpec(describe(key), etag) : (fetchSpec as unknown as (key: Key, etag?: string) => RawQuery),
         getEtag: (key) => table.getMeta(where(key)),
         setEtag: (key, etag) => table.setMeta(where(key), etag),
         ingestRaw,
         bump,
-        holdWrites: fetchSpec.holdWrites,
+        holdWrites: config.holdWrites,
       })
     : undefined;
 

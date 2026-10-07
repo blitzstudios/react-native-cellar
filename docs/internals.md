@@ -67,11 +67,11 @@ store is reaching past its entry point; import it from its own module only if yo
     reads as a widening and the old values under the repointed column stay. Bumping this drops the ETags with the
     rows, which makes the next fetch a real one.
 
-  **The shred spec is part of the fingerprint, which is why `NativeShredSpec` holds a `specs` map keyed by
-  variant.** The fingerprint has to hash every spec a store can shred through, so the specs have to be
-  enumerable. If your spec varies — different columns per category, say — enumerate the variants and give
-  `variant(scope)` the job of picking one. Naming a variant that isn't in the map falls back to the JS parse path
-  rather than shredding through `undefined`.
+  **The shred specs are part of the fingerprint, which is why a store declares them as a map, `nativeShredSpecs`,
+  keyed by variant.** The fingerprint has to hash every spec a store can shred through, so the specs have to be
+  enumerable. If your spec varies — different columns per category, say — enumerate the variants, and have each
+  fetch plan's `native` name one. Naming a variant that isn't in the map falls back to the JS parse path rather than
+  shredding through `undefined`.
 - **Partitions** — **how a store's rows are divided into partitions it can fetch.** A store answers one question —
   *which args describe one partition?* — and Cellar derives the rest of the plumbing from the answer:
 
@@ -80,26 +80,26 @@ store is reaching past its entry point; import it from its own module only if yo
     name: 'my_store',
     schema: mySchema,
     partition: { fields: ['groupId', 'itemType'] },
-    fetch: {
-      query: (group: MyGroup, etag?: string) => buildMyRawQuery(group, etag),
-      toRows: (group, rawJson) => buildMyRows(group, JSON.parse(rawJson)),
-    },
+    fetch: (group: MyGroup, etag?: string) => ({
+      ...buildMyRawQuery(group, etag),
+      toRows: (rawJson) => buildMyRows(group, JSON.parse(rawJson)),
+    }),
     build: (cellar) => ({ reads: { … } }),
   });
   ```
 
-  The partition's **description** (`{ groupId, itemType }`) is what a fetch is made from; `fetch` and a native shred
-  spec's `variant` and `binds` are handed it. Its **key** is the string Cellar identifies it by, derived from the
+  The partition's **description** (`{ groupId, itemType }`) is what a fetch is made from: `fetch` is handed it, and
+  answers with everything about that request. Its **key** is the string Cellar identifies it by, derived from the
   description: one field's value as it is, several fields' values joined with `:` (`g1:regular`), each escaped only
   where it holds a `:` or `%` of its own, or
   `partition.toKey`'s answer for a description too big for that. Keys name partitions, and ids name entities.
 
-  The key locates the partition for every operation Cellar runs on the store's behalf, because every row carries it:
-  the table gets a `partition_key` column first, the primary key is led by it (a table with no primary key keeps
-  none), and an index covers it with the entity id. A replace (`overwrite`, `shred`) fills in each row's
-  `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0 and
-  deletes by it, so a store's programs bind their own values from 1. `upsert` fills nothing in, so a push's rows
-  carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
+  The key locates the partition for every operation Cellar runs on the store's behalf. A row is stored once, by its
+  primary key, which is its identity across every partition, so a store without one is refused; each partition keeps
+  the rows its fetch returned in a membership table, and the table a store reads by name is a view joining the two,
+  with `partition_key` as its first column. A replace (`overwrite`, `shred`) fills in each staged row's
+  `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0, so a
+  store's programs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
   `partition.fromArgs` turns a read's args into the description where they aren't the description itself — a
@@ -113,8 +113,9 @@ store is reaching past its entry point; import it from its own module only if yo
   `fetch` is the store's real fetch behaviour and nothing else: the request, and how a body becomes rows.
   Everything mechanical around it belongs here — trying the native shred, falling back to a JS parse and
   reporting the degradation when it can't run, holding the ETag, recording when rows landed, bumping, and holding the
-  partition's pushes while it is in flight. One optional member covers the case that varies: `canShredNatively` for a
-  body the native pass can't iterate. Leave `fetch` off entirely for a push-fed store.
+  partition's pushes while it is in flight. A plan names its native program, or leaves it out for a body the native
+  pass can't iterate, and names the columns it `fills` when it fills only some. Leave `fetch` off entirely for a
+  push-fed store.
 
   `push` sits beside it, for rows that arrive by socket: `idOf`, `toRows` and `partitionsOf`, and nothing about how
   they are written. `toRows` is handed the partition's description, so an item needn't carry what every row in the
@@ -343,7 +344,7 @@ export const initMyStore = () => bindSqliteStore('initMyStore', 'my.db', myStore
 
 Caching, reactivity and fetch orchestration are Cellar's; a store does not write its own.
 
-Two optional fields beyond those: `nativeShredSpec` for a native (simdjson) ingest shred, and `capabilities` for an
+Two optional fields beyond those: `nativeShredSpecs` for a native (simdjson) ingest shred, and `capabilities` for an
 accelerator that needs the live connection. Until a bind, a store runs over a connection that answers nothing, so
 every read returns its `empty`; that default is built on first read, so a platform that binds first never
 constructs one at all.
