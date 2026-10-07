@@ -159,8 +159,6 @@ export interface DerivedValuesContext<Row extends RowShape, Key, V, Partition = 
   filter: (key: Key) => Partial<Row>;
   /** The description of the partition a key names, which `fromRows` is handed. */
   partitionOf: (key: Key) => Partition;
-  /** Columns that hold one value across a partition's rows, which leave an entity no more rows than its id does. */
-  fixed?: readonly string[];
   memo: DerivedValueMemo<Key, V>;
   /** A partition key's parts, which identify the partition in the lists the cache keeps. */
   parts: (key: Key) => readonly string[];
@@ -200,23 +198,24 @@ export function createDerivedValues<Row extends RowShape, Key, V, Partition = un
   const listKeyOf = (key: Key, method: string, of: unknown): string => `${cacheKeyOf(parts(key))}${KEY_SEP}${method}${KEY_SEP}${stableKey(of)}`;
 
   /**
-   * Whether an entity has one row, which is what decides if a filtered read can share its view model with an unfiltered
-   * one. With one row per entity, a filter either includes the entity's row or not, so every read builds the same view
-   * model from it. With several, a filter can include some of an entity's rows — a traded player's games for one team —
-   * and the view model built from those is a different one, held under the filter. Worked out from the first key, since
-   * the partition's filter is a function of one; the same for every key of a store.
+   * Whether the partition holds one row per entity, which is what decides if a filtered read can share its view model
+   * with an unfiltered one. With one row per entity, a filter either includes the entity's row or not, so every read
+   * builds the same view model from it. With several, a filter can include some of an entity's rows — a traded player's
+   * games for one team — and the view model built from those is a different one, held under the filter. Asked of the
+   * rows, once per version of the partition.
    */
-  let singleRow: boolean | undefined;
+  const singleRow = createBoundedLru<{ version: number; value: boolean }>(LISTS_MAX);
   const isSingleRow = (key: Key): boolean => {
-    if (singleRow === undefined) {
-      const fixed = new Set([...Object.keys(filter(key)), ...(ctx.fixed ?? [])]);
-      const rest = table.primaryKey.filter((column) => !fixed.has(column));
-      singleRow = rest.length === 1 && rest[0] === idColumn;
-    }
-    return singleRow;
+    const at = version(key);
+    const id = cacheKeyOf(parts(key));
+    const held = singleRow.get(id);
+    if (held && held.version === at) return held.value;
+    const value = covered(() => table.oneRowPerEntity(filter(key)));
+    singleRow.set(id, { version: at, value });
+    return value;
   };
   const scopeOf = (key: Key, extra: Partial<Row> | undefined): string =>
-    !extra || isSingleRow(key) || !Object.keys(extra).length ? WHOLE_ENTITY : stableKey(extra);
+    !extra || !Object.keys(extra).length || isSingleRow(key) ? WHOLE_ENTITY : stableKey(extra);
 
   const warnOnThrash = (count: number): void => {
     if (!__DEV__ || thrashWarned.seen(store, name)) return;

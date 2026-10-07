@@ -213,7 +213,7 @@ describe('defineSqliteStore — the wiring', () => {
     const store = defineSqliteStore({
       name: 'things',
       schema,
-      partition: { fields: ['region'] },
+      partition: ({ region }: { region?: string }) => (region ? { region } : null),
       build: (cellar) => ({ reads: { all: () => cellar.table.find({}) }, lifecycle: { forget } }),
     });
     store.bindSqlite(brokenConn(/SELECT/));
@@ -230,7 +230,7 @@ describe('defineSqliteStore — the wiring', () => {
     const store = defineSqliteStore({
       name: 'things',
       schema,
-      partition: { fields: ['region'] },
+      partition: ({ region }: { region?: string }) => (region ? { region } : null),
       build: () => ({ reads: {} }),
       capabilities: (conn: SqliteConnection) => {
         capsConn = conn;

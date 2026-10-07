@@ -16,7 +16,6 @@ import { createSqliteRowTable } from './table/sqlite';
 import { nativeSpecOf, PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
 import { definePartitions } from './define_partitions';
 import type { FetchPlan, PartitionLifecycle, Partitions } from './define_partitions';
-import { isArgPresent } from './args_key';
 import { labelReads } from './read/surface';
 import type { CommonDef, Read } from './read/surface';
 import type { Loose, pairRead } from './read/facade';
@@ -63,36 +62,16 @@ export interface StoreSurface {
 }
 
 /**
- * How a read's args name a partition. A partition is the set of rows one fetch returns, and its description (the
- * `Partition`) is what the fetch is made from, such as `{ sport: 'nfl' }`. Its key is the description serialized
- * ({@linkcode partitionKeyOf}), the string Cellar identifies it by everywhere: its rows' membership, its ETag, its
- * version, and its request.
+ * Which partition a read's args name: the description of the partition the store's reads read, such as
+ * `{ sport: 'nfl' }` from `{ sport: 'nfl', playerId: '4046' }`. Args beyond it, such as the `playerId`, pick rows within
+ * the partition; a read that wants a different partition, such as one player's own, names it with its own `partition`.
  *
- * Most stores name {@linkcode PartitionSpec.fields | fields}: the args fields that are the description, such as
- * `['sport', 'season', 'seasonType']`. A store whose args need translating into a description names
- * {@linkcode PartitionSpec.fromArgs | fromArgs}. A description that holds a list holds it in one order, so that one
- * partition is never two keys.
+ * It gets the args as loosely as a screen holds them: return `null` or `undefined` until they are complete, and the
+ * read reads nothing and fetches nothing until then. A partition is the set of rows one fetch returns, and its key is
+ * its description serialized ({@linkcode partitionKeyOf}), so a description that holds a list holds it in one order.
+ * Returning the same object for the same args lets Cellar derive its key once.
  */
-export type PartitionSpec<Args, Partition> =
-  | {
-      /**
-       * The description's fields. A read's args carry them unless {@linkcode PartitionSpec.fromArgs | fromArgs} builds
-       * the description instead, and a read whose args are missing one of them (undefined, null or `''`) reads nothing
-       * and fetches nothing until it has a value. Those that are also columns hold one value across a partition's rows.
-       */
-      fields: readonly (keyof Partition & string)[];
-      /**
-       * Turns a read's args into the description of the partition to read, where the args are not the description
-       * itself, such as a sport that shares another sport's partition. It gets the args as loosely as a screen holds
-       * them: return `null` or `undefined` until they are complete, and the read reads nothing and fetches nothing
-       * until then. Returning the same object for the same args lets Cellar derive its key once.
-       */
-      fromArgs?: (args: Loose<Args>) => Partition | null | undefined;
-    }
-  | {
-      fields?: undefined;
-      fromArgs: (args: Loose<Args>) => Partition | null | undefined;
-    };
+export type PartitionSpec<Args, Partition> = (args: Loose<Args>) => Partition | null | undefined;
 
 /**
  * How a store fetches one partition: given its description and stored ETag, the {@linkcode FetchPlan} for its request
@@ -435,8 +414,6 @@ export function defineSqliteStore<
   const capabilitiesOf = (conn: SqliteConnection): Caps => (config.capabilities ? config.capabilities(conn) : ({} as Caps));
   const where = (key: string): Partial<StoredRow> => ({ [PARTITION_KEY_COLUMN]: key }) as Partial<StoredRow>;
   const nativeShredSpec = nativeSpecOf(config.nativeShredSpecs);
-  const { fields, fromArgs } = config.partition;
-  const partitionOfArgs = fromArgs ?? partitionFromFields<Args, Partition>(fields!);
   const keyOfPartition = partitionKeyOf as (partition: Partition) => string;
 
   /** Logs a write that changed a partition, for the inspector. Wired in development builds only. */
@@ -460,7 +437,7 @@ export function defineSqliteStore<
       table,
       version: atom,
       key: {
-        of: partitionOfArgs,
+        of: config.partition,
         id: keyOfPartition,
         from: (key) => {
           const record = table.getMetaRecord(where(key));
@@ -476,7 +453,6 @@ export function defineSqliteStore<
         if (table.getMetaRecord(rowsWhere) === undefined) table.setMeta(rowsWhere, table.getMeta(rowsWhere), JSON.stringify(partition));
       },
       ...(__DEV__ && { onChanged: recordWrite }),
-      fixedColumns: (fields ?? []).filter((field) => field in config.schema.columns),
     });
     table.onChangesElsewhere?.((changes) => notifyManager.batch(() => changes.forEach((entities, key) => partitions.bump(key, entities))));
     const surface = config.build({
@@ -759,19 +735,6 @@ export function defineSqliteStore<
         binding = { state: 'unbound', since: Date.now(), reopens: 0 };
       },
     },
-  };
-}
-
-/** The default {@linkcode PartitionSpec.fromArgs | fromArgs}: the args' own values of the fields, once all have one. */
-function partitionFromFields<Args, Partition>(fields: readonly string[]): (args: Loose<Args>) => Partition | null {
-  return (args) => {
-    const partition: Record<string, unknown> = {};
-    for (const field of fields) {
-      const value = (args as Record<string, unknown>)[field];
-      if (!isArgPresent(value)) return null;
-      partition[field] = value;
-    }
-    return partition as Partition;
   };
 }
 

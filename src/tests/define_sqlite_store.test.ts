@@ -39,7 +39,7 @@ function labelledStore() {
   const store = defineSqliteStore({
     name: 'test_store',
     schema,
-    partition: { fields: ['id'] },
+    partition: ({ id }: { id?: string }) => (id ? { id } : null),
     build: (cellar) => {
       builds += 1;
       const forget = jest.fn();

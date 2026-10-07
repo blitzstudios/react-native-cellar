@@ -61,10 +61,7 @@ function playerStore(over: { native?: boolean } = {}) {
   const store = defineSqliteStore({
     name: 'players_store',
     schema: PLAYERS,
-    partition: {
-      fields: ['sport'],
-      fromArgs: ({ sport }: { sport?: string }): PlayerPartition | null => (sport ? { sport } : null),
-    },
+    partition: ({ sport }: { sport?: string }): PlayerPartition | null => (sport ? { sport } : null),
     fetch: (p: PlayerPartition) => {
       type Body = { player_id: string; team: string; height?: string };
       const toRow = (one: Body) => ({ sport: p.sport, player_id: one.player_id, team: one.team ?? null, height: one.height ?? null });
@@ -207,10 +204,8 @@ function statStore() {
   const store = defineSqliteStore({
     name: 'stats_store',
     schema: STATS,
-    partition: {
-      fromArgs: (args: { week?: number; gameId?: string }): StatPartition | null =>
+    partition: (args: { week?: number; gameId?: string }): StatPartition | null =>
         args.gameId ? { request: 'game', gameId: args.gameId } : args.week ? { request: 'week', week: args.week } : null,
-    },
     fetch: (p: StatPartition) => ({
       query: { queryFn: async () => ({ data: JSON.stringify(p.request === 'week' ? weekBody : weekBody.filter((stat) => stat.game_id === p.gameId)) }) },
       toRows: (raw) => JSON.parse(raw) as Stat[],
@@ -262,7 +257,7 @@ describe('shared rows — the layout on disk', () => {
     conn.execute('CREATE TABLE players (partition_key TEXT NOT NULL, sport TEXT NOT NULL, player_id TEXT NOT NULL, PRIMARY KEY (partition_key, player_id));');
     conn.execute(`INSERT INTO players VALUES ('nfl', 'nfl', 'p1');`);
 
-    const store = defineSqliteStore({ name: 'players_store', schema: PLAYERS, partition: { fields: ['sport'] }, build: () => ({ reads: {} }) });
+    const store = defineSqliteStore({ name: 'players_store', schema: PLAYERS, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) });
     store.testing.over(conn);
 
     expect(readRows<{ type: string }>(conn, `SELECT type FROM sqlite_master WHERE name = 'players';`)[0].type).toBe('view');
@@ -271,7 +266,7 @@ describe('shared rows — the layout on disk', () => {
 
   it('refuses a table without a primary key, which has no identity to share rows by', () => {
     expect(() =>
-      defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, primaryKey: [] }, partition: { fields: ['sport'] }, build: () => ({ reads: {} }) }).testing.over(
+      defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, primaryKey: [] }, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(
         createSqlJsConnection({ capabilities: 'minimal' }),
       ),
     ).toThrow(/needs a primary key/);
@@ -294,7 +289,7 @@ describe('shared rows — the layout on disk', () => {
         entityId: 'player_id',
         newerBy: 'updated_at',
       } as StoreTableSchema<Line>,
-      partition: { fields: ['game_id'] },
+      partition: ({ game_id }: { game_id?: string }) => (game_id ? { game_id } : null),
       build: () => ({ reads: {} }),
     });
     const { table } = store.testing.over(conn);

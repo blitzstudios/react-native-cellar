@@ -16,6 +16,8 @@ installTestRuntime();
 type Game = { team: string; sport: string };
 type Season = { sport: string; season: string };
 
+const seasonOf = ({ sport, season }: { sport?: string | null; season?: string | null }): Season | null => (sport && season ? { sport, season } : null);
+
 const SCHEMA: StoreTableSchema<Game> = {
   table: 'games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true } },
@@ -43,7 +45,7 @@ function gameStore(
   const store = defineSqliteStore({
     name: 'games_store',
     schema: SCHEMA,
-    partition: { fields: ['sport', 'season'], fromArgs: over.fromArgs },
+    partition: over.fromArgs ?? seasonOf,
     fetch: (season: Season, etag?: string) => {
       queried.push(season);
       return {
@@ -132,7 +134,7 @@ describe('defineSqliteStore — caches', () => {
     const store = defineSqliteStore({
       name: 'described_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       fetch: (season: Season) => ({
         query: { queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]' }) },
         toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
@@ -163,7 +165,7 @@ describe('defineSqliteStore — pushes', () => {
     const store = defineSqliteStore({
       name: 'throwing_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       push: {
         idOf: (game: Game) => game.team,
         partitionsOf: (game: Game) => {
@@ -193,7 +195,7 @@ describe('defineSqliteStore — pushes', () => {
     const store = defineSqliteStore({
       name: 'described_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       push: {
         idOf: (team: string) => team,
         partitionsOf: () => [NFL_2025],
@@ -210,7 +212,7 @@ describe('defineSqliteStore — pushes', () => {
   });
 
   it('gives a store no push when it declares none', () => {
-    const store = defineSqliteStore({ name: 'fetched_store', schema: SCHEMA, partition: { fields: ['sport', 'season'] }, build: () => ({ reads: {} }) });
+    const store = defineSqliteStore({ name: 'fetched_store', schema: SCHEMA, partition: seasonOf, build: () => ({ reads: {} }) });
 
     expect(store.push).toBeUndefined();
     expect(Object.keys(store.testing.over(createSqlJsConnection()).surface)).not.toContain('push');
@@ -221,7 +223,7 @@ describe('defineSqliteStore — pushes', () => {
     const store = defineSqliteStore({
       name: 'held_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       fetch: (season: Season) => ({
         query: { queryFn: () => new Promise<{ data: string }>((resolve) => (respond = resolve)) },
         toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
@@ -252,7 +254,7 @@ describe('defineSqliteStore — pushes and ETags', () => {
     const store = defineSqliteStore({
       name: 'etag_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       fetch: (season: Season) => ({
         query: { queryFn: async () => ({ data: '[{"team":"a"}]', etag: 'W/"1"' }) },
         toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
@@ -287,7 +289,7 @@ describe('defineSqliteStore — pushes and ETags', () => {
     const store = defineSqliteStore({
       name: 'routed_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'] },
+      partition: seasonOf,
       fetch: (season: Season) => ({
         query: { queryFn: async () => ({ data: '[{"team":"a"}]' }) },
         toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),

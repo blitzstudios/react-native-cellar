@@ -6,6 +6,8 @@ import type { StoreTableSchema } from '../table/partitioned';
 type Game = { team: string; sport: string };
 type Season = { sport: string; season: number };
 
+const seasonOf = ({ sport, season }: { sport?: string | null; season?: number | null }): Season | null => (sport && season ? { sport, season } : null);
+
 const schema: StoreTableSchema<Game> = {
   table: 'games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT' } },
@@ -16,7 +18,7 @@ const schema: StoreTableSchema<Game> = {
 const pushed = defineSqliteStore({
   name: 'pushed',
   schema,
-  partition: { fields: ['sport', 'season'] },
+  partition: seasonOf,
   push: {
     idOf: (game: Game) => game.team,
     partitionsOf: (game: Game): Season[] => [{ sport: game.sport, season: 2025 }],
@@ -28,7 +30,7 @@ const pushed = defineSqliteStore({
 const fetched = defineSqliteStore({
   name: 'fetched',
   schema,
-  partition: { fields: ['sport', 'season'] },
+  partition: seasonOf,
   build: () => ({ reads: {} }),
 });
 
@@ -51,7 +53,7 @@ export const pushIsNotBuilt = () =>
   defineSqliteStore({
     name: 'built_push',
     schema,
-    partition: { fields: ['sport', 'season'] },
+    partition: seasonOf,
     // @ts-expect-error `build` returns no `push`
     build: () => ({ reads: {}, push: { ingest: () => {} } }),
   });

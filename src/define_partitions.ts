@@ -167,8 +167,6 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    * can keep the record somewhere {@linkcode PartitionKeySpec.from | from} can find it again.
    */
   remember?: (key: Key, descriptor: Descriptor) => void;
-  /** Columns that hold one value across a partition's rows, such as the `sport` a partition is named by. */
-  fixedColumns?: readonly string[];
 }
 
 /**
@@ -536,7 +534,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   return {
     defineRead: surface.read,
     defineReadAcross: readAcrossOf as Partitions<Row, Key, Args, Descriptor>['defineReadAcross'],
-    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where, partitionOf: describe, fixed: config.fixedColumns }),
+    defineCaches: (decls) => bindCaches(name, memoBinding, decls, { table, filter: where, partitionOf: describe }),
     where,
     keyOf,
     partitionOf: describe,

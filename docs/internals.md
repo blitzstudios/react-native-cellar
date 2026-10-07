@@ -79,7 +79,7 @@ store is reaching past its entry point; import it from its own module only if yo
   const myStore = defineSqliteStore({
     name: 'my_store',
     schema: mySchema,
-    partition: { fields: ['groupId', 'itemType'] },
+    partition: ({ groupId, itemType }: Loose<MyGroup>) => (groupId && itemType ? { groupId, itemType } : null),
     fetch: (group: MyGroup, etag?: string) => ({
       query: buildMyRawQuery(group, etag),
       toRows: (rawJson) => buildMyRows(group, JSON.parse(rawJson)),
@@ -101,12 +101,11 @@ store is reaching past its entry point; import it from its own module only if yo
   store's programs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
-  `partition.fromArgs` turns a read's args into the description where they aren't the description itself — a
-  sport that shares another sport's players, a locator a screen is still filling in. It may answer `null` for args
-  that name no partition, and such a read is off, primes nothing, and returns its `empty`, the same as a field that
-  has not arrived. Cellar keeps each description for the most recent `internMax` keys (512 by default), so a fetch
+  `partition` turns a read's args into the description of the partition the read reads — `{ groupId }` from
+  `{ groupId, itemId }`, a sport that shares another sport's players, a locator a screen is still filling in. It
+  answers `null` for args that name no partition yet, and such a read is off, primes nothing, and returns its `empty`. Cellar keeps each description for the most recent `internMax` keys (512 by default), so a fetch
   gets the description back from the key; one past that is read back from the side table. A store whose
-  `fromArgs` hands back the same object for the same args has its key derived once, through a `WeakMap`; in dev
+  `partition` hands back the same object for the same args has its key derived once, through a `WeakMap`; in dev
   that object is frozen, since a memoized key is only sound while the description holds still.
 
   `fetch` is the store's real fetch behaviour and nothing else: the request, and how a body becomes rows.
@@ -329,7 +328,7 @@ the unbound default and the recovery path in with the store's table, partitions 
 export const myStore = defineSqliteStore({
   name: 'my_store',
   schema: mySchema,
-  partition: { fields: ['groupId'] },
+  partition: ({ groupId }: Loose<ItemKey>) => (groupId ? { groupId } : null),
   fetch: myFetch,
   build: buildMyReads, // (cellar) => ({ reads, push?, lifecycle? })
 });

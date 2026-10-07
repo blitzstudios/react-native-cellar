@@ -107,14 +107,14 @@ and is indexed with the entity id, and a side table (`items_meta`) holding each 
 
 ### 2. Declare the store: its partitions and its reads
 
-`partition` names the args that describe one partition, here `groupId`, and Cellar derives the rest from them: the
-partition's key (the description serialized, here `groupId=g1`), what a fetch replaces, where the ETag
+`partition` turns a read's args into the partition it reads, here `{ groupId }`, or `null` until the args are
+complete, and Cellar derives the rest from that description: the partition's key (the description serialized, here `groupId=g1`), what a fetch replaces, where the ETag
 goes, what a write bumps. `fetch` gets the description. `build` declares the reads, which turn a partition's rows into
 whatever the screen actually wants, and the caches that hold what they build, with what its one argument, `cellar`,
 hands it.
 
 ```ts
-import { byPartition, defineSqliteStore } from '@sleeperhq/react-native-cellar';
+import { byPartition, defineSqliteStore, Loose } from '@sleeperhq/react-native-cellar';
 
 export type ItemKey = { groupId: string };
 export type ItemVM = { id: string; name: string };
@@ -125,7 +125,7 @@ const toVM = (row: ItemRow): ItemVM => ({ id: row.item_id, name: row.name ?? '' 
 export const itemStore = defineSqliteStore({
   name: 'item_store',
   schema: itemSchema,
-  partition: { fields: ['groupId'] },
+  partition: ({ groupId }: Loose<ItemKey>) => (groupId ? { groupId } : null),
   fetch: ({ groupId }: ItemKey, etag?: string) => ({
     query: {
       queryFn: async () => {
@@ -159,8 +159,8 @@ one of the store's caches: here, every caller of one group shares one list. `emp
 partition has rows, so it has to be a stable reference. The store's `lifecycle` (priming, fetching, refetching,
 forgetting) comes from Cellar; `build` returns only the reads, and any pushes or lifecycle functions of its own.
 
-The partition's type comes from `fetch`'s parameter, here `ItemKey`. A store whose args aren't the description
-itself gives `partition.fromArgs`, such as a sport that shares another sport's players. A read of several partitions at once, such as one
+The partition's type comes from what `partition` returns, here `ItemKey`. Args a read takes beyond the description,
+such as an item id, pick rows within the partition; a read that wants another partition names it with its own `partition`. A read of several partitions at once, such as one
 player's stats across several weeks, is a `defineReadAcross`, whose `partitions` names them from the args.
 
 Until it is bound, a store runs over a connection that answers nothing, so each read gives back its `empty`. Startup

@@ -287,6 +287,8 @@ export interface RowTable<Row extends RowShape> {
    * only for the ones they haven't built yet.
    */
   entityIdsWhere(where: Partial<Row>): string[];
+  /** Whether no two of the rows matching `where` share an entity id. */
+  oneRowPerEntity(where: Partial<Row>): boolean;
   /**
    * The ETag stored for the partition that `where` names (by the schema's
    * {@linkcode MetaDef.keyColumns | meta.keyColumns}), or `undefined` if none is stored or the schema declares no

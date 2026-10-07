@@ -567,6 +567,13 @@ export function createSqliteRowTable<Row extends RowShape>(
       return readRows<{ entity_id: SqlValue }>(conn, `SELECT DISTINCT ${schema.entityId} AS entity_id FROM ${schema.table}${sql};`, params).map((row) => String(row.entity_id));
     },
 
+    oneRowPerEntity(where: Partial<Row>): boolean {
+      noteTableRead();
+      const { sql, params } = whereClause(where);
+      const row = readRows<{ one: number }>(conn, `SELECT count(*) = count(DISTINCT ${schema.entityId}) AS one FROM ${schema.table}${sql};`, params)[0];
+      return !!row?.one;
+    },
+
     getMeta(where: Partial<Row>): string | undefined {
       const meta = schema.meta;
       if (!meta) return undefined;

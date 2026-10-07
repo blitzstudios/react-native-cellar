@@ -31,7 +31,7 @@ function gamesStore(name = 'inspected_games_store') {
   const store = defineSqliteStore({
     name,
     schema: SCHEMA,
-    partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+    partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
     build: (cellar) => {
       table = cellar.table;
       const put = (season: Season, games: Game[]): number => {
@@ -399,7 +399,7 @@ describe('the event log', () => {
     const store = defineSqliteStore({
       name: 'cached_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
       build: (cellar) => {
         const { teams } = cellar.defineCaches({ teams: byPartition<string[]>({ max: 4 }) });
         const put = (season: Season, games: Game[]) => {
@@ -429,7 +429,7 @@ describe('the event log', () => {
     const store = defineSqliteStore({
       name: 'heap_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
       build: (cellar) => {
         const { teams } = cellar.defineCaches({ teams: byPartition<{ names: string[] }>({ max: 4 }) });
         return {
@@ -466,7 +466,7 @@ describe('the event log', () => {
     const store = defineSqliteStore({
       name: 'shared_heap_store',
       schema: SCHEMA,
-      partition: { fields: ['sport', 'season'], fromArgs: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null) },
+      partition: (args: Loose<Season>) => (args.sport && args.season ? { sport: args.sport, season: args.season } : null),
       build: (cellar) => {
         const { ranking, rowById } = cellar.defineCaches({
           ranking: byPartition<Array<{ team: string; note: string }>>({ max: 2 }),

@@ -47,8 +47,6 @@ export interface EntityCacheSource<Row extends RowShape, Key, Partition = unknow
   filter: (key: Key) => Partial<Row>;
   /** The description of the partition a key names, which a {@linkcode byEntity} cache's `fromRows` is handed. */
   partitionOf: (key: Key) => Partition;
-  /** Columns that hold one value across a partition's rows. */
-  fixed?: readonly string[];
 }
 
 /**
@@ -75,7 +73,6 @@ export function bindCaches<Key, Row extends RowShape, D extends Record<string, C
           table: source.table,
           filter: source.filter,
           partitionOf: source.partitionOf,
-          fixed: source.fixed,
           memo,
           parts: binding.parts,
           version: binding.version,

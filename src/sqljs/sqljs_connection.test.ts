@@ -30,7 +30,7 @@ function itemStore() {
   return defineSqliteStore({
     name: 'items_store',
     schema,
-    partition: { fields: ['group_id'] },
+    partition: ({ group_id }: { group_id?: string }) => (group_id ? { group_id } : null),
     build: (cellar) => ({ reads: { group: (groupId: string) => cellar.rows(groupId, undefined, { orderBy: 'score' }).rows } }),
   });
 }

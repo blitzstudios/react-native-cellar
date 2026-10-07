@@ -66,7 +66,7 @@ type ItemsKey = { leagues: readonly string[]; id: string };
 export const itemStore = defineSqliteStore({
   name: 'item',
   schema,
-  partition: { fields: ['league'], fromArgs: (args: Loose<LeagueKey>) => (args.league ? { league: args.league } : null) },
+  partition: (args: Loose<LeagueKey>) => (args.league ? { league: args.league } : null),
   push: {
     idOf: (item: Item) => item.id,
     partitionsOf: (item: Item) => [{ league: item.team ?? '' }],
