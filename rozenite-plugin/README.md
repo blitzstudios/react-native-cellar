@@ -26,7 +26,7 @@ refetching a partition and clearing its ETag, which a store does on its own anyw
    `dependencies` and `devDependencies`):
 
    ```json
-   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.8-gitpkg"
+   "@sleeperhq/rozenite-plugin-cellar": "blitzstudios/react-native-cellar.git#rozenite-plugin-cellar-v1.0.12-gitpkg"
    ```
 
 3. The hook, once, near the app's root. A release build gets a hook that does nothing, and the rest of the plugin
