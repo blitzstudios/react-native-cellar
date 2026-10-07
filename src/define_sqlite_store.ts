@@ -74,14 +74,10 @@ export interface StoreSurface {
 export type PartitionSpec<Args, Partition> = (args: Loose<Args>) => Partition | null | undefined;
 
 /**
- * How a store fetches one partition: given its description and stored ETag, the {@linkcode FetchPlan} for its request
- * and its rows. A fetch replaces the partition: afterwards its rows are exactly the response's rows, each with its
- * `partition_key` filled in by Cellar. While it is in flight, the partition's pushes wait.
+ * A partition's {@linkcode FetchPlan}, given its description. A fetch replaces the partition's rows with the
+ * response's, and holds the partition's pushes while it is in flight.
  */
-export type StoreFetchSpec<Row extends RowShape, Partition> = (
-  partition: Partition,
-  etag?: string,
-) => FetchPlan<Row> | FetchPlan<Row & PartitionKeyColumn>;
+export type StoreFetchSpec<Row extends RowShape, Partition> = (partition: Partition) => FetchPlan<Row> | FetchPlan<Row & PartitionKeyColumn>;
 
 /**
  * How items pushed to a store from outside a fetch, such as a socket's, become rows: {@linkcode PushIngestConfig}, less

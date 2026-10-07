@@ -84,33 +84,21 @@ export interface PartitionKeySpec<Row extends RowShape, Key, Args, Descriptor> {
   where: (key: Key) => Partial<Row>;
 }
 
-/**
- * How one partition is fetched and written: the request, and how its response becomes the partition's rows. A fetch
- * replaces the partition: afterwards the rows matching its {@linkcode PartitionKeySpec.where | where} are exactly the
- * response's rows.
- */
+/** How one partition is fetched and written. A fetch replaces the partition's rows with the response's. */
 export interface FetchPlan<Row extends RowShape, Key = string> {
-  /**
-   * The request: {@linkcode RawQuery.queryFn | queryFn} makes it, sending the partition's stored ETag as
-   * `If-None-Match`, and a 304 keeps the rows as they are.
-   */
+  /** The request. Its `queryFn` gets the stored ETag to send as `If-None-Match`; a 304 keeps the rows. */
   query: RawQuery;
   /**
-   * Turns the response body, as unparsed JSON text, into the partition's rows, in JS: on web, in tests, for a body
-   * with no {@linkcode FetchPlan.native | native} program, and when the native shred failed. Every row must match the
-   * partition's {@linkcode PartitionKeySpec.where | where}.
+   * The body, as unparsed JSON text, to rows. Runs on web, in tests, without {@linkcode FetchPlan.native | native}, and
+   * when the native shred fails.
    */
   toRows: (rawJson: string, key: Key) => readonly Row[];
   /**
-   * Which of the store's native programs writes the body in C++, without building JS objects for its rows, and the
-   * values its `bind` ops read from index 1 on (bind 0 is the partition's key). Leave it out for a body only
-   * {@linkcode FetchPlan.toRows | toRows} can read, such as one that is a single object rather than a list or a map.
+   * The store's native program that shreds the body in C++, and its binds from index 1 (bind 0 is the partition key).
+   * Omit it for a body the shred can't iterate, such as a single object.
    */
   native?: { variant: string; binds?: readonly SqlValue[] };
-  /**
-   * The columns the body fills, for one that fills only some, such as a catalog that leaves out what each item's own
-   * record carries: its rows keep the rest from whatever other partition wrote them. Every column by default.
-   */
+  /** The columns the body fills, when it fills only some; the rest keep their stored values. Every column by default. */
   fills?: ReadonlyArray<keyof Row & string>;
 }
 
@@ -136,17 +124,11 @@ export interface PartitionsConfig<Row extends RowShape, Key, Args, Descriptor> {
    * ({@linkcode PartitionKeySpec.where | where}).
    */
   key: PartitionKeySpec<Row, Key, Args, Descriptor>;
+  /** The plan for a partition, given its record. Omit it for a store fed only by pushes. */
+  fetch?: (partition: Descriptor) => FetchPlan<Row, Key>;
   /**
-   * How a partition is fetched: its request, and how its response becomes rows, given its record and stored ETag.
-   * Omit it for a store fed only by pushes.
-   */
-  fetch?: (partition: Descriptor, etag?: string) => FetchPlan<Row, Key>;
-  /**
-   * Called when a fetch of the partition starts, and returns a function Cellar calls when the fetch has finished.
-   * For a store that also receives socket pushes: hold the partition's pushes until the release is called. A fetch
-   * replaces the whole partition, so a push written while the request was in flight would otherwise be overwritten by
-   * the older response. Returns nothing when there are no pushes to hold, and the fetch then skips checking whether its
-   * body is the one it last wrote, which only a partition taking pushes needs.
+   * Called when a fetch starts; returns the release Cellar calls when it finishes. Holds the partition's pushes in
+   * between, which the older response would otherwise overwrite. Return nothing when there are no pushes to hold.
    */
   holdWrites?: (key: Key) => (() => void) | undefined;
   /**
@@ -466,10 +448,10 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
   /** When each partition's rows last landed. Bounded, and a forgotten timestamp reads as never-fetched. */
   const fetchedAt = createBoundedLru<number>(config.internMax ?? INTERN_MAX);
 
-  /** The plan each request came from, so the write of its body knows how. */
+  /** Each request's plan, which writes its body. */
   const planOfQuery = new WeakMap<RawQuery, FetchPlan<Row, Key>>();
-  const queryFor = (key: Key, ...etag: [string?]): RawQuery => {
-    const plan = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor), ...etag);
+  const queryFor = (key: Key): RawQuery => {
+    const plan = fetchSpec!(interned ? describe(key) : (key as unknown as Descriptor));
     planOfQuery.set(plan.query, plan);
     return plan.query;
   };

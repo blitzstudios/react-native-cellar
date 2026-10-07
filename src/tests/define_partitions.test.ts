@@ -40,8 +40,8 @@ function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey,
   const changed: { key: EventKey; version: number }[] = [];
   const changedEntities: ChangeSet[] = [];
   const body = over.body ?? '["g1","g2"]';
-  // Typed loosely: the assertions below inspect the arity of each call, which a tuple type hides.
-  const query = jest.fn((..._args: unknown[]) => ({ queryFn: async () => ({ data: body, etag: 'W/"v1"' }) }));
+  const queryFn = jest.fn(async (_request: { etag?: string }) => ({ data: body, etag: 'W/"v1"' }));
+  const query = jest.fn((_partition: EventKey) => ({ queryFn }));
 
   const events = definePartitions<EventRow, EventKey>({
     name: 'events',
@@ -51,9 +51,9 @@ function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey,
       fields: ['region', 'year', 'itemType'],
       where: ({ region, year, itemType }) => ({ region, year, item_type: itemType }),
     },
-    fetch: (...args: [EventKey, string?]) => ({
-      query: query(...args),
-      toRows: (raw) => (over.toRows ?? defaultToRows)(args[0], raw),
+    fetch: (partition) => ({
+      query: query(partition),
+      toRows: (raw) => (over.toRows ?? defaultToRows)(partition, raw),
     }),
     onChanged: (key, version, changes) => {
       changed.push({ key, version });
@@ -62,7 +62,7 @@ function makeEvents(over: { table?: RowTable<EventRow>; toRows?: (key: EventKey,
     internMax: over.internMax,
   });
 
-  return { events, table, version, changed, changedEntities, query };
+  return { events, table, version, changed, changedEntities, query, queryFn };
 }
 
 beforeEach(() => {
@@ -86,10 +86,8 @@ describe('definePartitions — `key.where` is the one fact the rest is derived f
     await harness.events.lifecycle.fetch(US);
     await harness.events.lifecycle.fetch(US);
 
-    // `query` is also consulted for its staleTime with one argument; the fetching calls are the two-argument ones.
-    const etags = harness.query.mock.calls.filter((call) => call.length === 2).map((call) => call[1]);
-    expect(etags).toEqual([undefined, 'W/"v1"']);
-    harness.query.mock.calls.forEach((call) => expect(call[0]).toEqual(US));
+    expect(harness.queryFn.mock.calls.map(([request]) => request.etag)).toEqual([undefined, 'W/"v1"']);
+    harness.query.mock.calls.forEach(([partition]) => expect(partition).toEqual(US));
   });
 
   it('answers `has` from the same rows, so presence and ingest cannot disagree', async () => {
@@ -240,7 +238,7 @@ describe('definePartitions — the shred, and what happens when it cannot run', 
     await harness.events.lifecycle.fetch(US);
     const first = harness.events.lifecycle.getFetchedAt(US);
 
-    harness.query.mockReturnValue({ queryFn: async () => ({ __etagMatch: true } as unknown as { data: string; etag: string }) });
+    harness.queryFn.mockResolvedValue({ __etagMatch: true } as unknown as { data: string; etag: string });
     harness.events.lifecycle.invalidate(US);
     await harness.events.lifecycle.fetch(US);
 

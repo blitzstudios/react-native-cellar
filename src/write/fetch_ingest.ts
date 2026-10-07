@@ -41,8 +41,8 @@ const NOTIFY_ON_PRIME_STATE = ['isInitialLoading', 'isError'] as const;
 /** What a partition's request resolves to: the response body, its ETag, and whether the server answered 304. */
 export interface RawFetchResponse {
   /**
-   * The response body. Best as the unparsed JSON text (see {@linkcode RAW_TEXT_RESPONSE_TRANSFORM}), which the native
-   * shredder can write without building JS objects; a parsed body is turned back into text with `JSON.stringify` first.
+   * The response body. Best as the unparsed JSON text, which the native shredder writes without building JS objects;
+   * a parsed body is turned back into text with `JSON.stringify` first.
    */
   data?: unknown;
   /** The response's ETag header. It is stored for the partition and sent as `If-None-Match` on the next request. */
@@ -59,8 +59,11 @@ export interface RawFetchResponse {
  * returns it. Cellar runs it as the query function of the partition's React Query query, with these timings.
  */
 export interface RawQuery {
-  /** Makes the request, and resolves to the response body, its ETag, and whether the server answered 304. */
-  queryFn: () => Promise<RawFetchResponse | undefined>;
+  /**
+   * Makes the request, sending `etag`, the partition's stored ETag, as `If-None-Match`. Resolves to the response body,
+   * its ETag, and whether the server answered 304.
+   */
+  queryFn: (request: { etag?: string }) => Promise<RawFetchResponse | undefined>;
   /**
    * How long after a fetch the partition counts as fresh, in ms: a component mounting within that time uses the
    * stored rows without fetching again. Defaults to the app's React Query default.
@@ -88,8 +91,8 @@ export interface FetchIngestConfig<Key> {
   version: VersionAtom;
   /** A partition key's parts: its values as a list of strings, which make up the rest of its query key. */
   toParts: (key: Key) => readonly string[];
-  /** Describes the partition's request, sending `etag` as `If-None-Match` when the partition has one stored. */
-  rawQuery: (key: Key, etag?: string) => RawQuery;
+  /** Describes the partition's request. */
+  rawQuery: (key: Key) => RawQuery;
   /** The ETag stored for the partition, or `undefined`. */
   getEtag: (key: Key) => string | undefined;
   /** Stores the ETag of the partition's latest response, to send with its next request. */
@@ -113,13 +116,6 @@ export interface FetchIngestConfig<Key> {
    */
   holdWrites?: (key: Key) => (() => void) | undefined;
 }
-
-/**
- * An axios `transformResponse` that returns the response body unchanged, so it stays the unparsed JSON text. Pass it
- * in a partition's request: our axios (0.15.3) otherwise parses every string body as JSON, whatever `responseType`
- * says, and the native shredder needs the text.
- */
-export const RAW_TEXT_RESPONSE_TRANSFORM = [(data: unknown): unknown => data];
 
 function coerceRawJson(data: unknown): string | undefined {
   if (typeof data === 'string') return data;
@@ -394,8 +390,8 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     const parts = cfg.toParts(key);
     const etag = cfg.getEtag(key);
     const startedAt = Date.now();
-    const query = cfg.rawQuery(key, etag);
-    const res = await query.queryFn();
+    const query = cfg.rawQuery(key);
+    const res = await query.queryFn({ etag });
     const fetchedAt = Date.now();
     const recordTiming = (rows: number, chars: number | null): void => {
       const at = Date.now();

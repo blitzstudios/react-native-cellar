@@ -3,7 +3,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 
 import { installTestRuntime } from '../../testing/runtime';
 import { configureCellar, INERT_ERRORS, queryRuntime } from '../../runtime';
-import { createFetchIngest, FetchIngestConfig, RawFetchResponse, RAW_TEXT_RESPONSE_TRANSFORM } from '../../write/fetch_ingest';
+import { createFetchIngest, FetchIngestConfig, RawFetchResponse } from '../../write/fetch_ingest';
 import { resetOnceGuards } from '../../diagnostics/once_guard';
 import { VersionAtom } from '../../reactivity/version_atom';
 import { clearIngestTimings, getIngestTimings, rollupIngestTimings } from '../../diagnostics/ingest_timing';
@@ -47,7 +47,7 @@ function makeCfg(over: Partial<FetchIngestConfig<string>> = {}) {
   let queryResponse: RawFetchResponse | undefined = { data: '[]', etag: undefined };
   let queryReject: unknown;
 
-  const rawQueryFn = jest.fn(async (): Promise<RawFetchResponse | undefined> => {
+  const rawQueryFn = jest.fn(async (_request: { etag?: string }): Promise<RawFetchResponse | undefined> => {
     if (queryReject !== undefined) throw queryReject;
     return queryResponse;
   });
@@ -367,7 +367,7 @@ describe('createFetchIngest — 304 / etag short-circuit', () => {
     expect(out).toEqual({ version: 7, count: -1 });
   });
 
-  it('forwards the persisted etag into the raw query (conditional fetch)', async () => {
+  it('hands the persisted etag to the request (conditional fetch)', async () => {
     const harness = makeCfg();
     harness.state.etag = 'W/"abc"';
     harness.setResponse({ __etagMatch: true });
@@ -376,7 +376,7 @@ describe('createFetchIngest — 304 / etag short-circuit', () => {
     await ingest.prefetch('us');
 
     expect(harness.cfg.getEtag).toHaveBeenCalledWith('us');
-    expect(harness.cfg.rawQuery).toHaveBeenCalledWith('us', 'W/"abc"');
+    expect(harness.rawQueryFn).toHaveBeenCalledWith({ etag: 'W/"abc"' });
   });
 });
 
@@ -931,13 +931,5 @@ describe('forget', () => {
     createFetchIngest(harness.cfg).forget();
 
     expect(runtime.invalidateQueries).not.toHaveBeenCalled();
-  });
-});
-
-describe('RAW_TEXT_RESPONSE_TRANSFORM', () => {
-  it('is a single identity transform (keeps the raw body as text for the native shred)', () => {
-    expect(RAW_TEXT_RESPONSE_TRANSFORM).toHaveLength(1);
-    const body = '{"big":"payload"}';
-    expect(RAW_TEXT_RESPONSE_TRANSFORM[0](body)).toBe(body);
   });
 });

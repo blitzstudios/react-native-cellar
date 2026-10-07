@@ -33,7 +33,7 @@ describe('the core entry point', () => {
       'DerivedValues', 'DerivedValuesDef', 'EachOf', 'EntityCacheDeclaration', 'FetchPlan', 'Loose', 'MaybeId', 'NO_CHANGES',
       'NativeShredColumns', 'NativeShredSpec', 'PairedRead', 'PairedReadAcross', 'PartitionKeyColumn',
       'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'QueryClient',
-      'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RAW_TEXT_RESPONSE_TRANSFORM', 'RawQuery', 'ReadAcross', 'ReadGate',
+      'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RawQuery', 'ReadAcross', 'ReadGate',
       'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
       'ShredColumnsBase', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'SqliteStore', 'StoreFetchSpec',
       'StoreFunctions', 'StorePush', 'StorePushOf', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema',

@@ -49,7 +49,7 @@ function makeGames(over: { from?: boolean } = {}) {
         : undefined,
       where: (key) => ({ partition_key: key }),
     },
-    fetch: (partition, etag) => ({
+    fetch: (partition) => ({
       query: query(),
       toRows: (raw, key) => (JSON.parse(raw) as string[]).map((game_id) => ({ partition_key: key, game_id: `${partition.sport}-${game_id}` })),
     }),

@@ -46,10 +46,10 @@ function gameStore(
     name: 'games_store',
     schema: SCHEMA,
     partition: over.fromArgs ?? seasonOf,
-    fetch: (season: Season, etag?: string) => {
+    fetch: (season: Season) => {
       queried.push(season);
       return {
-        query: { queryFn: async () => ({ data: '[{"team":"a"},{"team":"b"}]', etag: etag ? undefined : 'W/"1"' }) },
+        query: { queryFn: async ({ etag }) => ({ data: '[{"team":"a"},{"team":"b"}]', etag: etag ? undefined : 'W/"1"' }) },
         toRows: (raw) => (JSON.parse(raw) as { team: string }[]).map(({ team }) => ({ team, sport: season.sport })),
         ...(over.native ? { native: { variant: 'all', binds: [season.sport] } } : {}),
       };
