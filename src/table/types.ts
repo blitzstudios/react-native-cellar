@@ -165,13 +165,23 @@ export interface RowTableSchema<Row extends RowShape> {
    */
   partitioned?: boolean;
   /**
-   * Stores one row per primary key, however many partitions hold it, for a store whose partitions overlap: a catalog
-   * and one item's detail, or a week and one of its games. The primary key is then the row's identity across the whole
-   * table, and has to say everything that tells two rows apart. Each partition keeps the identities its fetch returned,
-   * and the table a store reads is a view over both, so reads still filter on `partition_key`. A row changed through
-   * one partition wakes the readers of every partition holding it.
+   * Stores one row per identity, however many partitions hold it, for a store whose partitions overlap: a catalog and
+   * one item's detail, or a week and one of its games. The identity is the primary key, which is unique within a
+   * partition, together with {@linkcode SharedRows.across | across}, the columns that make it unique across the table.
+   * Each partition keeps the identities its fetch returned, and the table a store reads is a view over both, so reads
+   * still filter on `partition_key`. A row changed through one partition wakes the readers of every partition holding
+   * it.
    */
-  sharedRows?: boolean;
+  sharedRows?: SharedRows<Row>;
+}
+
+/** How a {@linkcode RowTableSchema.sharedRows | shared-rows} table tells one row from another across partitions. */
+export interface SharedRows<Row extends RowShape> {
+  /**
+   * The columns that, with the primary key, identify a row across every partition, such as `['sport']` for players
+   * whose ids are unique only within a sport. Leave it out where the primary key already is.
+   */
+  across?: ReadonlyArray<keyof Row & string>;
 }
 
 /**

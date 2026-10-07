@@ -21,7 +21,7 @@ export function sharedTableNames(table: string): { rows: string; members: string
 }
 
 export interface SharedRowsSql {
-  /** The identity columns: the declared primary key without `partition_key`. */
+  /** The identity columns: `across`, then the declared primary key without `partition_key`. */
   identity: readonly string[];
   /** Creates the rows and membership tables, the membership index, and the view. */
   create: (temporary: boolean) => string[];
@@ -47,7 +47,8 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   const removed = `temp.${table}__${path}_removed`;
 
   const all = columnNames(schema).filter((column) => column !== PARTITION_KEY_COLUMN);
-  const identity = (schema.primaryKey as readonly string[]).filter((column) => column !== PARTITION_KEY_COLUMN);
+  const own = (schema.primaryKey as readonly string[]).filter((column) => column !== PARTITION_KEY_COLUMN);
+  const identity = [...((schema.sharedRows?.across ?? []) as readonly string[]).filter((column) => !own.includes(column)), ...own];
   const rest = all.filter((column) => !identity.includes(column));
   const typeOf = (column: string): string => schema.columns[column as keyof Row].type;
 

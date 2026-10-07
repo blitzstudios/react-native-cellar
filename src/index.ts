@@ -36,7 +36,7 @@ export { byPartition, createBoundedLru, shallowEqualArray, shallowEqualRecord, s
 export { byEntity } from './read/derived_values';
 
 // The table a store's schema describes, and the rows it holds.
-export type { SqlValue, ColumnDef, RowTableSchema, RowTable } from './table/types';
+export type { SqlValue, ColumnDef, RowTableSchema, RowTable, SharedRows } from './table/types';
 export type { PartitionKeyColumn, StoreTableSchema } from './table/partitioned';
 export type { ChangeSet, WriteResult } from './table/change_set';
 export { ALL_ENTITIES, NO_CHANGES } from './table/change_set';

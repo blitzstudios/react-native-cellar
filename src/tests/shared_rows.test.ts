@@ -23,10 +23,10 @@ const PLAYERS: StoreTableSchema<Player> = {
     team: { type: 'TEXT' },
     height: { type: 'TEXT' },
   },
-  primaryKey: ['sport', 'player_id'],
+  primaryKey: ['player_id'],
   entityId: 'player_id',
   indexes: [{ name: 'idx_players_team', columns: ['partition_key', 'team'] }],
-  sharedRows: true,
+  sharedRows: { across: ['sport'] },
 };
 
 const CATALOG_NATIVE: NativeShredSpec<PlayerPartition> = {
@@ -199,7 +199,7 @@ const STATS: StoreTableSchema<Stat> = {
   },
   primaryKey: ['week', 'game_id', 'player_id'],
   entityId: 'player_id',
-  sharedRows: true,
+  sharedRows: {},
   pushFed: true,
 };
 
