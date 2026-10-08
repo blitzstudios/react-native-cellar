@@ -50,7 +50,7 @@ same engine compiled to WebAssembly, through `./sqljs`. Tests use sql.js too, th
 
 ```jsonc
 // package.json
-"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.3.16-gitpkg",
+"@sleeperhq/react-native-cellar": "blitzstudios/react-native-cellar.git#react-native-cellar-v1.3.17-gitpkg",
 // On device, the SQLite driver `./nitro` opens databases with, 1.1.5 or later. An app that runs Cellar only on the
 // web or in tests leaves it out.
 "react-native-nitro-sqlite": "blitzstudios/react-native-nitro-sqlite.git#react-native-nitro-sqlite-v1.1.5-gitpkg"
