@@ -89,7 +89,8 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   };
   /** When `column` is absent for `op`, as SQL over the staged row, mirroring `evalShredOp`; undefined for never. */
   const absentWhen = (column: string, op: ShredOp): string | undefined => {
-    const complete = 'complete' in op && op.complete !== undefined ? nothingAt(op.complete) : undefined;
+    if ('complete' in op && op.complete === true) return undefined;
+    const complete = 'complete' in op && typeof op.complete === 'string' ? nothingAt(op.complete) : undefined;
     switch (op.op) {
       case 'text':
       case 'int':

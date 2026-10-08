@@ -19,6 +19,7 @@ export { createTestVersionAtom } from './version_atom';
 export { testCache } from './caches';
 export { installTestRuntime } from './runtime';
 export { itDev } from './dev_mode';
+export { columnsLeftOut } from './columns_left_out';
 
 // Kernel internals with no caller in shipping code: a real version atom to bump by hand, the JS reading of a shred
 // spec to check the native one against, and the guard reset that keeps a once-per-process warning from carrying

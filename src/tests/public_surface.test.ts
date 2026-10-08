@@ -79,7 +79,7 @@ describe('the diagnostics entry point', () => {
 describe('the testing entry point', () => {
   it('exports the fixtures a store suite needs, including the internals no shipping code calls', () => {
     expect(exportedFrom('testing/index.ts')).toEqual([
-      'SqlJsCapabilities', 'SqlJsConnection', 'createSqlJsConnection', 'createStoreTable', 'createTestRowTable',
+      'SqlJsCapabilities', 'SqlJsConnection', 'columnsLeftOut', 'createSqlJsConnection', 'createStoreTable', 'createTestRowTable',
       'createTestRowTableWithConnection', 'createTestStoreTable', 'createTestStoreTableWithConnection',
       'createTestVersionAtom', 'createVersionAtom', 'evalShredElement', 'initSqlJs', 'installTestRuntime', 'itDev', 'resetOnceGuards', 'storeShredSpec', 'testCache',
     ]);

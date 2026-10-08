@@ -52,6 +52,12 @@ describe('evalShredElement — op semantics (the C++ shredder mirrors these exac
     expect(evalOne({ op: 'real0', path: 'metrics.pass_yd', complete: 'metrics' }, {})).toBeUndefined();
   });
 
+  it('complete: true makes the element itself complete, so a missing field is never absent', () => {
+    expect(evalOne({ op: 'text', path: 'injury_status', complete: true }, { injury_status: 'Out' })).toBe('Out');
+    expect(evalOne({ op: 'text', path: 'injury_status', complete: true }, {})).toBeNull();
+    expect(evalOne({ op: 'int', path: 'depth.order', complete: true }, {})).toBeNull();
+  });
+
   it('real0: COALESCE(Number(v), 0)', () => {
     expect(evalOne({ op: 'real0', path: 'metrics.pass_yd' }, { metrics: { pass_yd: 12 } })).toBe(12);
     expect(evalOne({ op: 'real0', path: 'metrics.pass_yd' }, {})).toBe(0);

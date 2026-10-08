@@ -38,8 +38,12 @@ export interface PathOpOptions {
    * `complete: 'stats'` on `path: 'stats.rec'`. While the object is there, a key missing from it reads as the op's value
    * for a missing field, so the write clears the column. While the object itself is missing, the column is absent, and
    * the write keeps the stored value.
+   *
+   * `true` names the element itself, for a field whose value changes and which some body that writes the row never
+   * sends, such as an injury status only a player's detail carries: every body without it clears it, where keeping it
+   * would leave the detail's value in place until the detail is fetched again.
    */
-  complete?: string;
+  complete?: string | true;
 }
 
 /**
@@ -55,7 +59,7 @@ export interface PathOpOptions {
  * clears it. So a body that leaves a field out, such as a list endpoint that sends a subset of a detail endpoint's
  * fields, never erases what another body stored. A `bind`, a `concat`, a `real0`, and a `coalesceText` with a fallback
  * always state their column. An op's {@linkcode PathOpOptions.complete | complete} names an object whose missing keys
- * mean null instead.
+ * mean null instead, or the element itself.
  *
  * Each column also has a {@linkcode ShredColumn.js | js} function, used when rows are built in JS (on web, in tests,
  * and whenever the native shred can't run). The op has to produce exactly what that function returns, including for a
@@ -319,6 +323,9 @@ function coalesce(element: unknown, paths: readonly string[]): unknown {
 /** A path op's value for a field its element doesn't have: absent, unless the op's `complete` object is there. */
 const missingField = (op: PathOpOptions, missing: SqlValue): SqlValue | undefined => (op.complete === undefined ? undefined : missing);
 
+/** The object a path op's `complete` names, unless it names the element itself, which is always there. */
+const completeObject = (op: ShredOp): string | undefined => ('complete' in op && typeof op.complete === 'string' ? op.complete : undefined);
+
 /**
  * What one op computes for one element, exactly as the C++ shredder does, with `undefined` for a column the element
  * leaves absent: the C++ stores NULL there, and Cellar reads the absence from the element's JSON. It is also how a
@@ -326,7 +333,8 @@ const missingField = (op: PathOpOptions, missing: SqlValue): SqlValue | undefine
  * disagree about that column.
  */
 export function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue | undefined {
-  if ('complete' in op && op.complete !== undefined && getPath(element, op.complete) === undefined) return undefined;
+  const complete = completeObject(op);
+  if (complete !== undefined && getPath(element, complete) === undefined) return undefined;
   switch (op.op) {
     case 'bind':
       return binds[op.index] ?? null;

@@ -366,7 +366,11 @@ response body.
 In a store's table, a write states only the columns a row has: a column a row leaves `undefined`, or a body leaves
 out, keeps the stored row's value, and an explicit `null` clears it. A list endpoint that sends a subset of a detail
 endpoint's fields, or a body without a nested block another body includes, never erases what the other stored. An op's
-`complete` names an object whose missing keys mean null, such as a stats map that leaves out zeros.
+`complete` names an object whose missing keys mean null, such as a stats map that leaves out zeros, or with `true` the
+element itself, for a field that changes and that some body writing the row never sends: keeping it would leave one
+fetch's value in place until that fetch runs again. `columnsLeftOut` (in `/testing`) lists every column one fetch
+states for a row and another leaves out for the same row, from the rows each fetch builds out of a recorded body, so a
+store's test can hold the list to the columns it keeps on purpose.
 
 On SQLite each write lands its rows in a staging table, and one transaction compares them with the table (every
 column, null-safe) and replaces the rows of each changed entity. A partition that holds nothing yet skips the stage:
