@@ -97,10 +97,42 @@ function assertDeleteWhereMatches(table: string, variant: string, spec: ShredSpe
   );
 }
 
-/** A shared-rows table's live schema as its view presents it: the rows table's columns behind `partition_key`. */
-function withPartitionColumn(live: LiveSchema): LiveSchema {
-  if (!live.columns.length) return live;
-  return { ...live, columns: [{ name: PARTITION_KEY_COLUMN, type: 'TEXT', notnull: 1 }, ...live.columns] };
+/**
+ * A shared-rows table's live schema as its view presents it: `partition_key`, the rows table's columns and the
+ * membership table's own, without the row ids that join them.
+ */
+function readSharedLiveSchema(conn: SqliteConnection, table: string): LiveSchema & { inMembers: ReadonlySet<string> } {
+  const { rows, members } = sharedTableNames(table);
+  const live = readLiveSchema(conn, rows);
+  if (!live.columns.length) return { ...live, inMembers: new Set() };
+  const internal = new Set(['rid', PARTITION_KEY_COLUMN]);
+  const own = (columns: LiveSchema['columns']) => columns.filter((column) => !internal.has(column.name));
+  const inMembers = own(readLiveSchema(conn, members).columns);
+  return {
+    ...live,
+    columns: [{ name: PARTITION_KEY_COLUMN, type: 'TEXT', notnull: 1 }, ...own(live.columns), ...inMembers],
+    inMembers: new Set(inMembers.map((column) => column.name)),
+  };
+}
+
+/** Refuses a `perPartition` column the membership table can't hold, or that a row's identity or index depends on. */
+function assertPerPartition<Row extends RowShape>(schema: RowTableSchema<Row>): void {
+  const scoped = (schema.perPartition ?? []) as readonly string[];
+  const indexed = new Set((schema.indexes ?? []).flatMap((index) => index.columns as readonly string[]));
+  for (const column of scoped) {
+    const why = !(column in schema.columns)
+      ? 'is not one of its columns'
+      : (schema.primaryKey as readonly string[]).includes(column)
+        ? 'is part of `uniqueBy`'
+        : column === schema.entityId || column === schema.newerBy
+          ? 'is its `entityId` or `newerBy`'
+          : indexed.has(column)
+            ? 'is in an index'
+            : schema.columns[column as keyof Row].notNull
+              ? 'is `NOT NULL`, which a partition the row is new to has no value for'
+              : undefined;
+    if (why) throw new Error(`row_table: \`${schema.table}\` can't keep \`${column}\` per partition: it ${why}.`);
+  }
 }
 
 /** Options for {@linkcode createSqliteRowTable}. */
@@ -144,6 +176,7 @@ export function createSqliteRowTable<Row extends RowShape>(
   if (schema.partitioned && schema.primaryKey.length <= 1) {
     throw new Error(`row_table: \`${schema.table}\` needs \`uniqueBy\`: the columns that make a row unique across the store's partitions.`);
   }
+  if (schema.partitioned) assertPerPartition(schema);
   const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
   const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
@@ -474,9 +507,13 @@ export function createSqliteRowTable<Row extends RowShape>(
         return;
       }
       const kind = readRows<{ type: string }>(conn, `SELECT type FROM sqlite_master WHERE name = ?;`, [schema.table])[0]?.type;
-      const live = shared && kind === 'view' ? withPartitionColumn(readLiveSchema(conn, indexTable)) : readLiveSchema(conn, schema.table);
+      const live = shared && kind === 'view' ? readSharedLiveSchema(conn, schema.table) : readLiveSchema(conn, schema.table);
       const layoutMoved = kind !== undefined && (kind === 'view') !== !!shared;
-      const plan = layoutMoved ? 'rebuild' : planSchemaMigration(schema, live, nativeShredSpec);
+      const scoped = new Set<string>((schema.perPartition ?? []) as readonly string[]);
+      const inMembers: ReadonlySet<string> = 'inMembers' in live ? (live as { inMembers: ReadonlySet<string> }).inMembers : new Set();
+      // A column stored per partition that is now shared, or the other way round, has no `ALTER TABLE` to move it.
+      const scopeMoved = live.columns.some((column) => column.name !== PARTITION_KEY_COLUMN && scoped.has(column.name) !== inMembers.has(column.name));
+      const plan = layoutMoved || (shared && kind === 'view' && scopeMoved) ? 'rebuild' : planSchemaMigration(schema, live, nativeShredSpec);
       if (plan === 'rebuild') {
         if (schema.pushFed) reportPushFedRebuild(schema.table);
         // Drops the table's indexes with it, which is how an index change gets applied.
@@ -487,7 +524,8 @@ export function createSqliteRowTable<Row extends RowShape>(
       }
       // A widening keeps every row, so this is the one migration that costs a user nothing.
       if (plan === 'extend') {
-        for (const column of addedColumns(schema, live.columns) ?? []) conn.execute(addColumnSql({ ...schema, table: indexTable }, column));
+        const tableOf = (column: string) => (shared && scoped.has(column) ? sharedTableNames(schema.table).members : indexTable);
+        for (const column of addedColumns(schema, live.columns) ?? []) conn.execute(addColumnSql({ ...schema, table: tableOf(column) }, column));
         // The view names its columns, so it is rebuilt over the widened rows.
         if (shared) conn.execute(`DROP VIEW IF EXISTS ${schema.table};`);
       }

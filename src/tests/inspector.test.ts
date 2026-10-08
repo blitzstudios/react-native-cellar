@@ -71,6 +71,7 @@ describe('the store list', () => {
         { name: 'score', type: 'INTEGER', notNull: false },
       ],
       uniqueBy: ['sport', 'team'],
+      perPartition: [],
       entityColumn: 'team',
       indexes: [
         { name: 'idx_inspected_games_entity', columns: ['team'] },

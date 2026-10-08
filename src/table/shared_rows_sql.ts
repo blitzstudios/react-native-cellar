@@ -57,7 +57,9 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
 
   const all = columnNames(schema).filter((column) => column !== PARTITION_KEY_COLUMN);
   const identity = (schema.primaryKey as readonly string[]).filter((column) => column !== PARTITION_KEY_COLUMN);
-  const rest = all.filter((column) => !identity.includes(column));
+  const scoped = (schema.perPartition ?? []) as readonly string[];
+  const stored = all.filter((column) => !scoped.includes(column));
+  const rest = stored.filter((column) => !identity.includes(column));
   const ids = identity.join(', ');
   const newerBy = schema.newerBy as string | undefined;
 
@@ -68,17 +70,19 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
 
   const create = (temporary: boolean): string[] => {
     const temp = temporary ? 'TEMP ' : '';
-    const cols = all.map((column) => {
-      const def = schema.columns[column as keyof Row];
-      return `${column} ${def.type}${def.notNull ? ' NOT NULL' : ''}`;
-    });
+    const defs = (columns: readonly string[]) =>
+      columns.map((column) => {
+        const def = schema.columns[column as keyof Row];
+        return `, ${column} ${def.type}${def.notNull ? ' NOT NULL' : ''}`;
+      });
     return [
-      `CREATE ${temp}TABLE IF NOT EXISTS ${R} (rid INTEGER PRIMARY KEY, ${cols.join(', ')});`,
+      `CREATE ${temp}TABLE IF NOT EXISTS ${R} (rid INTEGER PRIMARY KEY${defs(stored).join('')});`,
       `CREATE INDEX IF NOT EXISTS ${table}__rows_identity ON ${R} (${ids});`,
-      `CREATE ${temp}TABLE IF NOT EXISTS ${M} (${PARTITION_KEY_COLUMN} TEXT NOT NULL, rid INTEGER NOT NULL, PRIMARY KEY (${PARTITION_KEY_COLUMN}, rid)) WITHOUT ROWID;`,
+      `CREATE ${temp}TABLE IF NOT EXISTS ${M} (${PARTITION_KEY_COLUMN} TEXT NOT NULL, rid INTEGER NOT NULL${defs(scoped).join('')}, ` +
+        `PRIMARY KEY (${PARTITION_KEY_COLUMN}, rid)) WITHOUT ROWID;`,
       `CREATE INDEX IF NOT EXISTS ${table}__members_rid ON ${M} (rid);`,
-      `CREATE ${temp}VIEW IF NOT EXISTS ${table} AS SELECT m.${PARTITION_KEY_COLUMN} AS ${PARTITION_KEY_COLUMN}, ${all.map((c) => `r.${c} AS ${c}`).join(', ')} ` +
-        `FROM ${M} m JOIN ${R} r ON r.rid = m.rid;`,
+      `CREATE ${temp}VIEW IF NOT EXISTS ${table} AS SELECT m.${PARTITION_KEY_COLUMN} AS ${PARTITION_KEY_COLUMN}, ` +
+        `${all.map((c) => `${scoped.includes(c) ? 'm' : 'r'}.${c} AS ${c}`).join(', ')} FROM ${M} m JOIN ${R} r ON r.rid = m.rid;`,
     ];
   };
 
@@ -89,8 +93,7 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   };
   /** When `column` is absent for `op`, as SQL over the staged row, mirroring `evalShredOp`; undefined for never. */
   const absentWhen = (column: string, op: ShredOp): string | undefined => {
-    if ('complete' in op && op.complete === true) return undefined;
-    const complete = 'complete' in op && typeof op.complete === 'string' ? nothingAt(op.complete) : undefined;
+    const complete = 'complete' in op && op.complete !== undefined ? nothingAt(op.complete) : undefined;
     switch (op.op) {
       case 'text':
       case 'int':
@@ -114,7 +117,7 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     const byCondition = new Map<string, string[]>();
     spec.ops.forEach((op, index) => {
       const column = spec.columns[index];
-      if (!rest.includes(column)) return;
+      if (identity.includes(column) || !all.includes(column)) return;
       const when = absentWhen(column, op);
       if (when) byCondition.set(when, [...(byCondition.get(when) ?? []), column]);
     });
@@ -125,17 +128,26 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
 
   function diff(mode: WriteMode, where: Partial<RowShape>, id: number, absentSets: readonly string[]): BatchCommand[] {
     const key = where[PARTITION_KEY_COLUMN] ?? null;
-    const stored = (columns: readonly string[], also = '') =>
+    const storedRow = (columns: readonly string[], also = '') =>
       `(SELECT ${from('r', columns)} FROM ${R} r WHERE ${on('r', stageTable)}${also} LIMIT 1)`;
+    const membership = (columns: readonly string[]) =>
+      `(SELECT ${from('m', columns)} FROM ${M} m JOIN ${R} r ON r.rid = m.rid WHERE ${on('r', stageTable)} ` +
+      `AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN} LIMIT 1)`;
     const commands: BatchCommand[] = [[`INSERT INTO ${changes} (write_id, rows) SELECT ?, count(*) FROM ${stage};`, [id]]];
-    // One statement per set of absent columns, copying just those: a new row's subquery finds nothing, which is NULL.
+    // One statement per set of absent columns, copying just those: from the stored row, or for a scoped column from
+    // this partition's membership. A new row or membership finds nothing, which is NULL.
     for (const absent of absentSets) {
-      const columns = absent.split(',').filter((column) => rest.includes(column));
-      if (columns.length) commands.push([`UPDATE ${stage} SET (${columns.join(', ')}) = ${stored(columns)} WHERE ${ABSENT_COLUMN} = ?;`, [absent]]);
+      const listed = absent.split(',');
+      const fromRow = listed.filter((column) => rest.includes(column));
+      const fromMembership = listed.filter((column) => scoped.includes(column));
+      if (fromRow.length) commands.push([`UPDATE ${stage} SET (${fromRow.join(', ')}) = ${storedRow(fromRow)} WHERE ${ABSENT_COLUMN} = ?;`, [absent]]);
+      if (fromMembership.length) {
+        commands.push([`UPDATE ${stage} SET (${fromMembership.join(', ')}) = ${membership(fromMembership)} WHERE ${ABSENT_COLUMN} = ?;`, [absent]]);
+      }
     }
     if (newerBy && rest.length) {
       const older = ` AND r.${newerBy} > ${stageTable}.${newerBy}`;
-      commands.push([`UPDATE ${stage} SET (${rest.join(', ')}) = ${stored(rest, older)} WHERE EXISTS ${stored(rest, older)};`, []]);
+      commands.push([`UPDATE ${stage} SET (${rest.join(', ')}) = ${storedRow(rest, older)} WHERE EXISTS ${storedRow(rest, older)};`, []]);
     }
     commands.push(
       // New, or moved.
@@ -147,6 +159,14 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
         [id],
       ],
     );
+    if (scoped.length) {
+      // Held here already, with this partition's own values moved.
+      commands.push([
+        `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} ` +
+          `JOIN ${M} m ON m.rid = r.rid AND m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} WHERE ${tuple('m', scoped)} IS NOT ${tuple('s', scoped)};`,
+        [id],
+      ]);
+    }
     if (rest.length) {
       commands.push([
         `INSERT INTO ${elsewhere} (write_id, partition_key, entity_id) SELECT DISTINCT ?, m.${PARTITION_KEY_COLUMN}, s.${entityId} ` +
@@ -173,7 +193,7 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       ]);
     }
     commands.push([
-      `INSERT INTO ${R} (${all.join(', ')}) SELECT ${from('s', all)} FROM ${stage} s ` +
+      `INSERT INTO ${R} (${stored.join(', ')}) SELECT ${from('s', stored)} FROM ${stage} s ` +
         `WHERE NOT EXISTS (SELECT 1 FROM ${R} r WHERE ${on('r', 's')}) GROUP BY ${from('s', identity)};`,
       [],
     ]);
@@ -184,8 +204,16 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
         [`DELETE FROM ${removed};`, []],
       );
     }
+    const joined = `FROM ${stage} s JOIN ${R} r ON ${on('r', 's')}`;
     commands.push(
-      [`INSERT OR IGNORE INTO ${M} (${PARTITION_KEY_COLUMN}, rid) SELECT s.${PARTITION_KEY_COLUMN}, r.rid FROM ${stage} s JOIN ${R} r ON ${on('r', 's')};`, []],
+      scoped.length
+        ? [
+            `INSERT INTO ${M} (${PARTITION_KEY_COLUMN}, rid, ${scoped.join(', ')}) SELECT s.${PARTITION_KEY_COLUMN}, r.rid, ${from('s', scoped)} ${joined} WHERE 1 ` +
+              `ON CONFLICT (${PARTITION_KEY_COLUMN}, rid) DO UPDATE SET ${scoped.map((c) => `${c} = excluded.${c}`).join(', ')} ` +
+              `WHERE ${tuple(M, scoped)} IS NOT ${tuple('excluded', scoped)};`,
+            [],
+          ]
+        : [`INSERT OR IGNORE INTO ${M} (${PARTITION_KEY_COLUMN}, rid) SELECT s.${PARTITION_KEY_COLUMN}, r.rid ${joined};`, []],
       [`DELETE FROM ${stage};`, []],
     );
     return commands;

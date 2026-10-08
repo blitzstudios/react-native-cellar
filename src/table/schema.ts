@@ -93,8 +93,10 @@ function shredStructureFingerprint(nativeShredSpec?: NativeShredSpec): string {
 
 /** The column list's contribution to a stamp, in declaration order, which is the order an `INSERT` binds them in. */
 function columnsCanonical<Row extends RowShape>(schema: RowTableSchema<Row>): string {
+  // A per-partition column is marked, so moving one between the tables moves the stamp; adding one only widens.
+  const scoped = new Set<string>((schema.perPartition ?? []) as readonly string[]);
   return columnNames(schema)
-    .map((column) => `${column}:${schema.columns[column].type}:${schema.columns[column].notNull ? 1 : 0}`)
+    .map((column) => `${column}:${schema.columns[column].type}:${schema.columns[column].notNull ? 1 : 0}${scoped.has(column) ? ':p' : ''}`)
     .join('|');
 }
 

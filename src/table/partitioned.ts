@@ -38,6 +38,15 @@ export type StoreTableSchema<Row extends RowShape> = Omit<RowTableSchema<Row>, '
    * and a change to one copy doesn't reach the readers of the other.
    */
   uniqueBy: ReadonlyArray<keyof Row & string>;
+  /**
+   * The columns each partition keeps its own value of, stored with its membership in `<table>__members` rather than
+   * once in `<table>__rows`. Use it for a field one fetch owns and others never send, whose value changes, such as an
+   * injury status only a player's detail carries: the detail's partition shows it and the catalog's keeps its own, and
+   * neither write touches the other's. Also for a value that depends on the partition, such as a team per competition.
+   * A change to one bumps only its partition. It can't be part of `uniqueBy`, an index, `entityId` or `newerBy`, or
+   * `NOT NULL`.
+   */
+  perPartition?: ReadonlyArray<keyof Row & string>;
 };
 
 const PARTITION_KEY_DEF: ColumnDef = { type: 'TEXT', notNull: true };

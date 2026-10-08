@@ -35,6 +35,8 @@ export interface InspectedSchema {
   columns: InspectedColumn[];
   /** The columns that make a row unique across the store's partitions. */
   uniqueBy: string[];
+  /** The columns each partition keeps its own value of, with its membership. */
+  perPartition: string[];
   /** The column holding each row's entity id. */
   entityColumn: string;
   /** The table's secondary indexes. */
@@ -335,6 +337,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       metaTable: meta.table,
       columns: Object.entries(schema.columns).map(([name, def]) => ({ name, type: def.type, notNull: !!def.notNull })),
       uniqueBy: schema.primaryKey.filter((column) => column !== PARTITION_KEY_COLUMN),
+      perPartition: [...((schema.perPartition ?? []) as string[])],
       entityColumn: schema.entityId,
       indexes: (schema.indexes ?? []).map((index) => ({ name: index.name, columns: index.columns.map(String) })),
       reads: source.running()?.reads ?? [],

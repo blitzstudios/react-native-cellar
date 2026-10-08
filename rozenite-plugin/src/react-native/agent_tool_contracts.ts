@@ -25,7 +25,7 @@ export const cellarAgentTools = {
   describeStore: {
     name: 'describe-store',
     description:
-      "Describe one store's table as declared: columns (partition_key first), the columns that make a row unique (uniqueBy), entity column, indexes, the store's read names, and where it runs. Use it before writing a query.",
+      "Describe one store's table as declared: columns (partition_key first), the columns that make a row unique (uniqueBy), the columns each partition keeps its own value of (perPartition), entity column, indexes, the store's read names, and where it runs. Use it before writing a query.",
     inputSchema: { type: 'object', properties: { store: STORE }, required: ['store'] },
     readOnly: true,
     idempotent: true,

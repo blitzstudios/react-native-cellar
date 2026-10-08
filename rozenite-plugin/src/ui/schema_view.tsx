@@ -46,7 +46,8 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
           <h4>Storage</h4>
           <p className="muted small">
             <code>{schema.table}</code> is a view. Each row is stored once in <code>{rowsTable}</code>, however many partitions hold it, and{' '}
-            <code>{membersTable}</code> lists which partitions hold which rows. The view joins the two: one row per partition holding a row.
+            <code>{membersTable}</code> lists which partitions hold which rows, with the columns each partition keeps its own value of. The view joins the two:
+            one row per partition holding a row.
           </p>
           <table className="table">
             <tbody>
@@ -94,6 +95,16 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
           </dd>
           <dt>Unique by</dt>
           <dd className="chips">{schema.uniqueBy.length ? schema.uniqueBy.map((column) => <code key={column}>{column}</code>) : <span className="muted">none</span>}</dd>
+          {schema.perPartition?.length ? (
+            <>
+              <dt>Per partition</dt>
+              <dd className="chips">
+                {schema.perPartition.map((column) => (
+                  <code key={column}>{column}</code>
+                ))}
+              </dd>
+            </>
+          ) : null}
           <dt>Writes rows</dt>
           <dd>{schema.nativeShred ? 'native shredder' : 'JS'}</dd>
           <dt>Database</dt>
@@ -130,6 +141,7 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
                     {uniquePosition >= 0 ? <span className="tag">unique {uniquePosition + 1}</span> : null}
                     {column.name === schema.entityColumn ? <span className="tag">entity</span> : null}
                     {indexed.has(column.name) ? <span className="tag tag-muted">indexed</span> : null}
+                    {schema.perPartition?.includes(column.name) ? <span className="tag tag-muted">per partition</span> : null}
                   </td>
                 </tr>
               );

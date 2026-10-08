@@ -12,6 +12,15 @@ describe('columnsLeftOut', () => {
     ).toEqual(['height']);
   });
 
+  it('leaves out a per-partition column, which no two partitions share', () => {
+    expect(
+      columnsLeftOut(
+        { uniqueBy: ['id'], perPartition: ['injury'] },
+        { catalog: [{ id: 'a', injury: undefined }], detail: [{ id: 'a', injury: 'Out' }] },
+      ),
+    ).toEqual([]);
+  });
+
   it('leaves out a column absent only from rows no other fetch states it for', () => {
     expect(
       columnsLeftOut(SCHEMA, {

@@ -439,3 +439,187 @@ describe('shared rows — a push that leaves fields out', () => {
     expect(stored()).toEqual([{ week: 4, player_id: 'a', position: 'QB', pts: 25, updated_at: 101 }]);
   });
 });
+
+type Scoped = { sport: string; player_id: string; team: string | null; height: string | null; injury: string | null };
+type ScopedBody = { player_id: string; team?: string | null; height?: string; injury?: string | null };
+
+const SCOPED: StoreTableSchema<Scoped> = {
+  table: 'scoped',
+  columns: {
+    sport: { type: 'TEXT', notNull: true },
+    player_id: { type: 'TEXT', notNull: true },
+    team: { type: 'TEXT' },
+    height: { type: 'TEXT' },
+    injury: { type: 'TEXT' },
+  },
+  uniqueBy: ['sport', 'player_id'],
+  entityId: 'player_id',
+  perPartition: ['injury'],
+};
+
+const SCOPED_NATIVE: Record<string, ShredSpec> = {
+  all: {
+    version: 1,
+    table: 'scoped',
+    insertVerb: 'INSERT OR REPLACE',
+    source: 'objectValues',
+    columns: ['sport', 'player_id', 'team', 'height', 'injury'],
+    ops: [
+      { op: 'bind', index: 1 },
+      { op: 'text', path: 'player_id' },
+      { op: 'text', path: 'team' },
+      { op: 'text', path: 'height' },
+      { op: 'text', path: 'injury' },
+    ],
+  },
+};
+
+function scopedStore(over: { native?: boolean } = {}) {
+  const server: { catalog: Record<string, ScopedBody>; detail: ScopedBody } = {
+    catalog: { p1: { player_id: 'p1', team: 'SF' }, p2: { player_id: 'p2', team: 'KC' } },
+    detail: { player_id: 'p1', team: 'SF', height: '72', injury: 'Out' },
+  };
+  const store = defineSqliteStore({
+    name: 'scoped_store',
+    schema: SCOPED,
+    partition: ({ sport, playerId }: { sport?: string; playerId?: string }): PlayerPartition | null =>
+      sport && playerId ? { request: 'player', sport, playerId } : sport ? { sport } : null,
+    fetch: (p: PlayerPartition) => {
+      const toRow = (one: ScopedBody) => ({ sport: p.sport, player_id: one.player_id, team: one.team, height: one.height, injury: one.injury }) as Scoped;
+      return p.request === 'player'
+        ? { query: { queryFn: async () => ({ data: JSON.stringify(server.detail) }) }, toRows: (raw: string) => [toRow(JSON.parse(raw) as ScopedBody)] }
+        : {
+            query: { queryFn: async () => ({ data: JSON.stringify(server.catalog) }) },
+            toRows: (raw: string) => Object.values(JSON.parse(raw) as Record<string, ScopedBody>).map(toRow),
+            ...(over.native ? { native: { variant: 'all', binds: [p.sport] } } : {}),
+          };
+    },
+    nativeShredSpecs: over.native ? SCOPED_NATIVE : undefined,
+    build: (cellar) => {
+      const { cards } = cellar.defineCaches({
+        cards: byEntity({ max: 64, fromRows: ([row]) => (row ? { team: row.team, height: row.height, injury: row.injury } : undefined) }),
+      });
+      return {
+        reads: {
+          Card: cellar.defineRead<PlayerArgs, { team: string | null; height: string | null; injury: string | null } | undefined>({
+            partition: ({ sport }) => cellar.keyOf({ sport }),
+            select: (args, key) => cards.at(key, args.playerId),
+            empty: undefined,
+          }),
+          Detail: cellar.defineRead<PlayerArgs, { team: string | null; height: string | null; injury: string | null } | undefined>({
+            partition: ({ sport, playerId }) => cellar.keyOf({ request: 'player', sport, playerId }),
+            select: (args, key) => cards.at(key, args.playerId),
+            empty: undefined,
+          }),
+        },
+      };
+    },
+  });
+  const conn = createSqlJsConnection({ capabilities: over.native ? 'full' : 'minimal' });
+  const { surface } = store.testing.over(conn);
+  const fetchCatalog = () => surface.lifecycle.fetch({ sport: 'nfl' } as never, { staleTime: 0 });
+  const fetchDetail = () => surface.lifecycle.fetch({ sport: 'nfl', playerId: 'p1' } as never, { staleTime: 0 });
+  return { surface, conn, server, fetchCatalog, fetchDetail };
+}
+
+describe.each([
+  ['in JS', {}],
+  ['natively', { native: true }],
+])('per-partition columns, written %s', (_path, over) => {
+  it('shows the detail’s value through the detail’s partition only, and shares the rest of the row', async () => {
+    const { surface, fetchCatalog, fetchDetail } = scopedStore(over);
+    await fetchCatalog();
+    surface.reads.Detail.getValue(P1);
+    await fetchDetail();
+
+    expect(surface.reads.Detail.getValue(P1)).toEqual({ team: 'SF', height: '72', injury: 'Out' });
+    expect(surface.reads.Card.getValue(P1)).toEqual({ team: 'SF', height: '72', injury: null });
+  });
+
+  it('keeps the detail’s value through a catalog refetch, which moves the shared columns for both', async () => {
+    const { surface, server, fetchCatalog, fetchDetail } = scopedStore(over);
+    await fetchCatalog();
+    surface.reads.Detail.getValue(P1);
+    await fetchDetail();
+    server.catalog.p1 = { player_id: 'p1', team: 'LV', injury: null };
+    await fetchCatalog();
+
+    expect(surface.reads.Detail.getValue(P1)).toEqual({ team: 'LV', height: '72', injury: 'Out' });
+    expect(surface.reads.Card.getValue(P1)).toEqual({ team: 'LV', height: '72', injury: null });
+  });
+
+  it('keeps a partition’s own value when its next body leaves the field out', async () => {
+    const { surface, server, fetchCatalog, fetchDetail } = scopedStore(over);
+    await fetchCatalog();
+    surface.reads.Detail.getValue(P1);
+    await fetchDetail();
+    server.detail = { player_id: 'p1', team: 'SF', height: '72' };
+    await fetchDetail();
+
+    expect(surface.reads.Detail.getValue(P1)?.injury).toBe('Out');
+  });
+});
+
+describe('per-partition columns — reactivity, layout and declaration', () => {
+  it('wakes the detail’s reader when its own value changes, and not the catalog’s', async () => {
+    const { surface, server, fetchCatalog, fetchDetail } = scopedStore();
+    await fetchCatalog();
+    surface.reads.Detail.getValue(P1);
+    await fetchDetail();
+    const detail = jest.fn();
+    const card = jest.fn();
+    for (const dep of runTracked(() => surface.reads.Detail.getValue(P1)).deps) dep.subscribe(detail);
+    for (const dep of runTracked(() => surface.reads.Card.getValue(P1)).deps) dep.subscribe(card);
+
+    server.detail = { ...server.detail, injury: 'Questionable' };
+    await fetchDetail();
+
+    expect(detail).toHaveBeenCalled();
+    expect(card).not.toHaveBeenCalled();
+    expect(surface.reads.Detail.getValue(P1)?.injury).toBe('Questionable');
+  });
+
+  it('stores the per-partition column with the membership, and the rest once', async () => {
+    const { conn, surface, fetchCatalog, fetchDetail } = scopedStore();
+    await fetchCatalog();
+    surface.reads.Detail.getValue(P1);
+    await fetchDetail();
+
+    expect(readRows(conn, 'SELECT player_id, team, height FROM scoped__rows ORDER BY player_id;')).toEqual([
+      { player_id: 'p1', team: 'SF', height: '72' },
+      { player_id: 'p2', team: 'KC', height: null },
+    ]);
+    expect(readRows(conn, 'SELECT partition_key, injury FROM scoped__members WHERE injury IS NOT NULL;')).toEqual([
+      { partition_key: 'playerId=p1&request=player&sport=nfl', injury: 'Out' },
+    ]);
+  });
+
+  it('widens a shared-rows table in place, a shared column and a per-partition one alike', () => {
+    const conn = createSqlJsConnection({ capabilities: 'minimal' });
+    const define = (schema: StoreTableSchema<Scoped & { extra?: string | null; extra_scoped?: string | null }>) =>
+      defineSqliteStore({ name: 'scoped_store', schema, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) });
+    define(SCOPED as never).testing.over(conn).table.overwrite({ partition_key: 'sport=nfl' }, [{ sport: 'nfl', player_id: 'p1', team: 'SF', height: null, injury: 'Out' }] as never);
+
+    define({
+      ...SCOPED,
+      columns: { ...SCOPED.columns, extra: { type: 'TEXT' }, extra_scoped: { type: 'TEXT' } },
+      perPartition: ['injury', 'extra_scoped'],
+    } as never).testing.over(conn);
+
+    expect(readRows(conn, 'SELECT player_id, team, injury, extra, extra_scoped FROM scoped;')).toEqual([
+      { player_id: 'p1', team: 'SF', injury: 'Out', extra: null, extra_scoped: null },
+    ]);
+  });
+
+  it.each([
+    ['part of `uniqueBy`', { perPartition: ['player_id'] }, /is part of `uniqueBy`/],
+    ['in an index', { perPartition: ['injury'], indexes: [{ name: 'idx_scoped_injury', columns: ['injury'] }] }, /is in an index/],
+    ['`NOT NULL`', { perPartition: ['injury'], columns: { ...SCOPED.columns, injury: { type: 'TEXT', notNull: true } } }, /is `NOT NULL`/],
+  ])('refuses a per-partition column that is %s', (_why, change, message) => {
+    expect(() =>
+      defineSqliteStore({ name: 'scoped_store', schema: { ...SCOPED, ...change } as never, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(
+        createSqlJsConnection({ capabilities: 'minimal' }),
+      ),
+    ).toThrow(message);
+  });
+});

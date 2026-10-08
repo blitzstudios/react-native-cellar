@@ -169,6 +169,12 @@ export interface RowTableSchema<Row extends RowShape> {
    * copy whose value here is lower. Without one, the last write wins.
    */
   newerBy?: keyof Row & string;
+  /**
+   * The columns each partition keeps its own value of, rather than sharing one with every partition holding the row:
+   * a field one fetch owns, which the others would otherwise see, or one whose value depends on the partition. Set
+   * through a store's schema; a plain table ignores it.
+   */
+  perPartition?: ReadonlyArray<keyof Row & string>;
 }
 
 /**

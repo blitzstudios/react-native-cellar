@@ -109,6 +109,12 @@ store is reaching past its entry point; import it from its own module only if yo
   new row, so a body that sends a subset of another's fields, or leaves out a nested block, never erases what that other
   body stored. A `complete` object, such as a stats map that leaves out zeros, states every key it lacks as null.
 
+  A `perPartition` column lives on the membership, `(partition_key, rid, …)` in `<table>__members`, and the view reads
+  it from there. A write fills one a row leaves absent from this partition's own membership rather than the stored row,
+  records an entity change when this partition's values moved, and upserts the membership, rewriting only the entries
+  whose values did. Its change bumps only its partition. A column's scope is part of the column stamp, so adding a
+  per-partition column widens `<table>__members` in place, while moving a column between the tables rebuilds.
+
   The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
