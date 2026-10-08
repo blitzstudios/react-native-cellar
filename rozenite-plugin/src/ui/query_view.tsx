@@ -35,10 +35,24 @@ function snippetsFor(store: StoreOverview): Snippet[] {
   const { table, metaTable, entityColumn } = store.schema;
   const t = quoteName(table);
   const master = store.summary.binding.state === 'memory' ? 'sqlite_temp_master' : 'sqlite_master';
+  const rows = quoteName(`${table}__rows`);
+  const members = quoteName(`${table}__members`);
+  const stored: Snippet[] =
+    store.summary.storedRows === undefined
+      ? []
+      : [
+          { label: 'Stored rows, each once', sql: `SELECT *\nFROM ${rows}\nLIMIT 100` },
+          { label: 'Which partitions hold which rows', sql: `SELECT *\nFROM ${members}\nORDER BY rid\nLIMIT 100` },
+          {
+            label: 'Rows held by more than one partition',
+            sql: `SELECT r.*, COUNT(*) AS partitions\nFROM ${members} m\nJOIN ${rows} r ON r.rid = m.rid\nGROUP BY m.rid\nHAVING COUNT(*) > 1\nORDER BY partitions DESC\nLIMIT 100`,
+          },
+        ];
   return [
     { label: 'Rows in one partition', sql: `SELECT *\nFROM ${t}\nWHERE partition_key = ?`, params: '[""]' },
     { label: 'Rows per partition', sql: `SELECT partition_key, COUNT(*) AS rows, COUNT(DISTINCT ${quoteName(entityColumn)}) AS entities\nFROM ${t}\nGROUP BY partition_key\nORDER BY rows DESC` },
     { label: `One ${entityColumn} across partitions`, sql: `SELECT *\nFROM ${t}\nWHERE ${quoteName(entityColumn)} = ?\nORDER BY partition_key`, params: '[""]' },
+    ...stored,
     { label: 'ETags and descriptions', sql: `SELECT *\nFROM ${quoteName(metaTable)}\nORDER BY partition_key` },
     {
       label: 'Table and index definitions',

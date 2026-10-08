@@ -182,7 +182,11 @@ export default function CellarPanel() {
               <h2>{shortStoreName(store.name)}</h2>
               {mode === 'live' ? <StateBadge state={store.summary.binding.state} /> : null}
               <span className="muted">
-                <code>{store.schema.table}</code> · {formatCount(store.summary.rows)} rows · {formatCount(store.summary.partitions)} partitions
+                <code>{store.schema.table}</code> ·{' '}
+                {store.summary.storedRows === undefined
+                  ? `${formatCount(store.summary.rows)} rows`
+                  : `${formatCount(store.summary.storedRows)} rows stored · ${formatCount(store.summary.rows)} in partitions`}{' '}
+                · {formatCount(store.summary.partitions)} partitions
                 {store.summary.databaseBytes !== undefined ? ` · ${formatBytes(store.summary.databaseBytes)} on disk` : ''}
                 {store.summary.caches?.count ? ` · ${heapLabel(store.summary.caches.heapBytes)} cache heap` : ''}
               </span>
@@ -215,7 +219,7 @@ export default function CellarPanel() {
               ) : tab === 'caches' ? (
                 <CachesView rpc={rpc} store={store} />
               ) : (
-                <SchemaView rpc={rpc} store={store} />
+                <SchemaView rpc={rpc} store={store} onQuery={(sql) => openQuery(store, sql, '')} />
               )}
             </div>
           </div>

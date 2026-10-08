@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { StoreOverview } from '../shared/protocol';
 import { ErrorBanner } from './components';
-import { formatAgo } from './format';
+import { formatAgo, formatCount, quoteName } from './format';
 import { errorMessage, useNow } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
-/** A store's table as declared, where it runs, and the SQL SQLite holds for it. */
-export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: StoreOverview }) {
+/** A store's table as declared, how its rows are stored, where it runs, and the SQL SQLite holds for it. */
+export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; store: StoreOverview; onQuery: (sql: string) => void }) {
   const { schema, summary } = store;
+  const rowsTable = `${schema.table}__rows`;
+  const membersTable = `${schema.table}__members`;
+  const queryButton = (name: string) => (
+    <button type="button" className="button button-small" onClick={() => onQuery(`SELECT *\nFROM ${quoteName(name)}\nLIMIT 100`)}>
+      Query
+    </button>
+  );
   const [definitions, setDefinitions] = useState<Array<{ type: string; name: string; sql: string | null }>>();
   const [error, setError] = useState<string>();
   const now = useNow(5000);
@@ -34,6 +41,43 @@ export function SchemaView({ rpc, store }: { rpc: CellarRpc | null; store: Store
 
   return (
     <div className="schema-view">
+      {summary.storedRows === undefined ? null : (
+        <section>
+          <h4>Storage</h4>
+          <p className="muted small">
+            <code>{schema.table}</code> is a view. Each row is stored once in <code>{rowsTable}</code>, however many partitions hold it, and{' '}
+            <code>{membersTable}</code> lists which partitions hold which rows. The view joins the two: one row per partition holding a row.
+          </p>
+          <table className="table">
+            <tbody>
+              <tr>
+                <td>
+                  <code>{rowsTable}</code>
+                </td>
+                <td>table</td>
+                <td className="num">{formatCount(summary.storedRows)} rows</td>
+                <td className="actions">{queryButton(rowsTable)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>{membersTable}</code>
+                </td>
+                <td>table</td>
+                <td className="num">{formatCount(summary.rows)} memberships</td>
+                <td className="actions">{queryButton(membersTable)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>{schema.table}</code>
+                </td>
+                <td>view</td>
+                <td className="num">{formatCount(summary.rows)} rows</td>
+                <td className="actions">{queryButton(schema.table)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      )}
       <section className="facts">
         <dl>
           <dt>Table</dt>
