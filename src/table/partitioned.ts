@@ -21,7 +21,13 @@ export type PartitionKeyColumn = { partition_key: string };
  * makes a row unique, and the indexes on that table. {@linkcode defineSqliteStore} adds the rest: the membership
  * table, the view under `table` with each row's `partition_key`, an index on `entityId`, and the ETag table.
  */
-export type StoreTableSchema<Row extends RowShape> = Omit<RowTableSchema<Row>, 'meta' | 'partitioned' | 'primaryKey'> & {
+export type StoreTableSchema<Row extends RowShape> = Omit<RowTableSchema<Row>, 'table' | 'meta' | 'partitioned' | 'primaryKey'> & {
+  /**
+   * The store's name in SQLite, such as `players`. It names the view that reads and store SQL query, `players`, and
+   * the tables under it: `players__rows`, holding each row once; `players__members`, naming each partition's rows; and
+   * `players_meta`, holding each partition's ETag. Renaming it starts the store over with new, empty tables.
+   */
+  table: string;
   /**
    * The columns whose values together make a row unique across the store, such as `['sport', 'player_id']`: two rows
    * with the same values are the same row, stored once, whichever fetches or pushes bring it and however many
