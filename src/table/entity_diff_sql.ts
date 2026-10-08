@@ -62,6 +62,8 @@ export interface EntityDiffSql {
   clear: BatchCommand;
   /** Inserts rows into the stage, chunked to stay under the bind limit. */
   stageRows: (rows: readonly RowShape[]) => BatchCommand[];
+  /** The distinct sets of absent columns among `rows`, as {@linkcode ABSENT_COLUMN} spells them. */
+  absentSets: (rows: readonly RowShape[]) => string[];
   /** The same chunked insert into any table with these columns: the main table, for a write with nothing to diff. */
   insertInto: (target: string, rows: readonly RowShape[]) => BatchCommand[];
   /** Compares the stage with the main table, records the changed entities, rewrites them, and empties the stage. */
@@ -190,6 +192,15 @@ export function entityDiffSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     ],
     clear: [`DELETE FROM ${stage};`, []],
     stageRows,
+    absentSets: (rows) => {
+      if (!tracksAbsence) return [];
+      const sets = new Set<string>();
+      for (const row of rows) {
+        const absent = absentOf(row);
+        if (absent) sets.add(absent);
+      }
+      return [...sets];
+    },
     insertInto,
     diff: (mode, where, id) => {
       if (mode === 'merge' && !keyed) throw new Error(`row_table: \`${table}\` has no primary key, so a merge has nothing to match rows on.`);

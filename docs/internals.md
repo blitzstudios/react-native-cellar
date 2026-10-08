@@ -104,8 +104,9 @@ store is reaching past its entry point; import it from its own module only if yo
   stage records in a hidden `__absent` column; the native shred can't tell a missing field from a JSON `null`, so it
   stages each element's JSON beside its row (`__element`, the C++'s `rawJson` op), and one statement reads the absent
   columns out of it with `json_type`, which answers SQL NULL for a missing path and `'null'` for a JSON null, by the
-  same rules as `evalShredOp`. Before the diff, each absent column takes the stored row's value, or NULL for a new
-  row, so a body that sends a subset of another's fields, or leaves out a nested block, never erases what that other
+  same rules as `evalShredOp`, which `absent_parity.test.ts` holds it to for every op. Before the diff, each distinct
+  set of absent columns takes the stored row's values in one statement that copies just those columns, or NULL for a
+  new row, so a body that sends a subset of another's fields, or leaves out a nested block, never erases what that other
   body stored. A `complete` object, such as a stats map that leaves out zeros, states every key it lacks as null.
 
   The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as

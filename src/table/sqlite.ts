@@ -147,8 +147,8 @@ export function createSqliteRowTable<Row extends RowShape>(
   const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
   const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
-  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number) =>
-    sharedSql ? sharedSql.diff(mode, where, writeId) : diff.diff(mode, where, writeId);
+  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number, absentSets: readonly string[]) =>
+    sharedSql ? sharedSql.diff(mode, where, writeId, absentSets) : diff.diff(mode, where, writeId);
 
   /**
    * Async writes run one at a time. Each stages its rows and then diffs the stage in a second step, and the native
@@ -317,6 +317,14 @@ export function createSqliteRowTable<Row extends RowShape>(
     return read;
   };
 
+  /** The stage's distinct sets of absent columns, read on the writer, the one handle that sees the `TEMP` stage. */
+  async function stagedAbsentSets(sharedSql: SharedRowsSql): Promise<string[]> {
+    const result = conn.executeAsync ? await conn.executeAsync(sharedSql.absentSets) : conn.execute(sharedSql.absentSets);
+    const rows = (result.rows?._array ?? []) as Array<{ absent: string }>;
+    result.dispose?.();
+    return rows.map((row) => row.absent);
+  }
+
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
   async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[]): Promise<WriteResult> {
     const writeId = nextWriteId();
@@ -324,7 +332,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       ...ensureFor(asyncDiff, shared?.async),
       asyncDiff.clear,
       ...asyncDiff.stageRows(rows),
-      ...diffFor(asyncDiff, shared?.async, mode, where, writeId),
+      ...diffFor(asyncDiff, shared?.async, mode, where, writeId, asyncDiff.absentSets(rows)),
     ]);
     return readBack(asyncDiff, writeId, shared?.async);
   }
@@ -392,8 +400,12 @@ export function createSqliteRowTable<Row extends RowShape>(
           await runBatchAsync(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
           const writeId = nextWriteId();
-          const absent = shared ? [absentFromElementsFor(shared.async, variant, spec)] : [];
-          await runBatchAsync(conn, [...absent, ...diffFor(asyncDiff, shared?.async, 'replace', where, writeId)]);
+          let absentSets: string[] = [];
+          if (shared) {
+            await runBatchAsync(conn, [absentFromElementsFor(shared.async, variant, spec)]);
+            absentSets = await stagedAbsentSets(shared.async);
+          }
+          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, absentSets));
           result = readBack(asyncDiff, writeId, shared?.async);
         }
         presence.afterDelete(where);
@@ -530,7 +542,7 @@ export function createSqliteRowTable<Row extends RowShape>(
         ...ensureFor(syncDiff, shared?.sync),
         syncDiff.clear,
         ...syncDiff.stageRows(rows),
-        ...diffFor(syncDiff, shared?.sync, 'replace', where, writeId),
+        ...diffFor(syncDiff, shared?.sync, 'replace', where, writeId, syncDiff.absentSets(rows)),
       ]);
       const result = readBack(syncDiff, writeId, shared?.sync);
       presence.afterDelete(where);
