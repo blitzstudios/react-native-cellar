@@ -115,7 +115,7 @@ export function PartitionsView({
                 {mode === 'live' ? <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" /> : null}
                 <th>ETag</th>
                 {mode === 'live' ? <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} /> : null}
-                <th />
+                <th className="actions-pinned" />
               </tr>
             </thead>
             <tbody>
@@ -124,8 +124,14 @@ export function PartitionsView({
                 return (
                   <Fragment key={partition.key}>
                     <tr className={open ? 'row-open' : undefined}>
-                      <td>
-                        <button type="button" className="disclosure" onClick={() => setExpanded(open ? undefined : partition.key)} aria-expanded={open}>
+                      <td className="partition-key">
+                        <button
+                          type="button"
+                          className="disclosure"
+                          onClick={() => setExpanded(open ? undefined : partition.key)}
+                          aria-expanded={open}
+                          title={partition.key}
+                        >
                           <span className="disclosure-mark">{open ? '▾' : '▸'}</span>
                           <code>{partition.key}</code>
                         </button>
@@ -141,7 +147,7 @@ export function PartitionsView({
                           {partition.fetchedAt ? formatAgo(partition.fetchedAt, now) : <span className="muted">not this session</span>}
                         </td>
                       ) : null}
-                      <td className="actions">
+                      <td className="actions actions-pinned">
                         <button type="button" className="button button-small" onClick={() => onQueryPartition(partition.key)} title="Query this partition's rows">
                           Rows
                         </button>

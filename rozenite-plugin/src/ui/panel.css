@@ -580,7 +580,39 @@ textarea:focus {
   color: var(--muted);
 }
 
-.row-open {
+/* The key column takes the width the other columns leave, and truncates within it. */
+.partition-key {
+  width: 100%;
+  max-width: 0;
+}
+
+.partition-key .disclosure {
+  display: flex;
+  max-width: 100%;
+}
+
+.partition-key code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actions-pinned {
+  position: sticky;
+  right: 0;
+  background: var(--bg);
+}
+
+.table th.actions-pinned {
+  z-index: 2;
+  background: var(--bg-soft);
+}
+
+tr:hover > .actions-pinned {
+  background: var(--bg-hover);
+}
+
+.row-open,
+.row-open > .actions-pinned {
   background: var(--bg-soft);
 }
 
