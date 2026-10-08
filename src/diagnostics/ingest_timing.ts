@@ -1,6 +1,7 @@
 /** Timings of the most recent partition fetches, each split into network time and write time. */
 
 import { recordInspectorEvent } from '../inspector/events';
+import type { WriteSteps } from '../table/change_set';
 
 const CAPACITY = 128;
 
@@ -20,6 +21,8 @@ export interface IngestTiming {
   rows: number;
   /** When the write finished, as a `Date.now()` timestamp. */
   at: number;
+  /** Where the write's time went, for a body that was written. */
+  steps?: WriteSteps;
 }
 
 /** One store's totals over the recorded fetches, which show where a session's fetch and write time went. */

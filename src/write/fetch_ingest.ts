@@ -18,7 +18,7 @@ import { createBoundedLru } from '../caches';
 import { renderPhaseOwnerStack } from '../reactivity/render_phase';
 import { queryRuntime } from '../runtime';
 import type { QueryRuntime } from '../runtime';
-import { ChangeSet, isUnchanged, WriteResult } from '../table/change_set';
+import { ChangeSet, isUnchanged, WriteResult, WriteSteps } from '../table/change_set';
 import type { PartitionFetch, Partitions, PartitionsConfig, definePartitions } from '../define_partitions';
 import type { DataResult } from '../store_result';
 import type { IngestTiming } from '../diagnostics/ingest_timing';
@@ -384,7 +384,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     const query = cfg.rawQuery(key);
     const res = await query.queryFn({ etag });
     const fetchedAt = Date.now();
-    const recordTiming = (rows: number, chars: number | null): void => {
+    const recordTiming = (rows: number, chars: number | null, steps?: WriteSteps): void => {
       const at = Date.now();
       const partition = partitionLabel(parts);
       recordIngestTiming({
@@ -395,6 +395,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
         chars,
         rows,
         at,
+        ...(steps ? { steps } : {}),
       });
       // A 304 and an unchanged body report negative rows and shredded nothing, so neither is a prime worth flagging.
       if (rows > 0) reportOversizedPrime(cfg.ingestKeyRoot, partition, rows, chars, wantedWhole.has(partition), primeCallers?.get(partition));
@@ -426,8 +427,8 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
       return { version: cfg.version.get(parts), count: ROWS_UNCHANGED };
     }
 
-    const { changes, rows } = await cfg.ingestRaw(key, rawJson, query);
-    recordTiming(rows, rawJson.length);
+    const { changes, rows, steps } = await cfg.ingestRaw(key, rawJson, query);
+    recordTiming(rows, rawJson.length, steps);
     if (identified) {
       if (ingestedBodies.size >= FINGERPRINT_CAPACITY) ingestedBodies.clear();
       ingestedBodies.set(partitionId, identified.body);

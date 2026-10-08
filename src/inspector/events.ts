@@ -4,6 +4,8 @@
  * build; a release build records nothing and keeps no log.
  */
 
+import type { WriteSteps } from '../table/change_set';
+
 /**
  * Where a store's rows are: its own database (a file on a device, sql.js on web), the in-memory database it falls back
  * to, or nowhere, with every read empty.
@@ -71,6 +73,8 @@ export interface InspectorFetchEvent extends EventBase {
   chars: number | null;
   /** How many rows were written: `-1` for a 304, `-2` for a body identical to the last one. */
   rows: number;
+  /** Where the write's time went, for a body that was written. */
+  steps?: WriteSteps;
 }
 
 /** A store reporting that it lost a benefit it should have had, or an expected event worth knowing about. */

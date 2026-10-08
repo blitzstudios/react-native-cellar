@@ -6,7 +6,7 @@ import { createPresence, whereMapKey } from './presence';
 import { noteTableRead } from './read_coverage';
 import { columnNames, FindOpts, IndexDef, ReplaceRow, RowShape, RowTable, RowTableSchema, SqlValue } from './types';
 import { assertRowsMatchWhere, assertEntityIdColumn, comparator, whereClause } from './query';
-import { ALL_ENTITIES, NO_CHANGES, unionChanges, WriteResult } from './change_set';
+import { ALL_ENTITIES, NO_CHANGES, unionChanges, WriteResult, WriteSteps } from './change_set';
 import { ELEMENT_JSON_COLUMN, stageNames, entityDiffSql, EntityDiffSql, WriteMode } from './entity_diff_sql';
 import { sharedRowsSql, SharedRowsSql, sharedTableNames } from './shared_rows_sql';
 import {
@@ -42,6 +42,29 @@ function yieldToEventLoop(): Promise<void> {
     setTimeout(resolve, 0);
   });
 }
+
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+type StepName = 'queuedMs' | 'shredMs' | 'applyMs' | 'readBackMs';
+
+/** Times a write's steps back to back: each `lap` charges the time since the previous one to its step. */
+function stepTimer(startedAt: number) {
+  let last = startedAt;
+  const ms: Record<StepName, number> = { queuedMs: 0, shredMs: 0, applyMs: 0, readBackMs: 0 };
+  return {
+    lap(step: StepName): void {
+      const at = now();
+      ms[step] += at - last;
+      last = at;
+    },
+    steps(path: WriteSteps['path']): WriteSteps {
+      const round = (value: number): number => Math.round(value * 10) / 10;
+      return { path, queuedMs: round(ms.queuedMs), shredMs: round(ms.shredMs), applyMs: round(ms.applyMs), readBackMs: round(ms.readBackMs) };
+    },
+  };
+}
+
+type StepTimer = ReturnType<typeof stepTimer>;
 
 /** A shred spec whose wiring is wrong: a bug, and the one shred failure that propagates past the fallback. */
 class ShredSpecMisconfigured extends Error {}
@@ -361,7 +384,7 @@ export function createSqliteRowTable<Row extends RowShape>(
   };
 
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
-  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[]): Promise<WriteResult> {
+  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[], timer?: StepTimer): Promise<WriteResult> {
     const writeId = nextWriteId();
     await runBatchAsync(conn, [
       ...ensureFor(asyncDiff, shared?.async),
@@ -369,7 +392,10 @@ export function createSqliteRowTable<Row extends RowShape>(
       ...asyncDiff.stageRows(rows),
       ...diffFor(asyncDiff, shared?.async, mode, where, writeId, asyncDiff.absentSets(rows)),
     ]);
-    return readBack(asyncDiff, writeId, shared?.async);
+    timer?.lap('applyMs');
+    const result = readBack(asyncDiff, writeId, shared?.async);
+    timer?.lap('readBackMs');
+    return result;
   }
 
   /**
@@ -415,7 +441,9 @@ export function createSqliteRowTable<Row extends RowShape>(
     parseRows: (rawJson: string) => ReplaceRow<Row>[],
     partition: object,
     inJs: boolean,
+    timer: StepTimer,
   ): Promise<WriteResult> {
+    timer.lap('queuedMs');
     const direct = partitionIsEmpty(where);
     let nativeError: unknown;
     if (!inJs && conn.shredJsonArrayAsync && nativeShredSpec) {
@@ -430,19 +458,25 @@ export function createSqliteRowTable<Row extends RowShape>(
         let result: WriteResult;
         if (direct) {
           const landed = await conn.shredJsonArrayAsync(spec, rawJson, binds);
+          timer.lap('shredMs');
           result = entitiesLanded(where, landed);
+          timer.lap('readBackMs');
         } else {
           // Each awaited call waits for the JS thread before the next starts, which a busy frame can make long: the
           // stage is readied synchronously, and everything after the shred is one batch.
           runBatch(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
+          timer.lap('applyMs');
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
+          timer.lap('shredMs');
           const writeId = nextWriteId();
           const fills = shared ? absentFromElementsFor(shared.async, variant, spec) : [];
           await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [], fills));
+          timer.lap('applyMs');
           result = readBack(asyncDiff, writeId, shared?.async);
+          timer.lap('readBackMs');
         }
         presence.afterDelete(where);
-        return result;
+        return { ...result, steps: timer.steps(direct ? 'native-direct' : 'native') };
       } catch (error) {
         if (error instanceof ShredSpecMisconfigured) throw error;
         nativeError = error;
@@ -451,6 +485,7 @@ export function createSqliteRowTable<Row extends RowShape>(
     let parsed: ReplaceRow<Row>[];
     try {
       parsed = parseRows(rawJson);
+      timer.lap('shredMs');
     } catch (error) {
       reportStoreDegradation({
         scope: `row_table.unparseable_body.${schema.table}`,
@@ -478,12 +513,13 @@ export function createSqliteRowTable<Row extends RowShape>(
     let result: WriteResult;
     if (direct) {
       await runBatchAsync(conn, replaceDirectly(where, rows));
+      timer.lap('applyMs');
       result = { changes: entityIdsOf(rows), rows: rows.length };
     } else {
-      result = await stageAndApply('replace', where, rows);
+      result = await stageAndApply('replace', where, rows, timer);
     }
     presence.afterDelete(where);
-    return result;
+    return { ...result, steps: timer.steps(direct ? 'js-direct' : 'js') };
   }
 
   function selectRows(where: Partial<Row>): Row[] {
@@ -600,7 +636,8 @@ export function createSqliteRowTable<Row extends RowShape>(
     ): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs)));
+      const timer = stepTimer(now());
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs, timer)));
     },
 
     onChangesElsewhere(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void {

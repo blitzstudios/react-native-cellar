@@ -37,7 +37,7 @@ describe('the core entry point', () => {
       'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
       'ShredColumnsBase', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'SqliteStore', 'StoreFetchSpec',
       'StoreFunctions', 'StorePush', 'StorePushOf', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema',
-      'TrackedValueOptions', 'VersionAtom', 'WindowedBlock', 'WithReadSpec', 'WriteResult',
+      'TrackedValueOptions', 'VersionAtom', 'WindowedBlock', 'WithReadSpec', 'WriteResult', 'WriteSteps',
       'byEntity', 'byPartition', 'configureCellar', 'createBoundedLru', 'createCoverage', 'createOnceGuard',
       'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
       'makeResult', 'pairRead', 'partitionKeyOf', 'pinnedReader', 'reactQueryRuntime', 'readRows',

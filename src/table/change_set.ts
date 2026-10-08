@@ -26,6 +26,28 @@ export interface WriteResult {
   changes: ChangeSet;
   /** How many rows the write was given, whether or not they changed anything. */
   rows: number;
+  /** Where a shredded body's write spent its time. Only `shred` reports it. */
+  steps?: WriteSteps;
+}
+
+/**
+ * Where one shredded body's write spent its time, in ms. A step that awaits native work also counts the wait for the JS
+ * thread to pick its result back up, so a busy JS thread shows up here as slow steps.
+ */
+export interface WriteSteps {
+  /**
+   * How the body was written: shredded natively or parsed in JS, through the stage or, for a partition that held no
+   * rows, `direct` into the table.
+   */
+  path: 'native' | 'native-direct' | 'js' | 'js-direct';
+  /** Waiting behind the store's earlier writes. */
+  queuedMs: number;
+  /** Shredding the body natively or parsing it in JS, a failed native attempt included. */
+  shredMs: number;
+  /** Comparing the rows with the table's and applying the difference. */
+  applyMs: number;
+  /** Reading back which entities changed. */
+  readBackMs: number;
 }
 
 /** The change set of a write that changed nothing: an empty set, frozen so it can be shared. */

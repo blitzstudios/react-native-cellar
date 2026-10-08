@@ -699,6 +699,72 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     expect(parseRows).not.toHaveBeenCalled();
   });
 
+  describe('shred reports where its time went', () => {
+    let clock = 0;
+    beforeEach(() => {
+      clock = 0;
+      jest.spyOn(performance, 'now').mockImplementation(() => clock);
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    /** A connection whose async batch takes 25ms and whose read-back takes 5ms, holding rows unless `empty`. */
+    const timedConn = (empty = false): SqliteConnection => {
+      const { conn, setReader } = makeConn();
+      setReader((sql) => (!empty && sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
+      return {
+        ...conn,
+        execute(sql, params) {
+          if (/RETURNING entity_id, rows;$/.test(sql)) clock += 5;
+          return conn.execute(sql, params);
+        },
+        async executeBatchAsync(commands) {
+          clock += 25;
+          conn.executeBatch!(commands);
+        },
+      };
+    };
+    const nativeShred = async (): Promise<number> => {
+      clock += 40;
+      return 2;
+    };
+    const native = { specs: { all: shredSpec }, variant: () => 'all', binds: (scope: Readonly<Record<string, unknown>>) => [String(scope.region)] };
+
+    it('charges the native shred, the diff batch and the read-back each to its own step', async () => {
+      const db = createSqliteRowTable(schema, { ...timedConn(), shredJsonArrayAsync: nativeShred }, native);
+      const { steps } = await db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+      expect(steps).toEqual({ path: 'native', queuedMs: 0, shredMs: 40, applyMs: 25, readBackMs: 5 });
+    });
+
+    it('charges the wait behind an earlier write to queuedMs', async () => {
+      const db = createSqliteRowTable(schema, { ...timedConn(), shredJsonArrayAsync: nativeShred }, native);
+      const [, second] = await Promise.all([
+        db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []),
+        db.shred({ region: 'eu' }, '[{"id":"p2"}]', () => []),
+      ]);
+      expect(second.steps).toMatchObject({ queuedMs: 70, shredMs: 40 });
+    });
+
+    it('charges a JS parse to shredMs', async () => {
+      const db = createSqliteRowTable(schema, timedConn());
+      const parse = (): TestRow[] => {
+        clock += 30;
+        return [row('p1', 'us', null, null)];
+      };
+      const { steps } = await db.shred({ region: 'us' }, '[{"id":"p1"}]', parse);
+      expect(steps).toEqual({ path: 'js', queuedMs: 0, shredMs: 30, applyMs: 25, readBackMs: 5 });
+    });
+
+    it('names a first load, which writes straight into the table', async () => {
+      const nativeDb = createSqliteRowTable(schema, { ...timedConn(true), shredJsonArrayAsync: nativeShred }, native);
+      expect((await nativeDb.shred({ region: 'us' }, '[{"id":"p1"}]', () => [])).steps?.path).toBe('native-direct');
+      const jsDb = createSqliteRowTable(schema, timedConn(true));
+      const { steps } = await jsDb.shred({ region: 'us' }, '[]', () => []);
+      expect(steps).toMatchObject({ path: 'js-direct', applyMs: 25, readBackMs: 0 });
+    });
+  });
+
   describe('secondary indexes are deferred across a shred into an empty table', () => {
     // Deferral is gated on the dedicated reader, so the connection under test has one: without it a read that needs a
     // transaction shares the writer, and the extra DDL is exactly the window it can land in.

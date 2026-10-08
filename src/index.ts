@@ -39,7 +39,7 @@ export { byEntity } from './read/derived_values';
 // The table a store's schema describes, and the rows it holds.
 export type { SqlValue, ColumnDef, RowTableSchema, RowTable } from './table/types';
 export type { PartitionKeyColumn, StoreTableSchema } from './table/partitioned';
-export type { ChangeSet, WriteResult } from './table/change_set';
+export type { ChangeSet, WriteResult, WriteSteps } from './table/change_set';
 export { ALL_ENTITIES, NO_CHANGES } from './table/change_set';
 export { createSqliteRowTable } from './table/sqlite';
 export type { SqliteConnection, PinnedConnection } from './table/connection';

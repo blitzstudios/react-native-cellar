@@ -418,6 +418,21 @@ describe('createFetchIngest — ingest timing', () => {
     expect(timing.partition).toBe('us');
   });
 
+  it("records the write's steps, which only a written body has", async () => {
+    const steps = { path: 'native' as const, queuedMs: 1, shredMs: 40, applyMs: 25, readBackMs: 5 };
+    const harness = makeCfg({ ingestRaw: jest.fn(async () => ({ ...ingested(5), steps })) });
+    harness.setResponse({ data: '[{"id":1}]' });
+    const ingest = createFetchIngest(harness.cfg);
+    await ingest.prefetch('us');
+    harness.setResponse({ __etagMatch: true });
+    await ingest.prefetch('eu');
+
+    const [written, notModified] = getIngestTimings();
+    expect(written.steps).toEqual(steps);
+    expect(notModified.rows).toBe(-1);
+    expect(notModified).not.toHaveProperty('steps');
+  });
+
   it('reports an oversized partition once, since every read of it pays for the whole partition', async () => {
     const captureMessage = jest.fn();
     configureCellar({ errors: { captureException: jest.fn(), captureMessage } });
