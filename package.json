@@ -1,6 +1,6 @@
 {
   "name": "@sleeperhq/react-native-cellar",
-  "version": "1.3.13",
+  "version": "1.3.14",
   "description": "Keeps a React Native app's large server data off the JS heap, in SQLite, while components read it synchronously and re-render only for what changed.",
   "keywords": [
     "react-native",
