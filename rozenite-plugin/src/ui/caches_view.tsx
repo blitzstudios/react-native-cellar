@@ -134,7 +134,12 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
                   <td className="small">{formatCount(totals.entries)}</td>
                   <td className="num" title="A row two caches share is counted once">
                     {heapLabel(store.summary.caches?.heapBytes ?? totals.heap, totals.partial)}
-                    {store.summary.caches?.sharedBytes ? <div className="muted small">{formatBytes(store.summary.caches.sharedBytes)} shared</div> : null}
+                    {store.summary.caches?.sharedBytes ? (
+                      <div className="muted small">
+                        {formatBytes(store.summary.caches.heapBytes + store.summary.caches.sharedBytes)} across caches, less{' '}
+                        {formatBytes(store.summary.caches.sharedBytes)} they share
+                      </div>
+                    ) : null}
                   </td>
                   <td colSpan={9} />
                 </tr>
