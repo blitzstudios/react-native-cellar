@@ -148,7 +148,7 @@ describe('partitions', () => {
       { key: 'season=2026&sport=nba', partition: NBA, rows: 1, entities: 1, version: 1, etag: null, fetchedAt: null },
       { key: 'season=2026&sport=nfl', partition: NFL, rows: 2, entities: 2, version: 2, etag: 'W/"7"', fetchedAt: null },
     ]);
-    expect(await inspected.summary()).toMatchObject({ binding: { state: 'database' }, rows: 3, partitions: 2 });
+    expect(await inspected.summary()).toMatchObject({ binding: { state: 'database' }, rows: 3, storedRows: 3, partitions: 2 });
     expect((await inspected.summary()).databaseBytes).toBeGreaterThan(0);
   });
 

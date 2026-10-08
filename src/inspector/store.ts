@@ -6,6 +6,7 @@
 
 import type { defineSqliteStore } from '../define_sqlite_store';
 import type { QueryExecResult, SqliteConnection } from '../table/connection';
+import { sharedTableNames } from '../table/shared_rows_sql';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
 import { assertCompilesToRead, isWrappable, parseReadStatement } from './read_only';
@@ -82,8 +83,10 @@ export interface InspectedEntity {
 export interface InspectedSummary {
   /** Where the store runs. */
   binding: InspectedBinding;
-  /** How many rows its table holds. */
+  /** How many rows its table holds: one per partition holding a row, since the table is a view over the stored rows. */
   rows: number;
+  /** How many rows `<table>__rows` stores, each once however many partitions hold it. Absent where there is no such table. */
+  storedRows?: number;
   /** How many partitions hold rows or an ETag. */
   partitions: number;
   /** The size of the store's own database, in bytes; absent on the in-memory fallback and unbound. */
@@ -276,6 +279,15 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
     return new Map(rows.map((row) => [row.key, { rows: Number(row.rows), entities: Number(row.entities) }]));
   };
 
+  const storedRowCount = async (conn: SqliteConnection): Promise<number | undefined> => {
+    try {
+      const [row] = await read<{ n: number }>(conn, `SELECT COUNT(*) AS n FROM ${quote(sharedTableNames(schema.table).rows)};`);
+      return row ? Number(row.n) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const metaRecords = async (conn: SqliteConnection): Promise<Map<string, { etag: string | null; record: string | null }>> => {
     const record = meta.recordColumn ? `, ${quote(meta.recordColumn)} AS record` : ', NULL AS record';
     try {
@@ -333,7 +345,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       const running = source.running();
       const caches = await cacheTotals();
       if (!running) return { binding, rows: 0, partitions: 0, caches };
-      const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
+      const [counts, records, storedRows] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn), storedRowCount(running.conn)]);
       const keys = new Set([...counts.keys(), ...records.keys()]);
       let rows = 0;
       for (const count of counts.values()) rows += count.rows;
@@ -345,7 +357,14 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
         ]);
         if (pages && size) databaseBytes = Number(pages.page_count) * Number(size.page_size);
       }
-      return { binding, rows, partitions: keys.size, caches, ...(databaseBytes === undefined ? {} : { databaseBytes }) };
+      return {
+        binding,
+        rows,
+        ...(storedRows === undefined ? {} : { storedRows }),
+        partitions: keys.size,
+        caches,
+        ...(databaseBytes === undefined ? {} : { databaseBytes }),
+      };
     },
     partitions: async () => {
       const running = source.running();
