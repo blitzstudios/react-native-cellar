@@ -10,7 +10,7 @@ type Thing = { id: string };
 const schema: StoreTableSchema<Thing> = {
   table: 'things',
   columns: { id: { type: 'TEXT' } },
-  primaryKey: ['id'],
+  uniqueBy: ['id'],
   entityId: 'id',
 };
 

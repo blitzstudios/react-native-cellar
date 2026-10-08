@@ -1,5 +1,5 @@
 /**
- * The SQL for a store's shared rows: each row stored once by its primary key, however many partitions hold it. A
+ * The SQL for a store's shared rows: each row stored once by its `uniqueBy` columns, however many partitions hold it. A
  * membership table lists each partition's row ids, and the store's table is a view joining the two.
  *
  * A write stages its rows, then in one transaction: fills the columns the fetch leaves out from the stored rows, keeps
@@ -8,7 +8,7 @@
  * key column still names one row.
  */
 
-import { columnNames, IndexDef, RowShape, RowTableSchema } from './types';
+import { columnNames, RowShape, RowTableSchema } from './types';
 import type { BatchCommand } from './connection';
 import type { StageNames, WriteMode } from './entity_diff_sql';
 import { PARTITION_KEY_COLUMN } from './partitioned';
@@ -22,8 +22,6 @@ export interface SharedRowsSql {
   /** Creates the rows and membership tables, their indexes, and the view. */
   create: (temporary: boolean) => string[];
   drop: string[];
-  /** The declared secondary indexes, without `partition_key`, on the rows table. */
-  indexes: Array<IndexDef<RowShape>>;
   /** Creates the TEMP tables and the stage index a write uses. */
   ensure: BatchCommand[];
   /**
@@ -72,11 +70,6 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
         `FROM ${M} m JOIN ${R} r ON r.rid = m.rid;`,
     ];
   };
-
-  const indexes = (schema.indexes ?? []).flatMap((index) => {
-    const columns = (index.columns as readonly string[]).filter((column) => column !== PARTITION_KEY_COLUMN);
-    return columns.length ? [{ name: index.name, columns }] : [];
-  }) as Array<IndexDef<RowShape>>;
 
   function diff(mode: WriteMode, where: Partial<RowShape>, id: number, carries?: readonly string[]): BatchCommand[] {
     const key = where[PARTITION_KEY_COLUMN] ?? null;
@@ -148,7 +141,6 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   return {
     create,
     drop: [`DROP VIEW IF EXISTS ${table};`, `DROP TABLE IF EXISTS ${M};`, `DROP TABLE IF EXISTS ${R};`],
-    indexes,
     ensure: [
       // Leaving rows are found by identity, which the stage's primary key doesn't lead with.
       [`CREATE INDEX IF NOT EXISTS temp.${stageTable}_identity ON ${stageTable} (${ids});`, []],

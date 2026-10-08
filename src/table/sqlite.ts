@@ -142,7 +142,7 @@ export function createSqliteRowTable<Row extends RowShape>(
   const asyncDiff = entityDiffSql(schema, asyncStage, MAX_BIND_VARIABLES);
   const syncDiff = entityDiffSql(schema, syncStage, MAX_BIND_VARIABLES);
   if (schema.partitioned && schema.primaryKey.length <= 1) {
-    throw new Error(`row_table: \`${schema.table}\` needs a primary key: it is each row's identity across the store's partitions.`);
+    throw new Error(`row_table: \`${schema.table}\` needs \`uniqueBy\`: the columns that make a row unique across the store's partitions.`);
   }
   const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
@@ -262,7 +262,7 @@ export function createSqliteRowTable<Row extends RowShape>(
   }
 
   const indexTable = shared ? sharedTableNames(schema.table).rows : schema.table;
-  const secondaryIndexes = (shared ? shared.async.indexes : schema.indexes ?? []) as ReadonlyArray<IndexDef<Row>>;
+  const secondaryIndexes = schema.indexes ?? [];
   const runIndexDdl = async (sql: (idx: IndexDef<Row>) => string): Promise<void> => {
     for (const idx of secondaryIndexes) {
       // eslint-disable-next-line no-await-in-loop -- DDL must not interleave

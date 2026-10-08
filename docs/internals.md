@@ -94,7 +94,7 @@ store is reaching past its entry point; import it from its own module only if yo
   names and values escaped, a list's values joined with `,`, and a field left `undefined` the same as one left out. Keys name partitions, and ids name entities.
 
   The key locates the partition for every operation Cellar runs on the store's behalf. A row is stored once, by its
-  primary key, which is its identity across every partition, so a store without one is refused; each partition keeps
+  `uniqueBy` columns, which are its identity across every partition, so a store without them is refused; each partition keeps
   the rows its fetch returned in a membership table, and the table a store reads by name is a view joining the two,
   with `partition_key` as its first column. A replace (`overwrite`, `shred`) fills in each staged row's
   `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0, so a

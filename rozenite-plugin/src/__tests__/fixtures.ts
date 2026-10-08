@@ -12,7 +12,7 @@ export type Season = { sport: string; season: string };
 const SCHEMA: StoreTableSchema<Game> = {
   table: 'games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true }, score: { type: 'INTEGER' } },
-  primaryKey: ['sport', 'team'],
+  uniqueBy: ['sport', 'team'],
   entityId: 'team',
 };
 

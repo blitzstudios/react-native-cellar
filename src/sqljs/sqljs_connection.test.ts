@@ -3,6 +3,7 @@ import path from 'path';
 import { configureCellar } from '../index';
 import { defineSqliteStore } from '../define_sqlite_store';
 import { RowTableSchema } from '../table/types';
+import type { StoreTableSchema } from '../table/partitioned';
 import { createSqliteRowTable } from '../table/sqlite';
 import { PartitionKeyColumn, partitionedSchema } from '../table/partitioned';
 import { bindSqlJsStore, openSqlJsConnection, SqlJsModule } from './sqljs_connection';
@@ -17,6 +18,14 @@ const schema: RowTableSchema<Item> = {
   indexes: [{ name: 'idx_items_group', columns: ['group_id'] }],
 };
 
+const storeSchema: StoreTableSchema<Item> = {
+  table: 'items',
+  columns: schema.columns,
+  uniqueBy: ['group_id', 'id'],
+  entityId: 'id',
+  indexes: schema.indexes,
+};
+
 let SQL: SqlJsModule;
 
 beforeAll(async () => {
@@ -29,7 +38,7 @@ beforeAll(async () => {
 function itemStore() {
   return defineSqliteStore({
     name: 'items_store',
-    schema,
+    schema: storeSchema,
     partition: ({ group_id }: { group_id?: string }) => (group_id ? { group_id } : null),
     build: (cellar) => ({ reads: { group: (groupId: string) => cellar.rows(groupId, undefined, { orderBy: 'score' }).rows } }),
   });
@@ -43,7 +52,7 @@ describe('sql.js on the web', () => {
     store.bindSqlite(conn);
     bindSqlJsStore('items_other', SQL, other);
 
-    createSqliteRowTable<Item & PartitionKeyColumn>(partitionedSchema(schema), conn).overwrite({ partition_key: 'g' }, [
+    createSqliteRowTable<Item & PartitionKeyColumn>(partitionedSchema(storeSchema), conn).overwrite({ partition_key: 'g' }, [
       { partition_key: 'g', id: 'a', group_id: 'g', score: 2 },
       { partition_key: 'g', id: 'b', group_id: 'g', score: 1 },
     ]);

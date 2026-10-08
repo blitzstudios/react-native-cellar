@@ -21,7 +21,7 @@ const seasonOf = ({ sport, season }: { sport?: string | null; season?: string | 
 const SCHEMA: StoreTableSchema<Game> = {
   table: 'games',
   columns: { team: { type: 'TEXT', notNull: true }, sport: { type: 'TEXT', notNull: true } },
-  primaryKey: ['team'],
+  uniqueBy: ['team'],
   entityId: 'team',
 };
 

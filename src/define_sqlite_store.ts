@@ -173,10 +173,11 @@ export interface SqliteStoreConfig<
   /** The store's name, such as `player`. It names the store's version atom and appears in logs and error reports. */
   name: string;
   /**
-   * The declaration of the store's SQLite table: its columns, primary key, `entityId` column and indexes. Cellar adds
-   * a `partition_key` column (see {@linkcode PartitionSpec}), leads the primary key with it, indexes it with the
-   * entity id, and keeps each partition's ETag in a side table named after the table (`players_meta`). The table is
-   * created, or brought up to date, whenever the store is bound to a database.
+   * The declaration of the rows the store keeps: their columns, `uniqueBy`, `entityId` column and indexes, all on
+   * `<table>__rows`. Cellar adds the `<table>__members` table naming each partition's rows (see
+   * {@linkcode PartitionSpec}), the view `<table>` joining the two, an index on the entity id, and each partition's ETag
+   * in a side table named after the table (`players_meta`). The tables are created, or brought up to date, whenever
+   * the store is bound to a database.
    */
   schema: StoreTableSchema<Row>;
   /** How a read's args name a partition, and its key. */

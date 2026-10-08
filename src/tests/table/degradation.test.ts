@@ -1,4 +1,5 @@
 import { RowTableSchema } from '../../table/types';
+import type { StoreTableSchema } from '../../table/partitioned';
 import { createSqliteRowTable } from '../../table/sqlite';
 import { defineSqliteStore } from '../../define_sqlite_store';
 import { itDev, itProd } from '../../testing/dev_mode';
@@ -13,6 +14,8 @@ const schema: RowTableSchema<Thing> = {
   primaryKey: ['id'],
   entityId: 'id',
 };
+
+const storeSchema: StoreTableSchema<Thing> = { table: 'things', columns: schema.columns, uniqueBy: ['id'], entityId: 'id' };
 
 function brokenConn(match = /./): SqliteConnection & { attempts: number } {
   const conn = {
@@ -212,7 +215,7 @@ describe('defineSqliteStore — the wiring', () => {
     const forget = jest.fn();
     const store = defineSqliteStore({
       name: 'things',
-      schema,
+      schema: storeSchema,
       partition: ({ region }: { region?: string }) => (region ? { region } : null),
       build: (cellar) => ({ reads: { all: () => cellar.table.find({}) }, lifecycle: { forget } }),
     });
@@ -229,7 +232,7 @@ describe('defineSqliteStore — the wiring', () => {
     let capsConn: SqliteConnection | undefined;
     const store = defineSqliteStore({
       name: 'things',
-      schema,
+      schema: storeSchema,
       partition: ({ region }: { region?: string }) => (region ? { region } : null),
       build: () => ({ reads: {} }),
       capabilities: (conn: SqliteConnection) => {

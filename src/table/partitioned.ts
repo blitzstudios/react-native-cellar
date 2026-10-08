@@ -17,32 +17,40 @@ export const PARTITION_RECORD_COLUMN = 'partition';
 export type PartitionKeyColumn = { partition_key: string };
 
 /**
- * A store's table as the store declares it: its own columns, primary key and indexes, without the `partition_key`
- * column or the ETag table, which {@linkcode defineSqliteStore} adds. An index may lead with `partition_key`, as one
- * serving a read within a partition does.
+ * A store's table as the store declares it: the rows it stores in `<table>__rows`, each once. Their columns, what
+ * makes a row unique, and the indexes on that table. {@linkcode defineSqliteStore} adds the rest: the membership
+ * table, the view under `table` with each row's `partition_key`, an index on `entityId`, and the ETag table.
  */
-export type StoreTableSchema<Row extends RowShape> = Omit<RowTableSchema<Row>, 'meta' | 'partitioned' | 'indexes'> & {
-  /** The table's secondary indexes: {@linkcode RowTableSchema.indexes}. */
-  indexes?: ReadonlyArray<IndexDef<Row & PartitionKeyColumn>>;
+export type StoreTableSchema<Row extends RowShape> = Omit<RowTableSchema<Row>, 'meta' | 'partitioned' | 'primaryKey'> & {
+  /**
+   * The columns whose values together make a row unique across the store, such as `['sport', 'player_id']`: two rows
+   * with the same values are the same row, stored once, whichever fetches or pushes bring it and however many
+   * partitions hold it. A write updates the stored row in place, and a change reaches the readers of every partition
+   * holding it. Null values match each other.
+   *
+   * Too few columns merge different rows, such as one player's lines from two seasons; too many store one row twice,
+   * and a change to one copy doesn't reach the readers of the other.
+   */
+  uniqueBy: ReadonlyArray<keyof Row & string>;
 };
 
 const PARTITION_KEY_DEF: ColumnDef = { type: 'TEXT', notNull: true };
 
 /**
- * The full schema of a store's table: `partition_key` as the first column, the primary key led by it (unless the rows
- * have none), an index on it and the entity id, and an ETag table keyed by it that also keeps each partition's
+ * The full schema of a store's table: `partition_key` as the first column, a primary key of it and `uniqueBy` (unless
+ * that is empty), an index on the entity id, and an ETag table keyed by it that also keeps each partition's
  * description.
  */
 export function partitionedSchema<Row extends RowShape>(schema: StoreTableSchema<Row>): RowTableSchema<Row & PartitionKeyColumn> {
-  const { table, columns, primaryKey, entityId, indexes, ...rest } = schema;
+  const { table, columns, uniqueBy, entityId, indexes, ...rest } = schema;
+  const all: Array<IndexDef<Row>> = [{ name: `idx_${table}_entity`, columns: [entityId] }, ...(indexes ?? [])];
+  const unique = all.filter((index, at) => all.findIndex((other) => other.columns.join() === index.columns.join()) === at);
   return {
     table,
     columns: { [PARTITION_KEY_COLUMN]: PARTITION_KEY_DEF, ...columns } as RowTableSchema<Row & PartitionKeyColumn>['columns'],
-    primaryKey: (primaryKey.length ? [PARTITION_KEY_COLUMN, ...primaryKey] : []) as RowTableSchema<Row & PartitionKeyColumn>['primaryKey'],
+    primaryKey: (uniqueBy.length ? [PARTITION_KEY_COLUMN, ...uniqueBy] : []) as RowTableSchema<Row & PartitionKeyColumn>['primaryKey'],
     entityId,
-    indexes: [{ name: `idx_${table}_partition`, columns: [PARTITION_KEY_COLUMN, entityId] }, ...(indexes ?? [])] as RowTableSchema<
-      Row & PartitionKeyColumn
-    >['indexes'],
+    indexes: unique as RowTableSchema<Row & PartitionKeyColumn>['indexes'],
     meta: { table: `${table}_meta`, keyColumns: [PARTITION_KEY_COLUMN], column: 'etag', recordColumn: PARTITION_RECORD_COLUMN },
     ...rest,
     partitioned: true,

@@ -23,9 +23,9 @@ const PLAYERS: StoreTableSchema<Player> = {
     team: { type: 'TEXT' },
     height: { type: 'TEXT' },
   },
-  primaryKey: ['sport', 'player_id'],
+  uniqueBy: ['sport', 'player_id'],
   entityId: 'player_id',
-  indexes: [{ name: 'idx_players_team', columns: ['partition_key', 'team'] }],
+  indexes: [{ name: 'idx_players_team', columns: ['team'] }],
 };
 
 const CATALOG_NATIVE: Record<string, ShredSpec> = {
@@ -190,7 +190,7 @@ const STATS: StoreTableSchema<Stat> = {
     player_id: { type: 'TEXT', notNull: true },
     pts: { type: 'REAL' },
   },
-  primaryKey: ['week', 'game_id', 'player_id'],
+  uniqueBy: ['week', 'game_id', 'player_id'],
   entityId: 'player_id',
   pushFed: true,
 };
@@ -281,12 +281,24 @@ describe('shared rows — the layout on disk', () => {
     expect(written).toHaveLength(2);
   });
 
-  it('refuses a table without a primary key, which has no identity to share rows by', () => {
+  it('creates the indexes on the rows table, one per set of columns', () => {
+    const conn = createSqlJsConnection({ capabilities: 'minimal' });
+    const schema = { ...PLAYERS, indexes: [...(PLAYERS.indexes ?? []), { name: 'idx_players_player', columns: [PLAYERS.entityId] }] };
+    defineSqliteStore({ name: 'players_store', schema, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(conn);
+    const indexes = readRows<{ name: string; tbl_name: string }>(conn, `SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name;`);
+
+    expect(indexes).toEqual([
+      { name: 'idx_players_entity', tbl_name: 'players__rows' },
+      { name: 'idx_players_team', tbl_name: 'players__rows' },
+    ]);
+  });
+
+  it('refuses a table without `uniqueBy`, which has no identity to share rows by', () => {
     expect(() =>
-      defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, primaryKey: [] }, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(
+      defineSqliteStore({ name: 'loose_store', schema: { ...PLAYERS, uniqueBy: [] }, partition: ({ sport }: { sport?: string }) => (sport ? { sport } : null), build: () => ({ reads: {} }) }).testing.over(
         createSqlJsConnection({ capabilities: 'minimal' }),
       ),
-    ).toThrow(/needs a primary key/);
+    ).toThrow(/needs `uniqueBy`/);
   });
 
   it('keeps a stored row a staged copy is older than', async () => {
@@ -302,7 +314,7 @@ describe('shared rows — the layout on disk', () => {
           pts: { type: 'REAL' },
           updated_at: { type: 'INTEGER' },
         },
-        primaryKey: ['game_id', 'player_id'],
+        uniqueBy: ['game_id', 'player_id'],
         entityId: 'player_id',
         newerBy: 'updated_at',
       } as StoreTableSchema<Line>,

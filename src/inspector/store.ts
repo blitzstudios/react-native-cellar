@@ -6,6 +6,7 @@
 
 import type { defineSqliteStore } from '../define_sqlite_store';
 import type { QueryExecResult, SqliteConnection } from '../table/connection';
+import { PARTITION_KEY_COLUMN } from '../table/partitioned';
 import { sharedTableNames } from '../table/shared_rows_sql';
 import type { RowShape, RowTableSchema } from '../table/types';
 import type { InspectedBinding } from './events';
@@ -32,8 +33,8 @@ export interface InspectedSchema {
   metaTable: string;
   /** Every column, `partition_key` first. */
   columns: InspectedColumn[];
-  /** The primary key's columns, `partition_key` first; empty for a table whose rows have no identity. */
-  primaryKey: string[];
+  /** The columns that make a row unique across the store's partitions. */
+  uniqueBy: string[];
   /** The column holding each row's entity id. */
   entityColumn: string;
   /** The table's secondary indexes. */
@@ -333,7 +334,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       table: schema.table,
       metaTable: meta.table,
       columns: Object.entries(schema.columns).map(([name, def]) => ({ name, type: def.type, notNull: !!def.notNull })),
-      primaryKey: [...schema.primaryKey],
+      uniqueBy: schema.primaryKey.filter((column) => column !== PARTITION_KEY_COLUMN),
       entityColumn: schema.entityId,
       indexes: (schema.indexes ?? []).map((index) => ({ name: index.name, columns: index.columns.map(String) })),
       reads: source.running()?.reads ?? [],

@@ -36,7 +36,7 @@ describe('the agent tools', () => {
       name: 'agent_describe_store',
       table: 'games',
       entityColumn: 'team',
-      primaryKey: ['partition_key', 'sport', 'team'],
+      uniqueBy: ['sport', 'team'],
       binding: { state: 'database' },
     });
   });

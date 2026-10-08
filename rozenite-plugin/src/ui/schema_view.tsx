@@ -92,8 +92,8 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
           <dd>
             <code>{schema.entityColumn}</code>
           </dd>
-          <dt>Primary key</dt>
-          <dd className="chips">{schema.primaryKey.length ? schema.primaryKey.map((column) => <code key={column}>{column}</code>) : <span className="muted">none</span>}</dd>
+          <dt>Unique by</dt>
+          <dd className="chips">{schema.uniqueBy.length ? schema.uniqueBy.map((column) => <code key={column}>{column}</code>) : <span className="muted">none</span>}</dd>
           <dt>Writes rows</dt>
           <dd>{schema.nativeShred ? 'native shredder' : 'JS'}</dd>
           <dt>Database</dt>
@@ -118,7 +118,7 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
           </thead>
           <tbody>
             {schema.columns.map((column) => {
-              const keyPosition = schema.primaryKey.indexOf(column.name);
+              const uniquePosition = schema.uniqueBy.indexOf(column.name);
               return (
                 <tr key={column.name}>
                   <td>
@@ -127,7 +127,7 @@ export function SchemaView({ rpc, store, onQuery }: { rpc: CellarRpc | null; sto
                   <td>{column.type}</td>
                   <td>{column.notNull ? 'not null' : <span className="muted">nullable</span>}</td>
                   <td className="chips">
-                    {keyPosition >= 0 ? <span className="tag">PK {keyPosition + 1}</span> : null}
+                    {uniquePosition >= 0 ? <span className="tag">unique {uniquePosition + 1}</span> : null}
                     {column.name === schema.entityColumn ? <span className="tag">entity</span> : null}
                     {indexed.has(column.name) ? <span className="tag tag-muted">indexed</span> : null}
                   </td>

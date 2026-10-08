@@ -124,7 +124,7 @@ export function createDumpRpc(SQL: SqlJsStatic, bytes: Uint8Array, fileName: str
         table: store.table,
         metaTable: store.metaTable,
         columns: store.columns,
-        primaryKey: [],
+        uniqueBy: [],
         entityColumn: store.entityColumn,
         indexes: [],
         reads: [],

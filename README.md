@@ -83,7 +83,7 @@ export const itemShred = defineShredColumns<RawItem>()(ITEM_COLUMNS);
 export const itemSchema: StoreTableSchema<ItemRow> = {
   table: 'items',
   columns: itemShred.columnDefs,
-  primaryKey: ['item_id'],
+  uniqueBy: ['item_id'],
   // Each row belongs to one item: writes report the items they changed, and a read of particular items recomputes only
   // when one of those changes.
   entityId: 'item_id',
@@ -102,8 +102,9 @@ values, which is most of building a view model: a `boolInt` reads as a boolean, 
 reads as `undefined`, or as `null` with `{ absent: null }`. A column whose stored value needs more than that, such as
 a JSON list validated into strings, declares its own `decode`.
 
-Cellar adds the rest of the table: a `partition_key` column naming each row's partition, which leads the primary key
-and is indexed with the entity id, and a side table (`items_meta`) holding each partition's ETag and description.
+These describe `items__rows`, where each row is stored once by its `uniqueBy` columns. Cellar adds the rest: an
+`items__members` table naming each partition's rows, a view under the name `items` joining the two with each row's
+`partition_key`, an index on the entity id, and a side table (`items_meta`) holding each partition's ETag and description.
 
 ### 2. Declare the store: its partitions and its reads
 

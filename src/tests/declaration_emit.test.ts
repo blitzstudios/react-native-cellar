@@ -55,7 +55,7 @@ type ItemRow = RowOf<typeof COLUMNS>;
 const schema: StoreTableSchema<ItemRow> = {
   table: 'items',
   columns: itemShred.columnDefs,
-  primaryKey: ['id'],
+  uniqueBy: ['id'],
   entityId: 'id',
 };
 
