@@ -197,10 +197,11 @@ export function createBoundedLru<V>(max: number, onEvict?: (key: string) => void
  */
 export interface VersionedCache<V> {
   /**
-   * The value stored for `key` at `version`. On a miss (no entry, or one from another version), runs `compute`,
-   * stores its result at `version`, and returns it (or the previous object, if `isEqual` finds them equal).
+   * The value stored for `key` at `version`. On a miss (no entry, or one from another version), runs `compute` with
+   * the entry from another version, if there is one, stores its result at `version`, and returns it (or the previous
+   * object, if `isEqual` finds them equal).
    */
-  read(key: string, version: number, compute: () => V): V;
+  read(key: string, version: number, compute: (previous: V | undefined) => V): V;
   /**
    * The value stored for `key` at `version`, without computing anything: `{ value }` on a hit, `undefined` on a miss.
    * Wrapped so that a stored `undefined` can be told apart from a miss.
@@ -224,7 +225,7 @@ export function createVersionedCache<V>(maxEntries: number, isEqual?: (prev: V, 
   const cache: VersionedCache<V> = {
     read(key, version, compute) {
       const hit = cache.peek(key, version);
-      return hit ? hit.value : cache.set(key, version, compute());
+      return hit ? hit.value : cache.set(key, version, compute(lru.get(key)?.value));
     },
     peek(key, version) {
       const hit = lru.get(key);
@@ -269,9 +270,10 @@ type PartsOf<By extends readonly string[]> = { -readonly [Index in keyof By]: Ca
 export interface BoundVersionMemo<V, Parts extends readonly CacheKeyPart[]> {
   /**
    * The value stored for these key parts. On a miss (never computed, or computed before the partition's last write),
-   * runs `build`, stores its result, and returns it (or the previous object, if `isEqual` finds them equal).
+   * runs `build` with the value from before that write, if one is still kept, stores its result, and returns it (or the
+   * previous object, if `isEqual` finds them equal). A build can reuse the previous value's unchanged parts.
    */
-  read(...args: [...Parts, build: () => V]): V;
+  read(...args: [...Parts, build: (previous: V | undefined) => V]): V;
   /**
    * The value stored for these key parts, without building anything: `{ value }` on a hit, `undefined` on a miss.
    * Wrapped so that a stored `undefined` can be told apart from a miss.
@@ -399,8 +401,8 @@ function splitArgs<T>(args: readonly unknown[]): { parts: readonly CacheKeyPart[
  *
  * The first type argument is the value; one value per partition is `byPartition<Map<string, Player[]>>({ max: 8 })`.
  * For values keyed by more than the partition, the second lists the key's other parts, named, in the order a lookup
- * passes them: `byPartition<RankedRow, [shape: RowShape, playerId: string]>({ max: 16384 })`. A lookup that passes a
- * part of the wrong type, or the wrong number of them, doesn't compile.
+ * passes them: `byPartition<RankedRow[], [ask: RankAsk]>({ max: 8 })`. A lookup that passes a part of the wrong type,
+ * or the wrong number of them, doesn't compile.
  */
 export function byPartition<V, Parts extends readonly CacheKeyPart[] = []>(spec: {
   /** How many values to keep, across all partitions; beyond that, the least recently used are discarded. */
@@ -423,9 +425,9 @@ export function byPartition<V, Parts extends readonly CacheKeyPart[] = []>(spec:
           const version = store.version(key);
           return {
             read: (...args) => {
-              const { parts, last } = splitArgs<() => V>(args);
+              const { parts, last } = splitArgs<(previous: V | undefined) => V>(args);
               // Covered: `.for(key)` has already made the caller depend on the whole partition the build reads.
-              return cache.read(keyer(prefix, parts), version, () => covered(last));
+              return cache.read(keyer(prefix, parts), version, (previous) => covered(() => last(previous)));
             },
             peek: (...parts) => cache.peek(keyer(prefix, parts), version),
             set: (...args) => {

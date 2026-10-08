@@ -303,6 +303,27 @@ describe('a memo bound to a partition', () => {
     expect(values.for('usp').read('1', () => 'usp-1')).toBe('usp-1');
   });
 
+  it('hands a rebuild the value from before the write, so it can reuse what did not change', () => {
+    const { binding, bump } = bindable();
+    const { values } = createMemos('test', binding, { values: byPartition<Array<{ id: string; n: number }>, [item: string]>({ max: 64 }) });
+    const kept = { id: 'a', n: 1 };
+    const seen: Array<unknown> = [];
+
+    values.for('us').read('p1', (previous) => {
+      seen.push(previous);
+      return [kept, { id: 'b', n: 1 }];
+    });
+    bump('us');
+    const rebuilt = values.for('us').read('p1', (previous) => {
+      seen.push(previous);
+      return [previous?.find((row) => row.id === 'a') ?? { id: 'a', n: 1 }, { id: 'b', n: 2 }];
+    });
+
+    expect(seen[0]).toBeUndefined();
+    expect(seen[1]).toEqual([kept, { id: 'b', n: 1 }]);
+    expect(rebuilt[0]).toBe(kept);
+  });
+
   it('looks the version up itself, so a write to the partition drops what it held', () => {
     const { binding, bump } = bindable();
     const { values } = createMemos('test', binding, { values: byPartition<number, [item: string]>({ max: 64 }) });
