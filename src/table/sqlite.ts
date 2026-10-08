@@ -135,6 +135,9 @@ function assertPerPartition<Row extends RowShape>(schema: RowTableSchema<Row>): 
   }
 }
 
+/** The temp schema's page size, in bytes, for a shared-rows store's stage. */
+const TEMP_PAGE_SIZE = 16384;
+
 /** Options for {@linkcode createSqliteRowTable}. */
 export interface SqliteRowTableOptions {
   /**
@@ -180,8 +183,15 @@ export function createSqliteRowTable<Row extends RowShape>(
   const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
   const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
-  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number, absentSets: readonly string[]) =>
-    sharedSql ? sharedSql.diff(mode, where, writeId, absentSets) : diff.diff(mode, where, writeId);
+  const diffFor = (
+    diff: EntityDiffSql,
+    sharedSql: SharedRowsSql | undefined,
+    mode: WriteMode,
+    where: Partial<Row>,
+    writeId: number,
+    absentSets: readonly string[],
+    nativeFills?: readonly BatchCommand[],
+  ) => (sharedSql ? sharedSql.diff(mode, where, writeId, absentSets, nativeFills) : diff.diff(mode, where, writeId));
 
   /**
    * Async writes run one at a time. Each stages its rows and then diffs the stage in a second step, and the native
@@ -427,8 +437,8 @@ export function createSqliteRowTable<Row extends RowShape>(
           runBatch(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
           const writeId = nextWriteId();
-          const absent = shared ? absentFromElementsFor(shared.async, variant, spec) : [];
-          await runBatchAsync(conn, [...absent, ...diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [])]);
+          const fills = shared ? absentFromElementsFor(shared.async, variant, spec) : [];
+          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [], fills));
           result = readBack(asyncDiff, writeId, shared?.async);
         }
         presence.afterDelete(where);
@@ -486,6 +496,10 @@ export function createSqliteRowTable<Row extends RowShape>(
     entityId: schema.entityId,
 
     init(): void {
+      // A staged row carries its element's JSON beside a few hundred columns, more than a 4KB page holds, and a record
+      // that overflows its page is read through the overflow chain by every statement that reads it. The temp schema
+      // the stage lives in takes the larger page only while it is still empty, so this runs before anything is staged.
+      if (shared) conn.execute(`PRAGMA temp.page_size = ${TEMP_PAGE_SIZE};`);
       const create = (temporary: boolean): void => {
         if (shared) shared.async.create(temporary).forEach((sql) => conn.execute(sql));
         else conn.execute(createTableSql(schema, temporary));

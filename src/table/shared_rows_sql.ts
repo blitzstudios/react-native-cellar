@@ -40,7 +40,7 @@ export interface SharedRowsSql {
    * Compares the stage with the stored rows and applies it, recording the entities that changed here and elsewhere.
    * `absentSets` are the stage's distinct sets of absent columns, each of which takes the stored row's values.
    */
-  diff: (mode: WriteMode, where: Partial<RowShape>, writeId: number, absentSets: readonly string[]) => BatchCommand[];
+  diff: (mode: WriteMode, where: Partial<RowShape>, writeId: number, absentSets: readonly string[], nativeFills?: readonly BatchCommand[]) => BatchCommand[];
   /** Reads back and deletes one write's changes in other partitions. */
   readElsewhere: (writeId: number) => BatchCommand;
 }
@@ -53,6 +53,8 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   const changes = names.changes;
   const elsewhere = `temp.${table}__elsewhere`;
   const removed = `temp.${table}__${path}_removed`;
+  const movedRows = `temp.${table}__${path}_moved`;
+  const rowIds = `temp.${table}__${path}_rids`;
 
   const all = columnNames(schema).filter((column) => column !== PARTITION_KEY_COLUMN);
   const identity = (schema.primaryKey as readonly string[]).filter((column) => column !== PARTITION_KEY_COLUMN);
@@ -85,13 +87,14 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     ];
   };
 
-  /** SQL true when the element JSON has nothing at `path`, which `json_type` tells apart from a JSON `null`. */
+  /** SQL true when the staged element JSON has nothing at `path`, which `json_type` tells apart from a JSON `null`. */
   const nothingAt = (path: string): string => {
     const jsonPath = `$.${path.split('.').map((key) => JSON.stringify(key)).join('.')}`;
-    return `json_type(${ELEMENT_JSON_COLUMN}, '${jsonPath.replace(/'/g, "''")}') IS NULL`;
+    return `json_type(${stageTable}.${ELEMENT_JSON_COLUMN}, '${jsonPath.replace(/'/g, "''")}') IS NULL`;
   };
   /** When `column` is absent for `op`, as SQL over the staged row, mirroring `evalShredOp`; undefined for never. */
   const absentWhen = (column: string, op: ShredOp): string | undefined => {
+    const staged = `${stageTable}.${column}`;
     const complete = 'complete' in op && op.complete !== undefined ? nothingAt(op.complete) : undefined;
     switch (op.op) {
       case 'text':
@@ -100,22 +103,22 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       case 'boolInt':
       case 'metaText':
       case 'rawJsonField':
-        return complete ?? `${column} IS NULL AND ${nothingAt(op.path)}`;
+        return complete ?? `${staged} IS NULL AND ${nothingAt(op.path)}`;
       case 'real0':
         return complete;
       case 'coalesceText':
         if (op.fallbackBindIndex != null || op.emptyDefault) return undefined;
-        return `${column} IS NULL AND ${op.paths.map(nothingAt).join(' AND ')}`;
+        return `${staged} IS NULL AND ${op.paths.map(nothingAt).join(' AND ')}`;
       default:
         return undefined;
     }
   };
 
-  const storedRow = (columns: readonly string[], also = '') =>
-    `(SELECT ${from('r', columns)} FROM ${R} r WHERE ${on('r', stageTable)}${also} LIMIT 1)`;
-  const membership = (columns: readonly string[]) =>
-    `(SELECT ${from('m', columns)} FROM ${M} m JOIN ${R} r ON r.rid = m.rid WHERE ${on('r', stageTable)} ` +
-    `AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN} LIMIT 1)`;
+  // Each staged row's stored row, found once by identity: every later statement joins on the row ids instead.
+  const rowSource = `FROM ${rowIds} x JOIN ${R} r ON r.rid = x.rid WHERE x.srowid = ${stageTable}.rowid`;
+  const membershipSource = `FROM ${rowIds} x JOIN ${M} m ON m.rid = x.rid WHERE x.srowid = ${stageTable}.rowid AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN}`;
+  const storedRow = (columns: readonly string[], also = '') => `(SELECT ${from('r', columns)} ${rowSource}${also} LIMIT 1)`;
+  const membership = (columns: readonly string[]) => `(SELECT ${from('m', columns)} ${membershipSource} LIMIT 1)`;
   /** Fills `columns`, absent where `when` holds, from the stored row or, scoped, this partition's membership. */
   const fill = (columns: readonly string[], when: string): BatchCommand[] => {
     const fromRow = columns.filter((column) => rest.includes(column));
@@ -126,45 +129,57 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     ];
   };
 
-  /** Fills each of `columns` where the stage lists it absent, in one statement per table, keeping the rest as staged. */
-  const fillEach = (columns: readonly string[]): BatchCommand[] => {
-    const pick = (alias: string, list: readonly string[]) =>
-      list.map((c) => `CASE WHEN instr(${stageTable}.${ABSENT_COLUMN}, ',${c},') > 0 THEN ${alias}.${c} ELSE ${stageTable}.${c} END`).join(', ');
+  /**
+   * Fills each of `columns` that is absent on its own, in one statement per table, touching only the staged rows whose
+   * stored copy has a value there to keep: a field no copy ever had costs a lookup per row, and no rewrite.
+   */
+  const fillEach = (columns: readonly string[], whenOf: (column: string) => string): BatchCommand[] => {
+    const statement = (list: readonly string[], alias: string, source: string): BatchCommand => {
+      const keep = (c: string) => `${alias}.${c} IS NOT NULL AND ${whenOf(c)}`;
+      const pick = list.map((c) => `CASE WHEN ${keep(c)} THEN ${alias}.${c} ELSE ${stageTable}.${c} END`).join(', ');
+      return [`UPDATE ${stage} SET (${list.join(', ')}) = (SELECT ${pick} ${source} LIMIT 1) WHERE EXISTS (SELECT 1 ${source} AND (${list.map((c) => `(${keep(c)})`).join(' OR ')}));`, []];
+    };
     const fromRow = columns.filter((column) => rest.includes(column));
     const fromMembership = columns.filter((column) => scoped.includes(column));
-    const joinRow = `FROM (SELECT 1) LEFT JOIN ${R} r ON ${on('r', stageTable)}`;
-    const joinMembership = `${joinRow} LEFT JOIN ${M} m ON m.rid = r.rid AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN}`;
-    const statement = (list: readonly string[], alias: string, join: string): BatchCommand => [
-      `UPDATE ${stage} SET (${list.join(', ')}) = (SELECT ${pick(alias, list)} ${join} LIMIT 1) WHERE ${ABSENT_COLUMN} IS NOT NULL;`,
-      [],
-    ];
-    return [...(fromRow.length ? [statement(fromRow, 'r', joinRow)] : []), ...(fromMembership.length ? [statement(fromMembership, 'm', joinMembership)] : [])];
+    return [...(fromRow.length ? [statement(fromRow, 'r', rowSource)] : []), ...(fromMembership.length ? [statement(fromMembership, 'm', membershipSource)] : [])];
   };
 
   function absentFromElements(spec: ShredSpec): BatchCommand[] {
+    const ops = new Map(spec.columns.map((column, index) => [column, spec.ops[index]]));
     // Grouped by condition: a stats map's columns share one, so a row tests it once rather than once per stat.
     const byCondition = new Map<string, string[]>();
-    spec.ops.forEach((op, index) => {
-      const column = spec.columns[index];
-      if (identity.includes(column) || !all.includes(column)) return;
+    for (const [column, op] of ops) {
+      if (identity.includes(column) || !all.includes(column)) continue;
       const when = absentWhen(column, op);
       if (when) byCondition.set(when, [...(byCondition.get(when) ?? []), column]);
-    });
-    const listed = [...byCondition].map(([when, columns]) => `CASE WHEN ${when} THEN '${columns.join(',')},' ELSE '' END`);
-    const absent = listed.length ? `NULLIF(',' || ${listed.join(' || ')}, ',')` : 'NULL';
-    // A group's columns are absent together, so its first one stands for all of them. The columns absent on their own
-    // fill in one statement, each taking the stored value only where it is absent.
-    const groups = [...byCondition.values()];
-    const fills = [
-      ...fillEach(groups.filter((columns) => columns.length === 1).map(([column]) => column)),
-      ...groups.filter((columns) => columns.length > 1).flatMap((columns) => fill(columns, `instr(${ABSENT_COLUMN}, ',${columns[0]},') > 0`)),
-    ];
-    return [[`UPDATE ${stage} SET ${ABSENT_COLUMN} = ${absent}, ${ELEMENT_JSON_COLUMN} = NULL WHERE ${ELEMENT_JSON_COLUMN} IS NOT NULL;`, []], ...fills];
+    }
+    const singles = [...byCondition.values()].filter((columns) => columns.length === 1).map(([column]) => column);
+    const whenOf = new Map([...byCondition].flatMap(([when, columns]) => columns.map((column) => [column, when] as const)));
+    // A group is absent together, which only a row whose group columns are all NULL can be. A column reading the
+    // group's whole object says so in one test; otherwise a few of its columns stand in, before the JSON is read.
+    const groupFills = [...byCondition]
+      .filter(([, columns]) => columns.length > 1)
+      .flatMap(([when, columns]) => {
+        const object = (ops.get(columns[0]) as { complete?: string }).complete;
+        const whole = [...ops].find(([, op]) => op.op === 'rawJsonField' && op.path === object)?.[0];
+        const nullable = columns.filter((column) => ops.get(column)?.op !== 'real0').slice(0, 8);
+        const necessary = whole ? [whole] : nullable;
+        const precheck = necessary.map((column) => `${stageTable}.${column} IS NULL AND `).join('');
+        return fill(columns, `${precheck}${when}`);
+      });
+    return [...fillEach(singles, (column) => whenOf.get(column)!), ...groupFills];
   }
 
-  function diff(mode: WriteMode, where: Partial<RowShape>, id: number, absentSets: readonly string[]): BatchCommand[] {
+  function diff(mode: WriteMode, where: Partial<RowShape>, id: number, absentSets: readonly string[], nativeFills: readonly BatchCommand[] = []): BatchCommand[] {
     const key = where[PARTITION_KEY_COLUMN] ?? null;
-    const commands: BatchCommand[] = [[`INSERT INTO ${changes} (write_id, rows) SELECT ?, count(*) FROM ${stage};`, [id]]];
+    const isNew = `s.rowid NOT IN (SELECT srowid FROM ${rowIds})`;
+    const staged = `FROM ${rowIds} x JOIN ${stage} s ON s.rowid = x.srowid`;
+    const commands: BatchCommand[] = [
+      [`DELETE FROM ${rowIds};`, []],
+      [`INSERT INTO ${rowIds} (srowid, rid) SELECT s.rowid, r.rid FROM ${stage} s JOIN ${R} r ON ${on('r', 's')};`, []],
+      [`INSERT INTO ${changes} (write_id, rows) SELECT ?, count(*) FROM ${stage};`, [id]],
+      ...nativeFills,
+    ];
     // One statement per set of absent columns, copying just those: from the stored row, or for a scoped column from
     // this partition's membership. A new row or membership finds nothing, which is NULL.
     for (const absent of absentSets) {
@@ -176,53 +191,56 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       commands.push([`UPDATE ${stage} SET (${rest.join(', ')}) = ${storedRow(rest, older)} WHERE EXISTS ${storedRow(rest, older)};`, []]);
     }
     commands.push(
+      // The stored rows the stage moves, compared once: every column, which is most of a write's cost.
+      [`DELETE FROM ${movedRows};`, []],
+      [
+        `INSERT INTO ${movedRows} (rid, srowid, entity_id, partition_key) SELECT x.rid, x.srowid, s.${entityId}, s.${PARTITION_KEY_COLUMN} ` +
+          `${staged} JOIN ${R} r ON r.rid = x.rid WHERE ${moved};`,
+        [],
+      ],
       // New, or moved.
-      [`INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s LEFT JOIN ${R} r ON ${on('r', 's')} WHERE r.rid IS NULL OR ${moved};`, [id]],
+      [`INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s WHERE ${isNew};`, [id]],
+      [`INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, entity_id FROM ${movedRows};`, [id]],
       // Stored for another partition, and joining this one.
       [
-        `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} ` +
-          `WHERE NOT EXISTS (SELECT 1 FROM ${M} m WHERE m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} AND m.rid = r.rid);`,
+        `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} ${staged} ` +
+          `WHERE NOT EXISTS (SELECT 1 FROM ${M} m WHERE m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} AND m.rid = x.rid);`,
         [id],
       ],
     );
     if (scoped.length) {
       // Held here already, with this partition's own values moved.
       commands.push([
-        `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} ` +
-          `JOIN ${M} m ON m.rid = r.rid AND m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} WHERE ${tuple('m', scoped)} IS NOT ${tuple('s', scoped)};`,
+        `INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, s.${entityId} ${staged} ` +
+          `JOIN ${M} m ON m.rid = x.rid AND m.${PARTITION_KEY_COLUMN} = s.${PARTITION_KEY_COLUMN} WHERE ${tuple('m', scoped)} IS NOT ${tuple('s', scoped)};`,
         [id],
       ]);
     }
     if (rest.length) {
       commands.push([
-        `INSERT INTO ${elsewhere} (write_id, partition_key, entity_id) SELECT DISTINCT ?, m.${PARTITION_KEY_COLUMN}, s.${entityId} ` +
-          `FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} JOIN ${M} m ON m.rid = r.rid WHERE m.${PARTITION_KEY_COLUMN} <> s.${PARTITION_KEY_COLUMN} AND ${moved};`,
+        `INSERT INTO ${elsewhere} (write_id, partition_key, entity_id) SELECT DISTINCT ?, m.${PARTITION_KEY_COLUMN}, x.entity_id ` +
+          `FROM ${movedRows} x JOIN ${M} m ON m.rid = x.rid WHERE m.${PARTITION_KEY_COLUMN} <> x.partition_key;`,
         [id],
       ]);
     }
     if (mode === 'replace') {
       commands.push(
         [`DELETE FROM ${removed};`, []],
-        [
-          `INSERT INTO ${removed} (rid) SELECT m.rid FROM ${M} m WHERE m.${PARTITION_KEY_COLUMN} = ? ` +
-            `AND NOT EXISTS (SELECT 1 FROM ${R} r JOIN ${stage} s ON ${on('r', 's')} WHERE r.rid = m.rid);`,
-          [key],
-        ],
+        [`INSERT INTO ${removed} (rid) SELECT m.rid FROM ${M} m WHERE m.${PARTITION_KEY_COLUMN} = ? AND m.rid NOT IN (SELECT rid FROM ${rowIds});`, [key]],
         [`INSERT INTO ${changes} (write_id, entity_id) SELECT DISTINCT ?, r.${entityId} FROM ${removed} x JOIN ${R} r ON r.rid = x.rid;`, [id]],
       );
     }
     if (rest.length) {
       commands.push([
-        `UPDATE ${R} SET (${rest.join(', ')}) = (SELECT ${from('s', rest)} FROM ${stage} s WHERE ${on('s', R)} LIMIT 1) ` +
-          `WHERE rid IN (SELECT r.rid FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} WHERE ${moved});`,
+        `UPDATE ${R} SET (${rest.join(', ')}) = (SELECT ${from('s', rest)} FROM ${movedRows} x JOIN ${stage} s ON s.rowid = x.srowid WHERE x.rid = ${R}.rid LIMIT 1) ` +
+          `WHERE rid IN (SELECT rid FROM ${movedRows});`,
         [],
       ]);
     }
-    commands.push([
-      `INSERT INTO ${R} (${stored.join(', ')}) SELECT ${from('s', stored)} FROM ${stage} s ` +
-        `WHERE NOT EXISTS (SELECT 1 FROM ${R} r WHERE ${on('r', 's')}) GROUP BY ${from('s', identity)};`,
-      [],
-    ]);
+    commands.push(
+      [`INSERT INTO ${R} (${stored.join(', ')}) SELECT ${from('s', stored)} FROM ${stage} s WHERE ${isNew} GROUP BY ${from('s', identity)};`, []],
+      [`INSERT INTO ${rowIds} (srowid, rid) SELECT s.rowid, r.rid FROM ${stage} s JOIN ${R} r ON ${on('r', 's')} WHERE ${isNew};`, []],
+    );
     if (mode === 'replace') {
       commands.push(
         [`DELETE FROM ${M} WHERE ${PARTITION_KEY_COLUMN} = ? AND rid IN (SELECT rid FROM ${removed});`, [key]],
@@ -230,17 +248,18 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
         [`DELETE FROM ${removed};`, []],
       );
     }
-    const joined = `FROM ${stage} s JOIN ${R} r ON ${on('r', 's')}`;
     commands.push(
       scoped.length
         ? [
-            `INSERT INTO ${M} (${PARTITION_KEY_COLUMN}, rid, ${scoped.join(', ')}) SELECT s.${PARTITION_KEY_COLUMN}, r.rid, ${from('s', scoped)} ${joined} WHERE 1 ` +
+            `INSERT INTO ${M} (${PARTITION_KEY_COLUMN}, rid, ${scoped.join(', ')}) SELECT s.${PARTITION_KEY_COLUMN}, x.rid, ${from('s', scoped)} ${staged} WHERE 1 ` +
               `ON CONFLICT (${PARTITION_KEY_COLUMN}, rid) DO UPDATE SET ${scoped.map((c) => `${c} = excluded.${c}`).join(', ')} ` +
               `WHERE ${tuple(M, scoped)} IS NOT ${tuple('excluded', scoped)};`,
             [],
           ]
-        : [`INSERT OR IGNORE INTO ${M} (${PARTITION_KEY_COLUMN}, rid) SELECT s.${PARTITION_KEY_COLUMN}, r.rid ${joined};`, []],
+        : [`INSERT OR IGNORE INTO ${M} (${PARTITION_KEY_COLUMN}, rid) SELECT s.${PARTITION_KEY_COLUMN}, x.rid ${staged};`, []],
       [`DELETE FROM ${stage};`, []],
+      [`DELETE FROM ${movedRows};`, []],
+      [`DELETE FROM ${rowIds};`, []],
     );
     return commands;
   }
@@ -254,6 +273,9 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       [`CREATE INDEX IF NOT EXISTS temp.${stageTable}_identity ON ${stageTable} (${ids});`, []],
       [`CREATE TABLE IF NOT EXISTS ${elsewhere} (write_id INTEGER NOT NULL, partition_key TEXT, entity_id);`, []],
       [`CREATE TABLE IF NOT EXISTS ${removed} (rid INTEGER);`, []],
+      [`CREATE TABLE IF NOT EXISTS ${movedRows} (rid INTEGER, srowid INTEGER, entity_id, partition_key TEXT);`, []],
+      [`CREATE INDEX IF NOT EXISTS temp.${table}__${path}_moved_rid ON ${table}__${path}_moved (rid);`, []],
+      [`CREATE TABLE IF NOT EXISTS ${rowIds} (srowid INTEGER PRIMARY KEY, rid INTEGER NOT NULL);`, []],
     ],
     planStats: [
       { idx: M, stat: '1000000 10000 1' },
