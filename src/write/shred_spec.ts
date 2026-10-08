@@ -31,6 +31,17 @@ export interface ConcatPart {
   paths: string[];
 }
 
+/** What an op that reads one path can add. */
+export interface PathOpOptions {
+  /**
+   * An object along the op's path that lists every key it has a value for, such as a stats map that leaves out zeros:
+   * `complete: 'stats'` on `path: 'stats.rec'`. While the object is there, a key missing from it reads as the op's value
+   * for a missing field, so the write clears the column. While the object itself is missing, the column is absent, and
+   * the write keeps the stored value.
+   */
+  complete?: string;
+}
+
 /**
  * An op: one column's instruction to the native shredder, saying how to compute that column's value from one element of
  * the response body. The C++ shredder reads the body, and for each element (each item of the JSON array, or each value
@@ -38,6 +49,13 @@ export interface ConcatPart {
  *
  * A path is dot-separated and starts at the element: `metadata.gender` reads `element.metadata.gender`. A value is
  * "missing" when the path leads nowhere or to `null`.
+ *
+ * A path that leads nowhere, to a key the element doesn't have or through a value that isn't an object, also makes the
+ * column absent: the row doesn't state it, and a write keeps the stored row's value for it, where an explicit `null`
+ * clears it. So a body that leaves a field out, such as a list endpoint that sends a subset of a detail endpoint's
+ * fields, never erases what another body stored. A `bind`, a `concat`, a `real0`, and a `coalesceText` with a fallback
+ * always state their column. An op's {@linkcode PathOpOptions.complete | complete} names an object whose missing keys
+ * mean null instead.
  *
  * Each column also has a {@linkcode ShredColumn.js | js} function, used when rows are built in JS (on web, in tests,
  * and whenever the native shred can't run). The op has to produce exactly what that function returns, including for a
@@ -59,7 +77,7 @@ export type ShredOp =
        */
       index: number;
     }
-  | {
+  | ({
       /**
        * Reads a string: the value at `path` if it is a JSON string, otherwise null. A number or boolean at `path` also
        * gives null; use `metaText` to convert those to text instead.
@@ -67,8 +85,8 @@ export type ShredOp =
       op: 'text';
       /** Where to read the value: a dot-separated path starting at the element, such as `metadata.gender`. */
       path: string;
-    }
-  | {
+    } & PathOpOptions)
+  | ({
       /**
        * Reads a number: the value at `path` if it is a JSON number, stored as it is (not rounded), otherwise null. A
        * numeric string such as `"12"` also gives null; use `real` to convert strings.
@@ -76,8 +94,8 @@ export type ShredOp =
       op: 'int';
       /** Where to read the value: a dot-separated path starting at the element, such as `years_exp`. */
       path: string;
-    }
-  | {
+    } & PathOpOptions)
+  | ({
       /**
        * Reads a number, converting other values: the value at `path` converted as JS `Number()` does, so `12.5` and
        * `"12.5"` both give 12.5. Null if the value is missing or doesn't convert to a finite number.
@@ -85,8 +103,8 @@ export type ShredOp =
       op: 'real';
       /** Where to read the value: a dot-separated path starting at the element, such as `stats.pts_ppr`. */
       path: string;
-    }
-  | {
+    } & PathOpOptions)
+  | ({
       /**
        * Reads a flag as 1 or 0: 1 if the value at `path` is truthy (`true`, a non-zero number, a non-empty string), 0
        * if it is falsy, and null if it is missing. SQLite has no boolean type, so flags are stored this way.
@@ -94,8 +112,8 @@ export type ShredOp =
       op: 'boolInt';
       /** Where to read the value: a dot-separated path starting at the element, such as `active`. */
       path: string;
-    }
-  | {
+    } & PathOpOptions)
+  | ({
       /**
        * Reads any value as text: a string as it is, and a number or boolean converted to a string (`12` gives
        * `"12"`). Null if the value is missing. Use it for a field the server sends sometimes as a string and sometimes
@@ -104,8 +122,8 @@ export type ShredOp =
       op: 'metaText';
       /** Where to read the value: a dot-separated path starting at the element, such as `game_id`. */
       path: string;
-    }
-  | {
+    } & PathOpOptions)
+  | ({
       /**
        * Reads a number the way `real` does, but gives 0 instead of null when the value is missing or isn't a number.
        * For a stat where "not reported" means zero, so the column can be summed without null checks.
@@ -113,7 +131,7 @@ export type ShredOp =
       op: 'real0';
       /** Where to read the value: a dot-separated path starting at the element, such as `stats.rec`. */
       path: string;
-    }
+    } & PathOpOptions)
   | {
       /**
        * Reads the first of several paths that has a value, as text. "Coalesce" means take the first non-null value, as
@@ -151,7 +169,7 @@ export type ShredOp =
       /** The text placed between consecutive parts, such as `'_'`. */
       sep: string;
     }
-  | {
+  | ({
       /**
        * Stores the value at `path` as JSON text, whatever its type, so a list or object can live in a `TEXT` column:
        * `["QB","RB"]` stays `'["QB","RB"]'`. Null if the value is missing. The C++ copies the JSON as written in the
@@ -160,6 +178,10 @@ export type ShredOp =
       op: 'rawJsonField';
       /** Where to read the value: a dot-separated path starting at the element, such as `fantasy_positions`. */
       path: string;
+    } & PathOpOptions)
+  | {
+      /** Stores the whole element as JSON text. The C++ copies it as written in the body, as `rawJsonField` does. */
+      op: 'rawJson';
     };
 
 /**
@@ -294,33 +316,44 @@ function coalesce(element: unknown, paths: readonly string[]): unknown {
   return undefined;
 }
 
+/** A path op's value for a field its element doesn't have: absent, unless the op's `complete` object is there. */
+const missingField = (op: PathOpOptions, missing: SqlValue): SqlValue | undefined => (op.complete === undefined ? undefined : missing);
+
 /**
- * What one op computes for one element, exactly as the C++ shredder does. It is also how a column that declares an op
- * and no {@linkcode ShredColumn.js | js} builder is built in JS, so the two paths can't disagree about that column.
+ * What one op computes for one element, exactly as the C++ shredder does, with `undefined` for a column the element
+ * leaves absent: the C++ stores NULL there, and Cellar reads the absence from the element's JSON. It is also how a
+ * column that declares an op and no {@linkcode ShredColumn.js | js} builder is built in JS, so the two paths can't
+ * disagree about that column.
  */
-export function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue {
+export function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlValue[]): SqlValue | undefined {
+  if ('complete' in op && op.complete !== undefined && getPath(element, op.complete) === undefined) return undefined;
   switch (op.op) {
     case 'bind':
       return binds[op.index] ?? null;
     case 'text': {
       const value = getPath(element, op.path);
+      if (value === undefined) return missingField(op, null);
       return typeof value === 'string' ? value : null;
     }
     case 'int': {
       const value = getPath(element, op.path);
+      if (value === undefined) return missingField(op, null);
       return typeof value === 'number' ? value : null;
     }
     case 'real': {
       const value = getPath(element, op.path);
+      if (value === undefined) return missingField(op, null);
       return toReal(value, null);
     }
     case 'boolInt': {
       const value = getPath(element, op.path);
-      return value == null ? null : value ? 1 : 0;
+      if (value === undefined) return missingField(op, null);
+      return value === null ? null : value ? 1 : 0;
     }
     case 'metaText': {
       const value = getPath(element, op.path);
-      return value == null ? null : typeof value === 'string' ? value : String(value);
+      if (value === undefined) return missingField(op, null);
+      return value === null ? null : typeof value === 'string' ? value : String(value);
     }
     case 'real0': {
       const value = getPath(element, op.path);
@@ -330,15 +363,19 @@ export function evalShredOp(op: ShredOp, element: unknown, binds: readonly SqlVa
       const value = coalesce(element, op.paths);
       if (isPresent(value)) return typeof value === 'string' ? value : String(value);
       if (op.fallbackBindIndex != null) return binds[op.fallbackBindIndex] ?? null;
-      return op.emptyDefault ? '' : null;
+      if (op.emptyDefault) return '';
+      return op.paths.every((path) => getPath(element, path) === undefined) ? undefined : null;
     }
     case 'concat':
       return op.parts.map((part) => toConcatString(coalesce(element, part.paths))).join(op.sep);
     case 'rawJsonField': {
       const value = getPath(element, op.path);
+      if (value === undefined) return missingField(op, null);
       // Bytes differ from the native shredder, which slices the source document; both parse to the same value.
-      return value == null ? null : JSON.stringify(value);
+      return value === null ? null : JSON.stringify(value);
     }
+    case 'rawJson':
+      return JSON.stringify(element);
     default: {
       const _exhaustive: never = op;
       return _exhaustive;
@@ -360,9 +397,9 @@ function passesGuard(spec: ShredSpec, element: unknown): boolean {
  * parity test compares this row with the one its {@linkcode ShredColumn.js | js} functions build, so the native and JS
  * paths are known to write the same rows.
  */
-export function evalShredElement(spec: ShredSpec, element: unknown, binds: readonly SqlValue[]): Record<string, SqlValue> | undefined {
+export function evalShredElement(spec: ShredSpec, element: unknown, binds: readonly SqlValue[]): Record<string, SqlValue | undefined> | undefined {
   if (!passesGuard(spec, element)) return undefined;
-  const row: Record<string, SqlValue> = {};
+  const row: Record<string, SqlValue | undefined> = {};
   for (let index = 0; index < spec.columns.length; index += 1) {
     row[spec.columns[index]] = evalShredOp(spec.ops[index], element, binds);
   }
@@ -374,8 +411,8 @@ export function evalShredElement(spec: ShredSpec, element: unknown, binds: reado
  * produces, skipping the elements its {@linkcode ShredSpec.whereGuard | whereGuard} rejects. Pass the elements, not the
  * body: the parsed array, or `Object.values(body)` for an `objectValues` spec.
  */
-export function evalShredSpec(spec: ShredSpec, elements: readonly unknown[], binds: readonly SqlValue[]): Record<string, SqlValue>[] {
-  const out: Record<string, SqlValue>[] = [];
+export function evalShredSpec(spec: ShredSpec, elements: readonly unknown[], binds: readonly SqlValue[]): Record<string, SqlValue | undefined>[] {
+  const out: Record<string, SqlValue | undefined>[] = [];
   for (const element of elements) {
     const row = evalShredElement(spec, element, binds);
     if (row) out.push(row);

@@ -7,7 +7,7 @@ import { noteTableRead } from './read_coverage';
 import { columnNames, FindOpts, IndexDef, ReplaceRow, RowShape, RowTable, RowTableSchema, SqlValue } from './types';
 import { assertRowsMatchWhere, assertEntityIdColumn, comparator, whereClause } from './query';
 import { ALL_ENTITIES, NO_CHANGES, unionChanges, WriteResult } from './change_set';
-import { stageNames, entityDiffSql, EntityDiffSql, WriteMode } from './entity_diff_sql';
+import { ELEMENT_JSON_COLUMN, stageNames, entityDiffSql, EntityDiffSql, WriteMode } from './entity_diff_sql';
 import { sharedRowsSql, SharedRowsSql, sharedTableNames } from './shared_rows_sql';
 import {
   addColumnSql,
@@ -147,8 +147,8 @@ export function createSqliteRowTable<Row extends RowShape>(
   const shared = schema.partitioned ? { async: sharedRowsSql(schema, asyncStage, 'async'), sync: sharedRowsSql(schema, syncStage, 'sync') } : undefined;
   let elsewhereListener: ((changes: ReadonlyMap<string, ReadonlySet<string>>) => void) | undefined;
   const ensureFor = (diff: EntityDiffSql, sharedSql?: SharedRowsSql): BatchCommand[] => [...diff.ensure, ...(sharedSql?.ensure ?? [])];
-  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number, carries?: readonly string[]) =>
-    sharedSql ? sharedSql.diff(mode, where, writeId, carries) : diff.diff(mode, where, writeId);
+  const diffFor = (diff: EntityDiffSql, sharedSql: SharedRowsSql | undefined, mode: WriteMode, where: Partial<Row>, writeId: number) =>
+    sharedSql ? sharedSql.diff(mode, where, writeId) : diff.diff(mode, where, writeId);
 
   /**
    * Async writes run one at a time. Each stages its rows and then diffs the stage in a second step, and the native
@@ -303,18 +303,28 @@ export function createSqliteRowTable<Row extends RowShape>(
   const stageSpecs = new Map<string, ShredSpec>();
   const stageSpecFor = (variant: string, spec: ShredSpec): ShredSpec => {
     let staged = stageSpecs.get(variant);
-    if (!staged) stageSpecs.set(variant, (staged = { ...spec, table: asyncStage.stage }));
+    if (!staged) {
+      // Shared rows also stage each element's JSON, which says which columns the element leaves absent.
+      const element = shared ? { columns: [...spec.columns, ELEMENT_JSON_COLUMN], ops: [...spec.ops, { op: 'rawJson' as const }] } : {};
+      stageSpecs.set(variant, (staged = { ...spec, ...element, table: asyncStage.stage }));
+    }
     return staged;
+  };
+  const absentReads = new Map<string, BatchCommand>();
+  const absentFromElementsFor = (sharedSql: SharedRowsSql, variant: string, spec: ShredSpec): BatchCommand => {
+    let read = absentReads.get(variant);
+    if (!read) absentReads.set(variant, (read = sharedSql.absentFromElements(spec)));
+    return read;
   };
 
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
-  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[], carries?: readonly string[]): Promise<WriteResult> {
+  async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[]): Promise<WriteResult> {
     const writeId = nextWriteId();
     await runBatchAsync(conn, [
       ...ensureFor(asyncDiff, shared?.async),
       asyncDiff.clear,
       ...asyncDiff.stageRows(rows),
-      ...diffFor(asyncDiff, shared?.async, mode, where, writeId, carries),
+      ...diffFor(asyncDiff, shared?.async, mode, where, writeId),
     ]);
     return readBack(asyncDiff, writeId, shared?.async);
   }
@@ -362,7 +372,6 @@ export function createSqliteRowTable<Row extends RowShape>(
     parseRows: (rawJson: string) => ReplaceRow<Row>[],
     partition: object,
     inJs: boolean,
-    carries?: readonly string[],
   ): Promise<WriteResult> {
     const direct = partitionIsEmpty(where);
     let nativeError: unknown;
@@ -383,7 +392,8 @@ export function createSqliteRowTable<Row extends RowShape>(
           await runBatchAsync(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
           const writeId = nextWriteId();
-          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, carries));
+          const absent = shared ? [absentFromElementsFor(shared.async, variant, spec)] : [];
+          await runBatchAsync(conn, [...absent, ...diffFor(asyncDiff, shared?.async, 'replace', where, writeId)]);
           result = readBack(asyncDiff, writeId, shared?.async);
         }
         presence.afterDelete(where);
@@ -425,7 +435,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       await runBatchAsync(conn, replaceDirectly(where, rows));
       result = { changes: entityIdsOf(rows), rows: rows.length };
     } else {
-      result = await stageAndApply('replace', where, rows, carries);
+      result = await stageAndApply('replace', where, rows);
     }
     presence.afterDelete(where);
     return result;
@@ -507,7 +517,7 @@ export function createSqliteRowTable<Row extends RowShape>(
       return { changes, rows: rows.length };
     },
 
-    overwrite(where: Partial<Row>, replacing: readonly ReplaceRow<Row>[], carries?: ReadonlyArray<keyof Row & string>): WriteResult {
+    overwrite(where: Partial<Row>, replacing: readonly ReplaceRow<Row>[]): WriteResult {
       const rows = stampPartition(where, replacing);
       if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
       if (partitionIsEmpty(where)) {
@@ -520,7 +530,7 @@ export function createSqliteRowTable<Row extends RowShape>(
         ...ensureFor(syncDiff, shared?.sync),
         syncDiff.clear,
         ...syncDiff.stageRows(rows),
-        ...diffFor(syncDiff, shared?.sync, 'replace', where, writeId, carries),
+        ...diffFor(syncDiff, shared?.sync, 'replace', where, writeId),
       ]);
       const result = readBack(syncDiff, writeId, shared?.sync);
       presence.afterDelete(where);
@@ -533,11 +543,10 @@ export function createSqliteRowTable<Row extends RowShape>(
       parseRows: (rawJson: string) => ReplaceRow<Row>[],
       partition?: object,
       inJs = false,
-      carries?: ReadonlyArray<keyof Row & string>,
     ): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs, carries)));
+      return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs)));
     },
 
     onChangesElsewhere(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void {

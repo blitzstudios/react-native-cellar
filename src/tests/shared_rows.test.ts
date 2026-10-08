@@ -6,6 +6,7 @@ import { runTracked } from '../reactivity/tracking';
 import { readRows } from '../table/connection';
 import { StoreTableSchema } from '../table/partitioned';
 import { ShredSpec } from '../write/shred_spec';
+import { defineShredColumns, ShredColumn } from '../write/shred_columns';
 
 jest.mock('../diagnostics/telemetry', () => ({ reportStoreDegradation: jest.fn() }));
 
@@ -63,7 +64,8 @@ function playerStore(over: { native?: boolean } = {}) {
     partition: ({ sport }: { sport?: string }): PlayerPartition | null => (sport ? { sport } : null),
     fetch: (p: PlayerPartition) => {
       type Body = { player_id: string; team: string; height?: string };
-      const toRow = (one: Body) => ({ sport: p.sport, player_id: one.player_id, team: one.team ?? null, height: one.height ?? null });
+      // A field the body leaves out stays undefined, so the write keeps what another body stored.
+      const toRow = (one: Body) => ({ sport: p.sport, player_id: one.player_id, team: one.team, height: one.height }) as Player;
       return p.request === 'player'
         ? {
             query: { queryFn: async () => ({ data: JSON.stringify(server.detail[p.playerId]) }) },
@@ -73,7 +75,6 @@ function playerStore(over: { native?: boolean } = {}) {
             query: { queryFn: async () => ({ data: JSON.stringify(server.catalog[p.sport]) }) },
             toRows: (raw: string) => Object.values(JSON.parse(raw) as Record<string, Body>).map(toRow),
             ...(over.native ? { native: { variant: 'all', binds: [p.sport] } } : {}),
-            fills: ['team'] as const,
           };
     },
     nativeShredSpecs: over.native ? CATALOG_NATIVE : undefined,
@@ -327,5 +328,114 @@ describe('shared rows — the layout on disk', () => {
 
     expect(readRows(conn, 'SELECT pts, updated_at FROM lines__rows;')).toEqual([{ pts: 12, updated_at: 200 }]);
     expect(table.find({ partition_key: 'week' })).toHaveLength(1);
+  });
+});
+
+type LineBody = { week: number; player_id: string; updated_at?: number; player?: { position: string | null }; stats?: Record<string, number> };
+type LinePartition = { request: 'week'; week: number } | { request: 'player'; playerId: string };
+
+const LINE_COLUMNS = [
+  { name: 'week', type: 'INTEGER', notNull: true, op: { op: 'int', path: 'week' } },
+  { name: 'player_id', type: 'TEXT', notNull: true, op: { op: 'text', path: 'player_id' } },
+  { name: 'position', type: 'TEXT', op: { op: 'text', path: 'player.position' } },
+  { name: 'pts', type: 'REAL', op: { op: 'real', path: 'stats.pts', complete: 'stats' } },
+  { name: 'updated_at', type: 'INTEGER', op: { op: 'int', path: 'updated_at' } },
+] as const satisfies readonly ShredColumn<LineBody>[];
+
+const lineShred = defineShredColumns<LineBody>()(LINE_COLUMNS);
+
+function lineStore(over: { native?: boolean } = {}) {
+  const bodies: Record<LinePartition['request'], LineBody[]> = { week: [], player: [] };
+  const store = defineSqliteStore({
+    name: 'lines_store',
+    schema: { table: 'lines', columns: lineShred.columnDefs, uniqueBy: ['week', 'player_id'], entityId: 'player_id', newerBy: 'updated_at' },
+    partition: (args: { week?: number; playerId?: string }): LinePartition | null =>
+      args.playerId ? { request: 'player', playerId: args.playerId } : args.week ? { request: 'week', week: args.week } : null,
+    fetch: (p: LinePartition) => ({
+      query: { queryFn: async () => ({ data: JSON.stringify(bodies[p.request]) }) },
+      toRows: (raw: string) => (JSON.parse(raw) as LineBody[]).map((line) => lineShred.row(line, undefined)),
+      ...(over.native ? { native: { variant: 'all' } } : {}),
+    }),
+    push: {
+      idOf: (line: LineBody) => `${line.week}_${line.player_id}`,
+      partitionsOf: (line: LineBody) => [{ request: 'week', week: line.week } as LinePartition],
+      toRows: (key, lines) => lines.map((line) => ({ ...lineShred.row(line, undefined), partition_key: key })),
+    },
+    nativeShredSpecs: over.native ? { all: { version: 1, table: 'lines', insertVerb: 'INSERT OR REPLACE', columns: lineShred.names, ops: lineShred.ops } } : undefined,
+    build: () => ({ reads: {} }),
+  });
+  const conn = createSqlJsConnection({ capabilities: over.native ? 'full' : 'minimal' });
+  const { surface } = store.testing.over(conn);
+  const fetch = (args: { week?: number; playerId?: string }) => surface.lifecycle.fetch(args as never, { staleTime: 0 });
+  const stored = () => readRows(conn, 'SELECT week, player_id, position, pts, updated_at FROM lines__rows;');
+  return { surface, conn, bodies, fetch, stored };
+}
+
+const FULL_LINE: LineBody = { week: 4, player_id: 'a', updated_at: 100, player: { position: 'QB' }, stats: { pts: 20 } };
+
+describe.each([
+  ['in JS', {}],
+  ['natively', { native: true }],
+])('shared rows — a body that leaves fields out, written %s', (_path, over) => {
+  it('keeps the columns of a block the body leaves out, though the copy is no older', async () => {
+    const { bodies, fetch, stored } = lineStore(over);
+    bodies.week = [FULL_LINE];
+    await fetch({ week: 4 });
+    bodies.player = [{ week: 4, player_id: 'a', updated_at: 100, stats: { pts: 20 } }];
+    await fetch({ playerId: 'a' });
+
+    expect(stored()).toEqual([{ week: 4, player_id: 'a', position: 'QB', pts: 20, updated_at: 100 }]);
+  });
+
+  it('clears a field the body states as null, and a key its complete stats map leaves out', async () => {
+    const { bodies, fetch, stored } = lineStore(over);
+    bodies.week = [FULL_LINE];
+    await fetch({ week: 4 });
+    bodies.week = [{ week: 4, player_id: 'a', updated_at: 100, player: { position: null }, stats: {} }];
+    await fetch({ week: 4 });
+
+    expect(stored()).toEqual([{ week: 4, player_id: 'a', position: null, pts: null, updated_at: 100 }]);
+  });
+
+  it('keeps every stat when the body has no stats map, and leaves a new row’s absent columns null', async () => {
+    const { bodies, fetch, stored } = lineStore(over);
+    bodies.week = [FULL_LINE];
+    await fetch({ week: 4 });
+    bodies.player = [
+      { week: 4, player_id: 'a', updated_at: 100, player: { position: 'QB' } },
+      { week: 5, player_id: 'a' },
+    ];
+    await fetch({ playerId: 'a' });
+
+    expect(stored()).toEqual([
+      { week: 4, player_id: 'a', position: 'QB', pts: 20, updated_at: 100 },
+      { week: 5, player_id: 'a', position: null, pts: null, updated_at: null },
+    ]);
+  });
+});
+
+describe('shared rows — a native shred that leaves fields out', () => {
+  it('reads the absent columns from the staged element, without falling back to JS', async () => {
+    const { conn, bodies, fetch, stored } = lineStore({ native: true });
+    bodies.week = [FULL_LINE];
+    await fetch({ week: 4 });
+    bodies.player = [{ week: 4, player_id: 'a', updated_at: 100 }];
+    await fetch({ playerId: 'a' });
+
+    expect(conn.calls.shredJsonArrayAsync).toBe(2);
+    expect(jest.requireMock('../diagnostics/telemetry').reportStoreDegradation).not.toHaveBeenCalled();
+    expect(stored()).toEqual([{ week: 4, player_id: 'a', position: 'QB', pts: 20, updated_at: 100 }]);
+  });
+});
+
+describe('shared rows — a push that leaves fields out', () => {
+  it('keeps what the pushed line leaves out', async () => {
+    const { surface, bodies, fetch, stored } = lineStore();
+    bodies.week = [FULL_LINE];
+    await fetch({ week: 4 });
+    surface.push!.ingest([{ week: 4, player_id: 'a', updated_at: 101, stats: { pts: 25 } }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(stored()).toEqual([{ week: 4, player_id: 'a', position: 'QB', pts: 25, updated_at: 101 }]);
   });
 });

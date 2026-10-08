@@ -22,22 +22,34 @@ describe('evalShredElement — op semantics (the C++ shredder mirrors these exac
     expect(evalOne({ op: 'bind', index: 1 }, {}, ['a'])).toBeNull();
   });
 
-  it('text: string-or-null (a non-string extract is null)', () => {
+  it('text: string-or-null (a non-string extract is null), absent when the path leads nowhere', () => {
     expect(evalOne({ op: 'text', path: 'item.position' }, { item: { position: 'RB' } })).toBe('RB');
     expect(evalOne({ op: 'text', path: 'item.position' }, { item: { position: 5 } })).toBeNull();
-    expect(evalOne({ op: 'text', path: 'item.position' }, {})).toBeNull();
+    expect(evalOne({ op: 'text', path: 'item.position' }, { item: { position: null } })).toBeNull();
+    expect(evalOne({ op: 'text', path: 'item.position' }, {})).toBeUndefined();
+    expect(evalOne({ op: 'text', path: 'item.position' }, { item: null })).toBeUndefined();
   });
 
   it('int: number-or-null (no coercion of numeric strings)', () => {
     expect(evalOne({ op: 'int', path: 'years' }, { years: 0 })).toBe(0);
     expect(evalOne({ op: 'int', path: 'years' }, { years: '3' })).toBeNull();
-    expect(evalOne({ op: 'int', path: 'years' }, {})).toBeNull();
+    expect(evalOne({ op: 'int', path: 'years' }, {})).toBeUndefined();
   });
 
   it('real: null-or-Number(v)', () => {
     expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, { metrics: { pass_yd: 12 } })).toBe(12);
-    expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, { metrics: {} })).toBeNull();
-    expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, {})).toBeNull();
+    expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, { metrics: { pass_yd: null } })).toBeNull();
+    expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, { metrics: {} })).toBeUndefined();
+    expect(evalOne({ op: 'real', path: 'metrics.pass_yd' }, {})).toBeUndefined();
+  });
+
+  it('complete: inside the object a missing key is the op’s missing value, and without the object the column is absent', () => {
+    const op: ShredOp = { op: 'real', path: 'metrics.pass_yd', complete: 'metrics' };
+    expect(evalOne(op, { metrics: { pass_yd: 12 } })).toBe(12);
+    expect(evalOne(op, { metrics: {} })).toBeNull();
+    expect(evalOne(op, {})).toBeUndefined();
+    expect(evalOne({ op: 'real0', path: 'metrics.pass_yd', complete: 'metrics' }, { metrics: {} })).toBe(0);
+    expect(evalOne({ op: 'real0', path: 'metrics.pass_yd', complete: 'metrics' }, {})).toBeUndefined();
   });
 
   it('real0: COALESCE(Number(v), 0)', () => {
@@ -60,13 +72,16 @@ describe('evalShredElement — op semantics (the C++ shredder mirrors these exac
   it('metaText: null-or-String(v) (stringifies non-strings)', () => {
     expect(evalOne({ op: 'metaText', path: 'item.first_name' }, { item: { first_name: 'Pat' } })).toBe('Pat');
     expect(evalOne({ op: 'metaText', path: 'item.status' }, { item: { status: 5 } })).toBe('5');
-    expect(evalOne({ op: 'metaText', path: 'item.status' }, {})).toBeNull();
+    expect(evalOne({ op: 'metaText', path: 'item.status' }, { item: { status: null } })).toBeNull();
+    expect(evalOne({ op: 'metaText', path: 'item.status' }, {})).toBeUndefined();
   });
 
-  it('coalesceText: first present value (String), null or "" when none', () => {
+  it('coalesceText: first present value (String), "" or the fallback when none, absent when no path leads anywhere', () => {
     expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, { item: { cohort: 'BUF' } })).toBe('BUF');
     expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, { cohort: 'KC', item: { cohort: 'BUF' } })).toBe('KC');
-    expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, {})).toBeNull();
+    expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, {})).toBeUndefined();
+    expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, { cohort: null })).toBeNull();
+    expect(evalOne({ op: 'coalesceText', paths: ['cohort'], fallbackBindIndex: 0 }, {}, ['nfl'])).toBe('nfl');
     expect(evalOne({ op: 'coalesceText', paths: ['item_id', 'item.item_id'], emptyDefault: true }, {})).toBe('');
     expect(evalOne({ op: 'coalesceText', paths: ['cohort', 'item.cohort'] }, { cohort: null, item: { cohort: 'BUF' } })).toBe('BUF');
   });
@@ -81,9 +96,14 @@ describe('evalShredElement — op semantics (the C++ shredder mirrors these exac
     expect(evalOne(op, { region: 'us' })).toBe('us__');
   });
 
-  it('rawJsonField: the field re-serialized, null when absent', () => {
+  it('rawJsonField: the field re-serialized, null for a JSON null, absent when missing', () => {
     expect(evalOne({ op: 'rawJsonField', path: 'item.fantasy_positions' }, { item: { fantasy_positions: ['RB', 'WR'] } })).toBe('["RB","WR"]');
-    expect(evalOne({ op: 'rawJsonField', path: 'item.fantasy_positions' }, { item: {} })).toBeNull();
+    expect(evalOne({ op: 'rawJsonField', path: 'item.fantasy_positions' }, { item: { fantasy_positions: null } })).toBeNull();
+    expect(evalOne({ op: 'rawJsonField', path: 'item.fantasy_positions' }, { item: {} })).toBeUndefined();
+  });
+
+  it('rawJson: the whole element', () => {
+    expect(JSON.parse(evalOne({ op: 'rawJson' }, { a: 1, b: null }) as string)).toEqual({ a: 1, b: null });
   });
 
   it('rawJsonField: round-trips a nested object, which is what every reader of the column does with it', () => {

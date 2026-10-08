@@ -198,6 +198,10 @@ export interface FindOpts<Row extends RowShape> {
  * added, changed or removed. A write whose rows match what the table holds returns an empty set. The table doesn't
  * notify readers itself: the code that calls the write bumps the partition's version with the change set, which is what
  * re-renders the readers of those entities.
+ *
+ * In a store's table, a write states only the columns a row has. A column the row leaves `undefined`, or a native
+ * shred's element leaves out, keeps the stored row's value, or is NULL for a new row, while an explicit `null` clears
+ * it. The `uniqueBy` columns are always stated.
  */
 export interface RowTable<Row extends RowShape> {
   /**
@@ -234,7 +238,7 @@ export interface RowTable<Row extends RowShape> {
    *
    * Returns the entity ids that were added, removed or changed, and the number of rows given.
    */
-  overwrite(where: Partial<Row>, rows: readonly ReplaceRow<Row>[], carries?: ReadonlyArray<keyof Row & string>): WriteResult;
+  overwrite(where: Partial<Row>, rows: readonly ReplaceRow<Row>[]): WriteResult;
   /**
    * Replaces the rows matching `where` with the rows in a JSON response body, the same way
    * {@linkcode RowTable.overwrite} does. When the connection and the store support it, the native shredder parses the
@@ -242,8 +246,7 @@ export interface RowTable<Row extends RowShape> {
    *
    * Returns the entity ids that were added, removed or changed, and the number of rows written. `partition` is the
    * description the native shred spec picks its variant and binds from; without it, they get `where`. `inJs` always
-   * parses with `parseRows`. `carries` lists the columns this write fills, where it fills only some; the rest keep what
-   * another partition wrote.
+   * parses with `parseRows`.
    */
   shred(
     where: Partial<Row>,
@@ -251,7 +254,6 @@ export interface RowTable<Row extends RowShape> {
     parseRows: (rawJson: string) => ReplaceRow<Row>[],
     partition?: object,
     inJs?: boolean,
-    carries?: ReadonlyArray<keyof Row & string>,
   ): Promise<WriteResult>;
   /** Called after a write with the entities it changed in other partitions holding the same rows, by partition key. */
   onChangesElsewhere?(listener: (changes: ReadonlyMap<string, ReadonlySet<string>>) => void): void;

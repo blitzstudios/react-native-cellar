@@ -33,7 +33,7 @@ describe('defineShredColumns — a column declared by its op alone', () => {
     const { label, ...fromOps } = shred.row(item, undefined);
     const { label: nativeLabel, ...native } = nativeRow(item)!;
     expect(fromOps).toEqual(native);
-    expect(typeof nativeLabel === 'string' || nativeLabel === null).toBe(true);
+    expect(typeof nativeLabel === 'string' || nativeLabel == null).toBe(true);
     expect(label).toBe(`#${String(item.team ?? '')}`);
   });
 

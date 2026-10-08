@@ -46,6 +46,15 @@ export function stageNames(table: string, fingerprint: number, path: 'async' | '
 /** Whether replacing a partition or merging rows in: a fetch replaces, and a socket push merges by primary key. */
 export type WriteMode = 'replace' | 'merge';
 
+/**
+ * The stage column listing the columns a staged row leaves absent, as `,team,height,`: a shared-rows write keeps the
+ * stored value for each. NULL when the row states every column.
+ */
+export const ABSENT_COLUMN = '__absent';
+
+/** The stage column a native shred writes each element's JSON to, which the absent columns are read from. */
+export const ELEMENT_JSON_COLUMN = '__element';
+
 export interface EntityDiffSql {
   /** Creates the stage and the changes table if the connection does not have them yet: TEMP tables go with it. */
   ensure: BatchCommand[];
@@ -72,8 +81,12 @@ export function entityDiffSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   const keyed = primaryKey.length > 0;
   const insertVerb = keyed ? 'INSERT OR REPLACE' : 'INSERT';
 
+  const tracksAbsence = !!schema.partitioned;
+  const absentable = cols.filter((column) => !(primaryKey as readonly string[]).includes(column));
+
   const stageDdl = (): string => {
     const lines = cols.map((column) => `${column} ${schema.columns[column].type}`);
+    if (tracksAbsence) lines.push(`${ABSENT_COLUMN} TEXT`, `${ELEMENT_JSON_COLUMN} TEXT`);
     if (keyed) lines.push(`PRIMARY KEY (${primaryKey.join(', ')})`);
     return `CREATE TABLE IF NOT EXISTS ${stage} (${lines.join(', ')});`;
   };
@@ -90,6 +103,31 @@ export function entityDiffSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       const params: SqlValue[] = [];
       for (const row of group) for (const column of cols) params.push(row[column] ?? null);
       out.push([insertSql(target, group.length), params]);
+    }
+    return out;
+  };
+
+  const stagedCols = tracksAbsence ? [...cols, ABSENT_COLUMN] : cols;
+  const stagePerInsert = Math.max(1, Math.floor(maxBinds / stagedCols.length));
+  const stageInsertSql = (rowCount: number): string =>
+    `${insertVerb} INTO ${stage} (${stagedCols.join(', ')}) VALUES ${new Array(rowCount).fill(`(${bindList(stagedCols.length)})`).join(', ')};`;
+  /** Each row's absent columns, as {@linkcode ABSENT_COLUMN} spells them: the ones it leaves `undefined`. */
+  const absentOf = (row: RowShape): string | null => {
+    let absent: string | null = null;
+    for (const column of absentable) if (row[column] === undefined) absent = `${absent ?? ','}${column},`;
+    return absent;
+  };
+  const stageRows = (rows: readonly RowShape[]): BatchCommand[] => {
+    if (!tracksAbsence) return insertInto(stage, rows);
+    const out: BatchCommand[] = [];
+    for (let start = 0; start < rows.length; start += stagePerInsert) {
+      const group = rows.slice(start, start + stagePerInsert);
+      const params: SqlValue[] = [];
+      for (const row of group) {
+        for (const column of cols) params.push(row[column] ?? null);
+        params.push(absentOf(row));
+      }
+      out.push([stageInsertSql(group.length), params]);
     }
     return out;
   };
@@ -151,7 +189,7 @@ export function entityDiffSql<Row extends RowShape>(schema: RowTableSchema<Row>,
       [changesDdl, []],
     ],
     clear: [`DELETE FROM ${stage};`, []],
-    stageRows: (rows) => insertInto(stage, rows),
+    stageRows,
     insertInto,
     diff: (mode, where, id) => {
       if (mode === 'merge' && !keyed) throw new Error(`row_table: \`${table}\` has no primary key, so a merge has nothing to match rows on.`);

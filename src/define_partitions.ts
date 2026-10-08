@@ -84,7 +84,11 @@ export interface PartitionKeySpec<Row extends RowShape, Key, Args, Descriptor> {
   where: (key: Key) => Partial<Row>;
 }
 
-/** How one partition is fetched and written. A fetch replaces the partition's rows with the response's. */
+/**
+ * How one partition is fetched and written. A fetch replaces the partition's rows with the response's. A row states
+ * only the fields its element has: a field the body leaves out keeps the value another body stored, and an explicit
+ * `null` clears it.
+ */
 export interface PartitionFetch<Row extends RowShape, Key = string> {
   /** The request. Its `queryFn` gets the stored ETag to send as `If-None-Match`; a 304 keeps the rows. */
   query: RawQuery;
@@ -98,8 +102,6 @@ export interface PartitionFetch<Row extends RowShape, Key = string> {
    * partition key).
    */
   native?: { variant: string; binds?: readonly SqlValue[] };
-  /** The columns the body fills, when it fills only some; the rest keep their stored values. Every column by default. */
-  fills?: ReadonlyArray<keyof Row & string>;
 }
 
 /**
@@ -461,7 +463,7 @@ export function definePartitions<Row extends RowShape, Key, Args = Key, Descript
     const partitionFetch = fetchOfQuery.get(query);
     if (!partitionFetch) throw new Error(`${name}_store: a fetched body arrived for a request this store did not make`);
     const parse = (raw: string): Row[] => partitionFetch.toRows(raw, key) as Row[];
-    const result = await table.shred(where(key), rawJson, parse, partitionFetch.native, !partitionFetch.native, partitionFetch.fills);
+    const result = await table.shred(where(key), rawJson, parse, partitionFetch.native, !partitionFetch.native);
     fetchedAt.set(cacheKeyOf(toParts(key)), Date.now());
     return result;
   }

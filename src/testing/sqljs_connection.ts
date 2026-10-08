@@ -75,7 +75,7 @@ function sanitize(params?: ReadonlyArray<string | number | null>): Array<string 
   return params.map((param) => (param === undefined ? null : param));
 }
 
-function shredSql(spec: ShredSpec, rows: ReadonlyArray<Record<string, string | number | null>>, binds: ReadonlyArray<string | number | null>) {
+function shredSql(spec: ShredSpec, rows: ReadonlyArray<Record<string, string | number | null | undefined>>, binds: ReadonlyArray<string | number | null>) {
   const cmds: Array<[string, Array<string | number | null>]> = [];
   const deleteWhere = spec.deleteWhere ?? [];
   if (deleteWhere.length) {

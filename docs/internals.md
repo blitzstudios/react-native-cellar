@@ -98,7 +98,17 @@ store is reaching past its entry point; import it from its own module only if yo
   the rows its fetch returned in a membership table, and the table a store reads by name is a view joining the two,
   with `partition_key` as its first column. A replace (`overwrite`, `shred`) fills in each staged row's
   `partition_key` from its `where`, so a store's `toRows` never builds it; the native shred gets it as bind 0, so a
-  store's specs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own. The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
+  store's specs bind their own values from 1. `upsert` fills nothing in, so a push's rows carry their own.
+
+  A write states only the columns its rows have. A JS row leaves a column it doesn't state `undefined`, which the
+  stage records in a hidden `__absent` column; the native shred can't tell a missing field from a JSON `null`, so it
+  stages each element's JSON beside its row (`__element`, the C++'s `rawJson` op), and one statement reads the absent
+  columns out of it with `json_type`, which answers SQL NULL for a missing path and `'null'` for a JSON null, by the
+  same rules as `evalShredOp`. Before the diff, each absent column takes the stored row's value, or NULL for a new
+  row, so a body that sends a subset of another's fields, or leaves out a nested block, never erases what that other
+  body stored. A `complete` object, such as a stats map that leaves out zeros, states every key it lacks as null.
+
+  The ETag side table (`<table>_meta`) is keyed by it too, and keeps each partition's description as
   JSON beside the ETag — written the first time the partition's version is bumped, kept when its ETag is cleared.
 
   `partition` turns a read's args into the description of the partition the read reads — `{ groupId }` from
@@ -112,8 +122,7 @@ store is reaching past its entry point; import it from its own module only if yo
   Everything mechanical around it belongs here — trying the native shred, falling back to a JS parse and
   reporting the degradation when it can't run, holding the ETag, recording when rows landed, bumping, and holding the
   partition's pushes while it is in flight. A partition fetch names its native shred spec, or leaves it out for a body the native
-  pass can't iterate, and names the columns it `fills` when it fills only some. Leave `fetch` off entirely for a
-  push-fed store.
+  pass can't iterate. Leave `fetch` off entirely for a push-fed store.
 
   `push` sits beside it, for rows that arrive by socket: `idOf`, `toRows` and `partitionsOf`, and nothing about how
   they are written. `toRows` is handed the partition's description, so an item needn't carry what every row in the

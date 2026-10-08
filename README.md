@@ -363,6 +363,11 @@ socket delta wants, so its rows carry their own `partition_key`. `overwrite(wher
 `where` be exactly `rows`, filling in each row's `partition_key`. `shred` is that same replacement from an undecoded
 response body.
 
+In a store's table, a write states only the columns a row has: a column a row leaves `undefined`, or a body leaves
+out, keeps the stored row's value, and an explicit `null` clears it. A list endpoint that sends a subset of a detail
+endpoint's fields, or a body without a nested block another body includes, never erases what the other stored. An op's
+`complete` names an object whose missing keys mean null, such as a stats map that leaves out zeros.
+
 On SQLite each write lands its rows in a staging table, and one transaction compares them with the table (every
 column, null-safe) and replaces the rows of each changed entity. A partition that holds nothing yet skips the stage:
 with nothing to compare against, its rows go straight in and every entity counts as new.

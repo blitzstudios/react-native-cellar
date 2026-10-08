@@ -94,7 +94,7 @@ export type ShredColumn<Src, Ctx = void> =
 type AnnotateTheBuilder = 'this column`s js builder returns any: give it an explicit return type';
 
 /** What an op stores, as the row type spells it. */
-type OpValue<Op> = Op extends { op: 'text' | 'metaText' | 'rawJsonField' }
+type OpValue<Op> = Op extends { op: 'text' | 'metaText' | 'rawJsonField' | 'rawJson' }
   ? string | null
   : Op extends { op: 'int' | 'real' }
     ? number | null
@@ -178,7 +178,8 @@ export interface ShredColumnsBase<Columns extends readonly ShredColumn<never, ne
   /**
    * Builds one table row from one element of a response body, in JS: runs every column's
    * {@linkcode ShredColumn.js | js} function on the element and `ctx`, or for a column without one its
-   * {@linkcode ShredColumn.op | op}, and returns an object with each column's value.
+   * {@linkcode ShredColumn.op | op}, and returns an object with each column's value. A column the element leaves
+   * absent is `undefined`, and a write keeps the stored value for it.
    * A store's {@linkcode PartitionFetch.toRows | toRows} uses it for every element, which is how rows are built on
    * web, in tests, and on a device when the native shred can't run.
    */
@@ -245,7 +246,7 @@ const NO_BINDS: readonly SqlValue[] = [];
  * without one, its {@linkcode ShredColumn.op | op}'s, run as the native shredder runs it. For building part of a row,
  * when some column's value is already to hand; {@linkcode ShredColumnsBase.row | row} builds all of them.
  */
-export function shredColumnValue<Src, Ctx>(column: ShredColumn<Src, Ctx>, src: Src, ctx: Ctx): SqlValue {
+export function shredColumnValue<Src, Ctx>(column: ShredColumn<Src, Ctx>, src: Src, ctx: Ctx): SqlValue | undefined {
   return column.js ? column.js(src, ctx) : evalShredOp(column.op, src, NO_BINDS);
 }
 
@@ -319,7 +320,7 @@ export function defineShredColumns<Src, Ctx = void>() {
         return namedOps().map((column) => column.op);
       },
       row: (src, ctx) => {
-        const row: Record<string, SqlValue> = {};
+        const row: Record<string, SqlValue | undefined> = {};
         for (const column of columns) row[column.name] = shredColumnValue(column, src, ctx);
         return row as RowOf<Columns>;
       },
