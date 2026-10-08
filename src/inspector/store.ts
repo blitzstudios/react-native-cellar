@@ -352,7 +352,9 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       if (!running) return [];
       const [counts, records] = await Promise.all([rowCounts(running.conn), metaRecords(running.conn)]);
       const interned = new Set(running.internedKeys());
-      const keys = new Set([...counts.keys(), ...records.keys(), ...interned]);
+      // A read names its partition even while it is disabled; one that was never loaded has nothing to show.
+      const loaded = [...interned].filter((key) => running.versionOf(key) > 0 || running.fetchedAt(key) !== undefined);
+      const keys = new Set([...counts.keys(), ...records.keys(), ...loaded]);
       return Array.from(keys, (key): InspectedPartition => {
         const record = records.get(key);
         const partition = parse(record?.record ?? null) ?? (interned.has(key) ? running.describe(key) : undefined);

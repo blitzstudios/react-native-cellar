@@ -152,6 +152,15 @@ describe('partitions', () => {
     expect((await inspected.summary()).databaseBytes).toBeGreaterThan(0);
   });
 
+  it('leaves out a partition a read only named, which holds nothing and was never fetched', async () => {
+    const { store } = gamesStore('named_store');
+    store.bindSqlite(createSqlJsConnection());
+    store.lifecycle.put(NFL, [{ team: 'KC', sport: 'nfl', score: 27 }]);
+    store.lifecycle.getVersion(NBA);
+
+    expect((await inspectedStore('named_store')!.partitions()).map((partition) => partition.key)).toEqual(['season=2026&sport=nfl']);
+  });
+
   it('lists the entities a partition changed since its epoch, newest first', () => {
     const { store } = gamesStore('entity_changes_store');
     store.bindSqlite(createSqlJsConnection());
