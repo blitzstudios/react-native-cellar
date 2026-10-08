@@ -343,20 +343,12 @@ export function createSqliteRowTable<Row extends RowShape>(
     }
     return staged;
   };
-  const absentReads = new Map<string, BatchCommand>();
-  const absentFromElementsFor = (sharedSql: SharedRowsSql, variant: string, spec: ShredSpec): BatchCommand => {
+  const absentReads = new Map<string, BatchCommand[]>();
+  const absentFromElementsFor = (sharedSql: SharedRowsSql, variant: string, spec: ShredSpec): BatchCommand[] => {
     let read = absentReads.get(variant);
     if (!read) absentReads.set(variant, (read = sharedSql.absentFromElements(spec)));
     return read;
   };
-
-  /** The stage's distinct sets of absent columns, read on the writer, the one handle that sees the `TEMP` stage. */
-  async function stagedAbsentSets(sharedSql: SharedRowsSql): Promise<string[]> {
-    const result = conn.executeAsync ? await conn.executeAsync(sharedSql.absentSets) : conn.execute(sharedSql.absentSets);
-    const rows = (result.rows?._array ?? []) as Array<{ absent: string }>;
-    result.dispose?.();
-    return rows.map((row) => row.absent);
-  }
 
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
   async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[]): Promise<WriteResult> {
@@ -430,15 +422,13 @@ export function createSqliteRowTable<Row extends RowShape>(
           const landed = await conn.shredJsonArrayAsync(spec, rawJson, binds);
           result = entitiesLanded(where, landed);
         } else {
-          await runBatchAsync(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
+          // Each awaited call waits for the JS thread before the next starts, which a busy frame can make long: the
+          // stage is readied synchronously, and everything after the shred is one batch.
+          runBatch(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
           await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
           const writeId = nextWriteId();
-          let absentSets: string[] = [];
-          if (shared) {
-            await runBatchAsync(conn, [absentFromElementsFor(shared.async, variant, spec)]);
-            absentSets = await stagedAbsentSets(shared.async);
-          }
-          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, absentSets));
+          const absent = shared ? absentFromElementsFor(shared.async, variant, spec) : [];
+          await runBatchAsync(conn, [...absent, ...diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [])]);
           result = readBack(asyncDiff, writeId, shared?.async);
         }
         presence.afterDelete(where);

@@ -32,11 +32,10 @@ export interface SharedRowsSql {
   planStats: ReadonlyArray<{ idx: string; stat: string }>;
   /**
    * Lists each staged row's absent columns from the element JSON a native shred staged beside it, by the same rules as
-   * the JS row builder, and drops the JSON.
+   * the JS row builder, drops the JSON, and fills them: one statement per group of columns that are absent together,
+   * so the native path needs no read in between to learn which sets the stage holds.
    */
-  absentFromElements: (spec: ShredSpec) => BatchCommand;
-  /** Reads the distinct sets of absent columns the stage holds, as {@linkcode ABSENT_COLUMN} spells them. */
-  absentSets: string;
+  absentFromElements: (spec: ShredSpec) => BatchCommand[];
   /**
    * Compares the stage with the stored rows and applies it, recording the entities that changed here and elsewhere.
    * `absentSets` are the stage's distinct sets of absent columns, each of which takes the stored row's values.
@@ -112,7 +111,37 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     }
   };
 
-  function absentFromElements(spec: ShredSpec): BatchCommand {
+  const storedRow = (columns: readonly string[], also = '') =>
+    `(SELECT ${from('r', columns)} FROM ${R} r WHERE ${on('r', stageTable)}${also} LIMIT 1)`;
+  const membership = (columns: readonly string[]) =>
+    `(SELECT ${from('m', columns)} FROM ${M} m JOIN ${R} r ON r.rid = m.rid WHERE ${on('r', stageTable)} ` +
+    `AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN} LIMIT 1)`;
+  /** Fills `columns`, absent where `when` holds, from the stored row or, scoped, this partition's membership. */
+  const fill = (columns: readonly string[], when: string): BatchCommand[] => {
+    const fromRow = columns.filter((column) => rest.includes(column));
+    const fromMembership = columns.filter((column) => scoped.includes(column));
+    return [
+      ...(fromRow.length ? [[`UPDATE ${stage} SET (${fromRow.join(', ')}) = ${storedRow(fromRow)} WHERE ${when};`, []] as BatchCommand] : []),
+      ...(fromMembership.length ? [[`UPDATE ${stage} SET (${fromMembership.join(', ')}) = ${membership(fromMembership)} WHERE ${when};`, []] as BatchCommand] : []),
+    ];
+  };
+
+  /** Fills each of `columns` where the stage lists it absent, in one statement per table, keeping the rest as staged. */
+  const fillEach = (columns: readonly string[]): BatchCommand[] => {
+    const pick = (alias: string, list: readonly string[]) =>
+      list.map((c) => `CASE WHEN instr(${stageTable}.${ABSENT_COLUMN}, ',${c},') > 0 THEN ${alias}.${c} ELSE ${stageTable}.${c} END`).join(', ');
+    const fromRow = columns.filter((column) => rest.includes(column));
+    const fromMembership = columns.filter((column) => scoped.includes(column));
+    const joinRow = `FROM (SELECT 1) LEFT JOIN ${R} r ON ${on('r', stageTable)}`;
+    const joinMembership = `${joinRow} LEFT JOIN ${M} m ON m.rid = r.rid AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN}`;
+    const statement = (list: readonly string[], alias: string, join: string): BatchCommand => [
+      `UPDATE ${stage} SET (${list.join(', ')}) = (SELECT ${pick(alias, list)} ${join} LIMIT 1) WHERE ${ABSENT_COLUMN} IS NOT NULL;`,
+      [],
+    ];
+    return [...(fromRow.length ? [statement(fromRow, 'r', joinRow)] : []), ...(fromMembership.length ? [statement(fromMembership, 'm', joinMembership)] : [])];
+  };
+
+  function absentFromElements(spec: ShredSpec): BatchCommand[] {
     // Grouped by condition: a stats map's columns share one, so a row tests it once rather than once per stat.
     const byCondition = new Map<string, string[]>();
     spec.ops.forEach((op, index) => {
@@ -123,27 +152,24 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
     });
     const listed = [...byCondition].map(([when, columns]) => `CASE WHEN ${when} THEN '${columns.join(',')},' ELSE '' END`);
     const absent = listed.length ? `NULLIF(',' || ${listed.join(' || ')}, ',')` : 'NULL';
-    return [`UPDATE ${stage} SET ${ABSENT_COLUMN} = ${absent}, ${ELEMENT_JSON_COLUMN} = NULL WHERE ${ELEMENT_JSON_COLUMN} IS NOT NULL;`, []];
+    // A group's columns are absent together, so its first one stands for all of them. The columns absent on their own
+    // fill in one statement, each taking the stored value only where it is absent.
+    const groups = [...byCondition.values()];
+    const fills = [
+      ...fillEach(groups.filter((columns) => columns.length === 1).map(([column]) => column)),
+      ...groups.filter((columns) => columns.length > 1).flatMap((columns) => fill(columns, `instr(${ABSENT_COLUMN}, ',${columns[0]},') > 0`)),
+    ];
+    return [[`UPDATE ${stage} SET ${ABSENT_COLUMN} = ${absent}, ${ELEMENT_JSON_COLUMN} = NULL WHERE ${ELEMENT_JSON_COLUMN} IS NOT NULL;`, []], ...fills];
   }
 
   function diff(mode: WriteMode, where: Partial<RowShape>, id: number, absentSets: readonly string[]): BatchCommand[] {
     const key = where[PARTITION_KEY_COLUMN] ?? null;
-    const storedRow = (columns: readonly string[], also = '') =>
-      `(SELECT ${from('r', columns)} FROM ${R} r WHERE ${on('r', stageTable)}${also} LIMIT 1)`;
-    const membership = (columns: readonly string[]) =>
-      `(SELECT ${from('m', columns)} FROM ${M} m JOIN ${R} r ON r.rid = m.rid WHERE ${on('r', stageTable)} ` +
-      `AND m.${PARTITION_KEY_COLUMN} = ${stageTable}.${PARTITION_KEY_COLUMN} LIMIT 1)`;
     const commands: BatchCommand[] = [[`INSERT INTO ${changes} (write_id, rows) SELECT ?, count(*) FROM ${stage};`, [id]]];
     // One statement per set of absent columns, copying just those: from the stored row, or for a scoped column from
     // this partition's membership. A new row or membership finds nothing, which is NULL.
     for (const absent of absentSets) {
-      const listed = absent.split(',');
-      const fromRow = listed.filter((column) => rest.includes(column));
-      const fromMembership = listed.filter((column) => scoped.includes(column));
-      if (fromRow.length) commands.push([`UPDATE ${stage} SET (${fromRow.join(', ')}) = ${storedRow(fromRow)} WHERE ${ABSENT_COLUMN} = ?;`, [absent]]);
-      if (fromMembership.length) {
-        commands.push([`UPDATE ${stage} SET (${fromMembership.join(', ')}) = ${membership(fromMembership)} WHERE ${ABSENT_COLUMN} = ?;`, [absent]]);
-      }
+      const quoted = `'${absent.replace(/'/g, "''")}'`;
+      commands.push(...fill(absent.split(','), `${ABSENT_COLUMN} = ${quoted}`));
     }
     if (newerBy && rest.length) {
       const older = ` AND r.${newerBy} > ${stageTable}.${newerBy}`;
@@ -222,7 +248,6 @@ export function sharedRowsSql<Row extends RowShape>(schema: RowTableSchema<Row>,
   return {
     create,
     absentFromElements,
-    absentSets: `SELECT DISTINCT ${ABSENT_COLUMN} AS absent FROM ${stage} WHERE ${ABSENT_COLUMN} IS NOT NULL;`,
     drop: [`DROP VIEW IF EXISTS ${table};`, `DROP TABLE IF EXISTS ${M};`, `DROP TABLE IF EXISTS ${R};`],
     ensure: [
       // Leaving rows are found by identity, which the stage's primary key doesn't lead with.
