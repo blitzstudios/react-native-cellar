@@ -580,14 +580,22 @@ export function defineSqliteStore<
    */
   const buildGuarded = (conn: SqliteConnection, options: BindOptions): Functions => {
     let building = true;
+    // Set once the build returns. A surface the store has since moved off of is superseded: a write it still had in
+    // flight resumes on a connection nothing reads from any more — and, because nitro addresses a handle by name, may
+    // resume on the connection that replaced it, where none of its `TEMP` tables exist. What that write runs into is
+    // not news about the database the store runs on now, so it must neither be reported nor move the store.
+    let built: Functions | undefined;
+    const superseded = (): boolean => built !== undefined && running !== built;
     const guarded = guardedConnection(
       conn,
       (error, op) => {
         const message = messageOf(error);
         if (building && !STORAGE_FAILURE.test(message) && !CONTENTION.test(message)) throw error;
-        onSqliteFailure(error, op, options);
+        if (superseded()) return;
+        onSqliteFailure(error, op, options, superseded);
       },
       (error, op) =>
+        !superseded() &&
         reportStoreDegradation({
           scope: `${config.name}.contention`,
           group: 'store.contention',
@@ -598,7 +606,7 @@ export function defineSqliteStore<
           extra: extra({ op }),
         }),
       (error, op, sql) => {
-        if (statementErrors.seen(config.name, messageOf(error))) return;
+        if (superseded() || statementErrors.seen(config.name, messageOf(error))) return;
         reportStoreDegradation({
           scope: `${config.name}.statement_error`,
           group: 'store.statement_error',
@@ -610,6 +618,7 @@ export function defineSqliteStore<
     );
     const { surface } = buildOver(guarded, !!options.temporary, version, conn);
     building = false;
+    built = surface;
     return surface;
   };
 
@@ -656,8 +665,10 @@ export function defineSqliteStore<
    * when the file is what failed, deletes it and starts empty — and refetches into it; after that, it moves to its
    * in-memory fallback. Deferred, so the failing statement's caller unwinds first.
    */
-  const onSqliteFailure = (error: unknown, op: string, options: BindOptions): void => {
+  const onSqliteFailure = (error: unknown, op: string, options: BindOptions, superseded: () => boolean): void => {
     queueMicrotask(() => {
+      // The store may have moved on between the failure and now, such as a retry binding it back onto its file.
+      if (superseded()) return;
       const recovery = options.recovery;
       if (!recovery || options.temporary || reopens >= MAX_REOPENS) {
         moveToFallback(error, op, options);
