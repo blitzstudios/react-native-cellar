@@ -419,7 +419,7 @@ describe('createFetchIngest — ingest timing', () => {
   });
 
   it("records the write's steps, which only a written body has", async () => {
-    const steps = { path: 'native' as const, queuedMs: 1, shredMs: 40, applyMs: 25, readBackMs: 5 };
+    const steps = { path: 'native' as const, queuedMs: 1, shredMs: 40, applyMs: 25, dispatchMs: 2, resumeMs: 30, readBackMs: 5 };
     const harness = makeCfg({ ingestRaw: jest.fn(async () => ({ ...ingested(5), steps })) });
     harness.setResponse({ data: '[{"id":1}]' });
     const ingest = createFetchIngest(harness.cfg);

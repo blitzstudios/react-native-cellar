@@ -37,10 +37,11 @@ export interface SqliteConnection {
   /** Runs several statements in one transaction, off the JS thread. */
   executeBatchAsync?(commands: ReadonlyArray<[string, ReadonlyArray<string | number | null>]>): Promise<void>;
   /**
-   * Parses a JSON response and writes its rows with a native shred spec, off the JS thread; resolves to the number
-   * of rows written.
+   * Runs several statements in one transaction off the JS thread, like
+   * {@linkcode SqliteConnection.executeBatchAsync | executeBatchAsync}, where a {@linkcode ShredCommand} parses a JSON
+   * response and writes its rows with a native shred spec.
    */
-  shredJsonArrayAsync?(spec: ShredSpec, rawJson: string, binds: ReadonlyArray<string | number | null>): Promise<number>;
+  shredBatchAsync?(commands: ReadonlyArray<BatchCommand | ShredCommand>): Promise<void>;
   /** A second, read-only handle to the same database, so reads can run while a write holds the main one. */
   reader?: PinnedConnection;
 }
@@ -58,6 +59,16 @@ export function pinnedReader(conn: SqliteConnection): PinnedConnection {
 
 /** One SQL statement and its parameters, as {@linkcode runBatch} takes them. */
 export type BatchCommand = [string, ReadonlyArray<string | number | null>];
+
+/** A JSON response to write with a native shred spec, as one step of a {@linkcode SqliteConnection.shredBatchAsync}. */
+export interface ShredCommand {
+  /** The spec that says which table the rows go to and how each column is read from an element. */
+  shred: ShredSpec;
+  /** The response body. */
+  rawJson: string;
+  /** The values the spec's `bind` ops and `deleteWhere` read. */
+  binds: ReadonlyArray<string | number | null>;
+}
 
 /**
  * Runs `commands` as one transaction, which is what makes a delete-then-insert replacement all-or-nothing. It holds
@@ -177,11 +188,11 @@ export function guardedConnection(
     executeAsync:
       conn.executeAsync && ((sql, params) => guardAsync('executeAsync', () => conn.executeAsync!(sql, params), EMPTY_RESULT, READ_STATEMENT.test(sql))),
     executeBatchAsync: conn.executeBatchAsync && ((commands) => guardAsync('executeBatchAsync', () => conn.executeBatchAsync!(commands), undefined)),
-    // Deliberately unguarded: `shred` answers a rejection by parsing in JS, and swallowing one here into a resolved 0
-    // would take that fallback away and degrade the store instead. A shred fails for two reasons, and letting it reject
-    // is right for both — a payload the native shredder cannot handle is recovered by the JS parse, and a broken disk
-    // trips this guard anyway on the writes that fallback issues, at the cost of one wasted parse.
-    shredJsonArrayAsync: conn.shredJsonArrayAsync && ((spec, rawJson, binds) => (failed ? Promise.resolve(0) : conn.shredJsonArrayAsync!(spec, rawJson, binds))),
+    // Deliberately unguarded: `shred` answers a rejection by parsing in JS, and swallowing one here would take that
+    // fallback away and degrade the store instead. A shred fails for two reasons, and letting it reject is right for
+    // both — a payload the native shredder cannot handle is recovered by the JS parse, and a broken disk trips this
+    // guard anyway on the writes that fallback issues, at the cost of one wasted parse.
+    shredBatchAsync: conn.shredBatchAsync && ((commands) => (failed ? Promise.resolve() : conn.shredBatchAsync!(commands))),
     reader: conn.reader && {
       execute: (sql, params) => guard('reader.execute', () => conn.reader!.execute(sql, params), EMPTY_RESULT, true, sql),
       reader: undefined,

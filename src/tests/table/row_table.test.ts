@@ -1,12 +1,13 @@
 import { configureCellar, INERT_ERRORS } from '../../runtime';
-import { BatchCommand, readRows, SqliteConnection } from '../../table/connection';
+import { BatchCommand, readRows, ShredCommand, SqliteConnection } from '../../table/connection';
 import { createTestRowTable } from '../../testing/row_table';
 import { columnNames, RowTableSchema } from '../../table/types';
 import { addedColumns, LiveColumn, LiveSchema, planSchemaMigration, schemaFingerprint, schemaStructureStamp } from '../../table/schema';
-import { createSqliteRowTable } from '../../table/sqlite';
+import { createSqliteRowTable, stepTimer } from '../../table/sqlite';
 import { itDev, itProd } from '../../testing/dev_mode';
 import type { NativeShredSpec, ShredOp } from '../../write/shred_spec';
 import { resetOnceGuards } from '../../diagnostics/once_guard';
+import { ALL_ENTITIES } from '../../table/change_set';
 import { createSqlJsConnection, initSqlJs } from '../../testing/sqljs_connection';
 
 type TestRow = {
@@ -116,14 +117,21 @@ function makeConn(): {
   const calls: Array<{ sql: string; params?: ReadonlyArray<string | number | null> }> = [];
   const batches: BatchCommand[][] = [];
   let reader: (sql: string, params?: ReadonlyArray<string | number | null>) => unknown[] = () => [];
+  // The one table the fake keeps: a write's clock marks, which it reads back after its batch.
+  let marks: number[] = [];
   const conn: SqliteConnection = {
     execute(sql, params) {
       calls.push({ sql, params });
       // A recording fake runs no diff, so a write's read-back finds its summary row and no changed entities.
       if (/RETURNING entity_id, rows;$/.test(sql)) return { rows: { _array: [{ entity_id: null, rows: 0 }] } };
+      if (/^SELECT at FROM temp\.\w+__write_clock/.test(sql)) return { rows: { _array: marks.map((at) => ({ at })) } };
       return { rows: { _array: reader(sql, params) } };
     },
     executeBatch(commands) {
+      for (const [sql] of commands) {
+        if (/^DELETE FROM temp\.\w+__write_clock/.test(sql)) marks = [];
+        else if (/^INSERT INTO temp\.\w+__write_clock/.test(sql)) marks.push(Date.now());
+      }
       batches.push(commands.map((command) => [command[0], command[1]] as BatchCommand));
     },
   };
@@ -136,6 +144,25 @@ function makeConn(): {
     },
   };
 }
+
+/**
+ * A `shredBatchAsync` over the recording fake: hands each shred to `shred`, then records the batch's statements once
+ * every shred has finished, the way a transaction lands.
+ */
+function shredBatch(conn: SqliteConnection, shred: (command: ShredCommand) => Promise<void> | void = () => undefined) {
+  return jest.fn(async (commands: ReadonlyArray<BatchCommand | ShredCommand>) => {
+    const statements: BatchCommand[] = [];
+    for (const command of commands) {
+      // eslint-disable-next-line no-await-in-loop -- a batch runs its statements in order
+      if (Array.isArray(command)) statements.push(command as BatchCommand);
+      else await shred(command as ShredCommand);
+    }
+    conn.executeBatch!(statements);
+  });
+}
+
+const shredsOf = (shredBatchAsync: jest.Mock): ShredCommand[] =>
+  shredBatchAsync.mock.calls.flatMap(([commands]) => (commands as Array<BatchCommand | ShredCommand>).filter((command): command is ShredCommand => !Array.isArray(command)));
 
 describe('row_table — sqlite backend (generated SQL)', () => {
   it('init generates CREATE TABLE (with PK), indexes, and the meta table', () => {
@@ -665,116 +692,144 @@ describe('row_table — sqlite backend (generated SQL)', () => {
 
   it('shreds a first load natively straight into the table, with the spec exactly as declared', async () => {
     const { conn, setReader } = makeConn();
-    setReader((sql) => (sql.startsWith('SELECT DISTINCT id') ? [{ entity_id: 'p1' }] : []));
-    const shredJsonArrayAsync = jest.fn(async () => 1);
+    setReader((sql) => (sql.startsWith('SELECT id AS entity_id, COUNT(*)') ? [{ entity_id: 'p1', n: 1 }] : []));
+    const shredBatchAsync = shredBatch(conn);
     const db = createSqliteRowTable(
       schema,
-      { ...conn, shredJsonArrayAsync },
+      { ...conn, shredBatchAsync },
       { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
     );
     const { changes, rows } = await db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
-    expect(shredJsonArrayAsync).toHaveBeenCalledWith(shredSpec, '[{"id":"p1"}]', ['us']);
+    expect(shredsOf(shredBatchAsync)).toEqual([{ shred: shredSpec, rawJson: '[{"id":"p1"}]', binds: ['us'] }]);
     expect([...(changes as ReadonlySet<string>)]).toEqual(['p1']);
     expect(rows).toBe(1);
+  });
+
+  it('says every entity changed when a first load cannot tell its batch ran, rather than that none did', async () => {
+    const { conn, setReader } = makeConn();
+    setReader(() => []);
+    const db = createSqliteRowTable(
+      schema,
+      // A batch that resolves without running anything, the way a guarded connection answers once it has failed.
+      { ...conn, shredBatchAsync: async () => undefined },
+      { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
+    );
+    const result = await db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+    expect(result.changes).toBe(ALL_ENTITIES);
+    expect(result.steps).toBeUndefined();
   });
 
   it('shred prefers the native shred spec when the connection supports it (no JS object graph)', async () => {
     const { conn, setReader } = makeConn();
     setReader((sql) => (sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : [])); // populated, so the shred stages
-    const shredJsonArrayAsync = jest.fn(async () => 2);
+    const shredBatchAsync = shredBatch(conn);
     const db = createSqliteRowTable(
       schema,
-      { ...conn, shredJsonArrayAsync },
+      { ...conn, shredBatchAsync },
       { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
     );
     const parseRows = jest.fn(() => [] as TestRow[]);
     await db.shred({ region: 'us' }, '[{"id":"p1"}]', parseRows);
     // The declared spec pointed at the stage, never edited in place: its table name is part of the schema stamps.
-    expect(shredJsonArrayAsync).toHaveBeenCalledWith(
-      { ...shredSpec, table: expect.stringMatching(/^temp\.things__async_stage_[0-9a-z]+$/) },
-      '[{"id":"p1"}]',
-      ['us'],
-    );
+    expect(shredsOf(shredBatchAsync)).toEqual([
+      { shred: { ...shredSpec, table: expect.stringMatching(/^temp\.things__async_stage_[0-9a-z]+$/) }, rawJson: '[{"id":"p1"}]', binds: ['us'] },
+    ]);
     expect(shredSpec.table).toBe('things');
     expect(parseRows).not.toHaveBeenCalled();
   });
 
-  describe('shred reports where its time went', () => {
+  it('shreds, diffs and applies in one batch, so the write waits for the JS thread once', async () => {
+    const { conn, batches, setReader } = makeConn();
+    setReader((sql) => (sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
+    const shredBatchAsync = shredBatch(conn);
+    const db = createSqliteRowTable(
+      schema,
+      { ...conn, shredBatchAsync },
+      { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
+    );
+    await db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
+    expect(shredBatchAsync).toHaveBeenCalledTimes(1);
+    expect(batches).toHaveLength(1);
+    expect(batches[0].some(([sql]) => sql.startsWith('INSERT INTO temp.things__entity_changes'))).toBe(true);
+  });
+
+  describe('a write\'s steps', () => {
     let clock = 0;
     beforeEach(() => {
-      clock = 0;
-      jest.spyOn(performance, 'now').mockImplementation(() => clock);
+      clock = 1_000;
+      jest.spyOn(Date, 'now').mockImplementation(() => clock);
     });
     afterEach(() => {
       jest.restoreAllMocks();
     });
 
-    /** A connection whose async batch takes 25ms and whose read-back takes 5ms, holding rows unless `empty`. */
-    const timedConn = (empty = false): SqliteConnection => {
-      const { conn, setReader } = makeConn();
-      setReader((sql) => (!empty && sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
-      return {
-        ...conn,
-        execute(sql, params) {
-          if (/RETURNING entity_id, rows;$/.test(sql)) clock += 5;
-          return conn.execute(sql, params);
-        },
-        async executeBatchAsync(commands) {
-          clock += 25;
-          conn.executeBatch!(commands);
-        },
-      };
-    };
-    const nativeShred = async (): Promise<number> => {
-      clock += 40;
-      return 2;
-    };
-    const native = { specs: { all: shredSpec }, variant: () => 'all', binds: (scope: Readonly<Record<string, unknown>>) => [String(scope.region)] };
+    it('splits a batch into the native steps between its marks, and the handoffs on either side', () => {
+      const timer = stepTimer(clock);
+      clock += 3;
+      timer.lap('queuedMs');
+      // Handed over at 1003, started natively at 1010, shredded until 1050 and diffed until 1075, and picked back up at
+      // 1100 by a busy JS thread.
+      clock = 1_100;
+      timer.batch(clock, [1_010, 1_050, 1_075], ['shredMs', 'applyMs']);
+      clock += 2;
+      timer.lap('readBackMs');
+      expect(timer.steps('native')).toEqual({ path: 'native', queuedMs: 3, shredMs: 40, applyMs: 25, dispatchMs: 7, resumeMs: 25, readBackMs: 2 });
+    });
 
-    it('charges the native shred, the diff batch and the read-back each to its own step', async () => {
-      const db = createSqliteRowTable(schema, { ...timedConn(), shredJsonArrayAsync: nativeShred }, native);
-      const { steps } = await db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
-      expect(steps).toEqual({ path: 'native', queuedMs: 0, shredMs: 40, applyMs: 25, readBackMs: 5 });
+    it('rounds SQLite\'s fractional marks to whole ms', () => {
+      const timer = stepTimer(clock);
+      timer.batch(1_020, [1_000.4, 1_012.6], ['applyMs']);
+      expect(timer.steps('js')).toMatchObject({ dispatchMs: 0, applyMs: 12, resumeMs: 7 });
+    });
+
+    it('reports nothing for a batch whose marks did not all come back, rather than numbers it cannot stand behind', () => {
+      const timer = stepTimer(clock);
+      timer.batch(clock, [1_000], ['shredMs', 'applyMs']);
+      expect(timer.steps('native')).toBeUndefined();
     });
 
     it('charges the wait behind an earlier write to queuedMs', async () => {
-      const db = createSqliteRowTable(schema, { ...timedConn(), shredJsonArrayAsync: nativeShred }, native);
-      const [, second] = await Promise.all([
-        db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []),
-        db.shred({ region: 'eu' }, '[{"id":"p2"}]', () => []),
-      ]);
-      expect(second.steps).toMatchObject({ queuedMs: 70, shredMs: 40 });
+      const { conn, setReader } = makeConn();
+      setReader((sql) => (sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
+      const shredBatchAsync = shredBatch(conn, () => {
+        clock += 40;
+      });
+      const db = createSqliteRowTable(schema, { ...conn, shredBatchAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+      const [, second] = await Promise.all([db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []), db.shred({ region: 'eu' }, '[{"id":"p2"}]', () => [])]);
+      expect(second.steps).toMatchObject({ path: 'native', queuedMs: 40 });
     });
 
     it('charges a JS parse to shredMs', async () => {
-      const db = createSqliteRowTable(schema, timedConn());
+      const { conn, setReader } = makeConn();
+      setReader((sql) => (sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
+      const db = createSqliteRowTable(schema, conn);
       const parse = (): TestRow[] => {
         clock += 30;
         return [row('p1', 'us', null, null)];
       };
       const { steps } = await db.shred({ region: 'us' }, '[{"id":"p1"}]', parse);
-      expect(steps).toEqual({ path: 'js', queuedMs: 0, shredMs: 30, applyMs: 25, readBackMs: 5 });
+      expect(steps).toMatchObject({ path: 'js', shredMs: 30 });
     });
 
     it('names a first load, which writes straight into the table', async () => {
-      const nativeDb = createSqliteRowTable(schema, { ...timedConn(true), shredJsonArrayAsync: nativeShred }, native);
+      const { conn } = makeConn();
+      const nativeDb = createSqliteRowTable(schema, { ...conn, shredBatchAsync: shredBatch(conn) }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
       expect((await nativeDb.shred({ region: 'us' }, '[{"id":"p1"}]', () => [])).steps?.path).toBe('native-direct');
-      const jsDb = createSqliteRowTable(schema, timedConn(true));
-      const { steps } = await jsDb.shred({ region: 'us' }, '[]', () => []);
-      expect(steps).toMatchObject({ path: 'js-direct', applyMs: 25, readBackMs: 0 });
+      const jsDb = createSqliteRowTable(schema, conn);
+      expect((await jsDb.shred({ region: 'us' }, '[]', () => [])).steps?.path).toBe('js-direct');
     });
   });
 
   describe('secondary indexes are deferred across a shred into an empty table', () => {
     // Deferral is gated on the dedicated reader, so the connection under test has one: without it a read that needs a
     // transaction shares the writer, and the extra DDL is exactly the window it can land in.
-    const makeShredStore = (conn: SqliteConnection, shredJsonArrayAsync: (...args: never[]) => Promise<number> = async () => 2) =>
+    const makeShredStore = (conn: SqliteConnection, shred?: (command: ShredCommand) => Promise<void>) =>
       createSqliteRowTable(
         schema,
         {
           ...conn,
           reader: { execute: (sql, params) => conn.execute(sql, params), reader: undefined },
-          shredJsonArrayAsync: shredJsonArrayAsync as SqliteConnection['shredJsonArrayAsync'],
+          shredBatchAsync: shredBatch(conn, shred),
         },
         { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
       );
@@ -791,8 +846,8 @@ describe('row_table — sqlite backend (generated SQL)', () => {
       return {
         gates,
         shred: () =>
-          new Promise<number>((resolve) => {
-            gates.push(() => resolve(2));
+          new Promise<void>((resolve) => {
+            gates.push(() => resolve());
           }),
       };
     };
@@ -818,7 +873,7 @@ describe('row_table — sqlite backend (generated SQL)', () => {
       setReader(() => []); // empty, so the only thing holding the indexes back is the missing reader
       const table = createSqliteRowTable(
         schema,
-        { ...conn, reader: undefined, shredJsonArrayAsync: (async () => 2) as SqliteConnection['shredJsonArrayAsync'] },
+        { ...conn, reader: undefined, shredBatchAsync: shredBatch(conn) },
         { specs: { all: shredSpec }, variant: () => 'all', binds: (scope) => [String(scope.region)] },
       );
       await table.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
@@ -908,10 +963,10 @@ describe('row_table — sqlite backend (generated SQL)', () => {
   it('shred falls back to parseRows when the native shred spec throws', async () => {
     const { conn, batches, setReader } = makeConn();
     setReader((sql) => (sql.startsWith('SELECT 1 AS one') ? [{ one: 1 }] : []));
-    const shredJsonArrayAsync = jest.fn(async () => {
+    const shredBatchAsync = jest.fn(async () => {
       throw new Error('unsupported op on this build');
     });
-    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+    const db = createSqliteRowTable(schema, { ...conn, shredBatchAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
     await db.shred({ region: 'us' }, '[]', () => [row('a', 'us', 'NE', 1)]);
     const staged = batches.flat().find(([sql]) => sql.startsWith('INSERT OR REPLACE INTO temp.things__async_stage_'));
     expect(staged?.[1]).toEqual(['a', 'us', 'NE', 1]);
@@ -923,10 +978,10 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     const captureMessage = jest.fn();
     configureCellar({ errors: { captureException, captureMessage } });
     const { conn } = makeConn();
-    const shredJsonArrayAsync = jest.fn(async () => {
+    const shredBatchAsync = jest.fn(async () => {
       throw new Error('nitro_shred: JSON parse failed: UNCLOSED_STRING');
     });
-    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+    const db = createSqliteRowTable(schema, { ...conn, shredBatchAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
 
     await expect(db.shred({ region: 'us' }, '[{"id', (raw) => JSON.parse(raw))).rejects.toThrow(SyntaxError);
     expect(captureException).not.toHaveBeenCalled();
@@ -936,32 +991,32 @@ describe('row_table — sqlite backend (generated SQL)', () => {
 
   it('shred falls back to parseRows when the scope names a variant the spec table has no entry for', async () => {
     const { conn } = makeConn();
-    const shredJsonArrayAsync = jest.fn(async () => 2);
+    const shredBatchAsync = shredBatch(conn);
     const db = createSqliteRowTable(
       schema,
-      { ...conn, shredJsonArrayAsync },
+      { ...conn, shredBatchAsync },
       { specs: { all: shredSpec }, variant: () => 'nonexistent', binds: () => ['us'] },
     );
 
     await db.shred({ region: 'us' }, '[]', () => [row('a', 'us', 'NE', 1)]);
 
-    expect(shredJsonArrayAsync).not.toHaveBeenCalled();
+    expect(shredBatchAsync).not.toHaveBeenCalled();
   });
 
   it('shred in JS waits for a native shred still writing, rather than starting a batch inside it', async () => {
     const { conn, batches } = makeConn();
-    let finish!: (rows: number) => void;
-    const shredJsonArrayAsync = jest.fn(() => new Promise<number>((resolve) => (finish = resolve)));
-    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+    let finish!: () => void;
+    const shredBatchAsync = shredBatch(conn, () => new Promise<void>((resolve) => (finish = resolve)));
+    const db = createSqliteRowTable(schema, { ...conn, shredBatchAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
 
     const native = db.shred({ region: 'us' }, '[{"id":"p1"}]', () => []);
     const inJs = db.shred({ region: 'eu' }, '[]', () => [row('x', 'eu', 'BOS', 9)], undefined, true);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(batches).toHaveLength(0);
 
-    finish(1);
+    finish();
     await Promise.all([native, inJs]);
-    expect(shredJsonArrayAsync).toHaveBeenCalledTimes(1);
+    expect(shredBatchAsync).toHaveBeenCalledTimes(1);
     expect(batches.flat().some(([, params]) => params.includes('x'))).toBe(true);
   });
 
@@ -972,10 +1027,10 @@ describe('row_table — sqlite backend (generated SQL)', () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     const { conn } = makeConn();
-    const shredJsonArrayAsync = jest.fn(async () => {
+    const shredBatchAsync = jest.fn(async () => {
       throw new Error('unsupported op on this build');
     });
-    const db = createSqliteRowTable(schema, { ...conn, shredJsonArrayAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
+    const db = createSqliteRowTable(schema, { ...conn, shredBatchAsync }, { specs: { all: shredSpec }, variant: () => 'all', binds: () => ['us'] });
     await db.shred({ region: 'us' }, '[]', () => [row('a', 'us', 'NE', 1)]);
 
     expect(captureException).toHaveBeenCalledTimes(1);

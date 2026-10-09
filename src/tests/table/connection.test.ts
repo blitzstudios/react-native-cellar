@@ -224,7 +224,7 @@ describe('shred — the native shred branch', () => {
 
       // eslint-disable-next-line no-await-in-loop -- two shapes, sequentially, for the comparison below
       const { rows: count } = await table.shred({ scope: 's' }, raw, parseRows);
-      results.push({ capabilities, shredCalls: conn.calls.shredJsonArrayAsync, rows: table.find({ scope: 's' }), count });
+      results.push({ capabilities, shredCalls: conn.calls.shredBatchAsync, rows: table.find({ scope: 's' }), count });
       conn.close();
     }
 
@@ -250,7 +250,7 @@ describe('shred — the native shred branch', () => {
 
   it('falls back to the JS parse when the driver shred throws, rather than losing the ingest', async () => {
     const conn = createSqlJsConnection({ capabilities: 'full' });
-    conn.shredJsonArrayAsync = () => Promise.reject(new Error('unknown op'));
+    conn.shredBatchAsync = () => Promise.reject(new Error('unknown op'));
     const table = createSqliteRowTable(schema, conn, nativeShredSpec);
     table.init();
 

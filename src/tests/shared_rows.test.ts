@@ -4,6 +4,7 @@ import { defineSqliteStore } from '../define_sqlite_store';
 import { byEntity } from '../read/derived_values';
 import { runTracked } from '../reactivity/tracking';
 import { readRows } from '../table/connection';
+import { clearIngestTimings, getIngestTimings } from '../diagnostics/ingest_timing';
 import { StoreTableSchema } from '../table/partitioned';
 import { ShredSpec } from '../write/shred_spec';
 import { defineShredColumns, ShredColumn } from '../write/shred_columns';
@@ -422,9 +423,26 @@ describe('shared rows — a native shred that leaves fields out', () => {
     bodies.player = [{ week: 4, player_id: 'a', updated_at: 100 }];
     await fetch({ playerId: 'a' });
 
-    expect(conn.calls.shredJsonArrayAsync).toBe(2);
+    expect(conn.calls.shredBatchAsync).toBe(2);
     expect(jest.requireMock('../diagnostics/telemetry').reportStoreDegradation).not.toHaveBeenCalled();
     expect(stored()).toEqual([{ week: 4, player_id: 'a', position: 'QB', pts: 20, updated_at: 100 }]);
+  });
+
+  it('writes each body in one batch that SQLite times, and says where the write went', async () => {
+    const { conn, bodies, fetch } = lineStore({ native: true });
+    bodies.week = [FULL_LINE];
+    clearIngestTimings();
+    const startedAt = Date.now();
+    await fetch({ week: 4 });
+    const wall = Date.now() - startedAt;
+
+    expect(conn.calls).toMatchObject({ shredBatchAsync: 1, executeBatchAsync: 0 });
+    const [{ steps }] = getIngestTimings();
+    expect(steps?.path).toBe('native');
+    const { path, ...ms } = steps!;
+    for (const value of Object.values(ms)) expect(Number.isInteger(value) && value >= 0).toBe(true);
+    // The steps are timed on the fetch's own clock and fit inside it, give or take rounding.
+    expect(Object.values(ms).reduce((total, value) => total + value, 0)).toBeLessThanOrEqual(wall + Object.keys(ms).length);
   });
 });
 

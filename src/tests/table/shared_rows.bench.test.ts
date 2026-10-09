@@ -8,6 +8,7 @@
  * only as a ratio: both tables run on the same engine, over the same body, in the same process.
  */
 
+import { BatchCommand } from '../../table/connection';
 import { createSqliteRowTable } from '../../table/sqlite';
 import { createStoreTable } from '../../testing/row_table';
 import { createSqlJsConnection, initSqlJs } from '../../testing/sqljs_connection';
@@ -81,13 +82,21 @@ async function write(kind: 'shared' | 'plain', bodies: readonly string[]): Promi
       : createSqliteRowTable(plainSchema, conn, { specs: { all: plainSpec }, variant: () => 'all', binds: () => ['w4'] });
   table.init();
   const batch = conn.executeBatchAsync!.bind(conn);
+  const shredBatch = conn.shredBatchAsync!.bind(conn);
   const execute = conn.execute.bind(conn);
   let current: Timings = { sql: 0, calls: 0 };
-  conn.executeBatchAsync = async (commands) => {
+  const timed = async (commands: BatchCommand[]): Promise<void> => {
     const started = performance.now();
     await batch(commands);
     current.sql += performance.now() - started;
     current.calls += 1;
+  };
+  conn.executeBatchAsync = timed;
+  // Times only the statements after the shred: sql.js's shred runs in JS and stands for nothing on a device.
+  conn.shredBatchAsync = async (commands) => {
+    const after = commands.findIndex((command) => !Array.isArray(command)) + 1;
+    await shredBatch(commands.slice(0, after));
+    await timed(commands.slice(after) as BatchCommand[]);
   };
   conn.execute = (sql, params) => {
     const started = performance.now();

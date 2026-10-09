@@ -31,8 +31,8 @@ export interface WriteResult {
 }
 
 /**
- * Where one shredded body's write spent its time, in ms. A step that awaits native work also counts the wait for the JS
- * thread to pick its result back up, so a busy JS thread shows up here as slow steps.
+ * Where one shredded body's write spent its time, in whole ms. SQLite times the work its batch does, so a busy JS
+ * thread shows up only as `resumeMs`, and a slow native step is slow native work.
  */
 export interface WriteSteps {
   /**
@@ -42,11 +42,18 @@ export interface WriteSteps {
   path: 'native' | 'native-direct' | 'js' | 'js-direct';
   /** Waiting behind the store's earlier writes. */
   queuedMs: number;
-  /** Shredding the body natively or parsing it in JS, a failed native attempt included. */
+  /**
+   * Shredding the body: natively, as SQLite timed it, or parsing it into rows in JS, a failed native attempt
+   * included.
+   */
   shredMs: number;
-  /** Comparing the rows with the table's and applying the difference. */
+  /** Comparing the rows with the table's and applying the difference, as SQLite timed it; on `js`, staging them too. */
   applyMs: number;
-  /** Reading back which entities changed. */
+  /** Handing the batch to native code: building it on the JS thread, and waiting for a native thread to start it. */
+  dispatchMs: number;
+  /** From the batch finishing until the JS thread picked up its result, which a busy JS thread makes long. */
+  resumeMs: number;
+  /** Reading back which entities changed, on the JS thread. */
   readBackMs: number;
 }
 

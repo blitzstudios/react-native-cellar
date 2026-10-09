@@ -249,7 +249,7 @@ describe('openNitroConnection — parameter coercion', () => {
   });
 });
 
-describe('openNitroConnection — shredJsonArrayAsync', () => {
+describe('openNitroConnection — shredBatchAsync', () => {
   const spec = {
     version: 1 as const,
     table: 'things',
@@ -259,24 +259,29 @@ describe('openNitroConnection — shredJsonArrayAsync', () => {
     deleteWhere: [{ column: 'scope', bindIndex: 0 }],
   };
 
-  it('dispatches through the sentinel the C++ fork matches, with the spec, the payload, then the binds', async () => {
-    const handle = fakeHandle({ asyncResult: { rowsAffected: 7 } });
+  it('sends a shred as the sentinel the C++ fork matches, with the spec, the payload, then the binds, in one batch with the statements around it', async () => {
+    const handle = fakeHandle();
     mockOpen.mockReturnValue(handle as never);
 
-    const count = await openNitroConnection('things').shredJsonArrayAsync!(spec, '[{"id":"a"}]', ['s']);
+    await openNitroConnection('things').shredBatchAsync!([
+      ['DELETE FROM temp.stage;', []],
+      { shred: spec, rawJson: '[{"id":"a"}]', binds: ['s'] },
+      ['INSERT INTO t SELECT * FROM temp.stage WHERE scope = ?;', ['s']],
+    ]);
 
-    const call = handle.executeAsync.mock.calls[0];
-    expect(call[0]).toBe('-- nitro_shred_v1');
-    expect(call[1]).toEqual([JSON.stringify(spec), '[{"id":"a"}]', 's']);
-    expect(count).toBe(7);
+    expect(handle.executeAsync).not.toHaveBeenCalled();
+    expect(handle.batches).toEqual([
+      [
+        { query: 'DELETE FROM temp.stage;', params: undefined },
+        { query: '-- nitro_shred_v1', params: [JSON.stringify(spec), '[{"id":"a"}]', 's'] },
+        { query: 'INSERT INTO t SELECT * FROM temp.stage WHERE scope = ?;', params: ['s'] },
+      ],
+    ]);
   });
 
-  it('counts zero when the driver reports no row count, rather than assuming the shred landed', async () => {
-    mockOpen.mockReturnValue(fakeHandle({ asyncResult: {} }) as never);
-    await expect(openNitroConnection('things').shredJsonArrayAsync!(spec, '[]', [])).resolves.toBe(0);
-
-    mockOpen.mockReturnValue(fakeHandle({ asyncResult: undefined }) as never);
-    await expect(openNitroConnection('things').shredJsonArrayAsync!(spec, '[]', [])).resolves.toBe(0);
+  it('leaves the shred out of a connection that shreds in JS', () => {
+    mockOpen.mockReturnValue(fakeHandle() as never);
+    expect(openNitroConnection('things', { shredInJs: true }).shredBatchAsync).toBeUndefined();
   });
 });
 
@@ -529,13 +534,13 @@ describe('binding a store — getting SQLite back', () => {
     bindSqliteStore('js', 'js.db', { bindSqlite }, { shredInJs: true });
     const [conn, { recovery }] = bindSqlite.mock.calls[0];
 
-    expect(conn.shredJsonArrayAsync).toBeUndefined();
-    expect(recovery.reopen({ discard: false }).shredJsonArrayAsync).toBeUndefined();
-    expect(recovery.fallback().shredJsonArrayAsync).toBeUndefined();
+    expect(conn.shredBatchAsync).toBeUndefined();
+    expect(recovery.reopen({ discard: false }).shredBatchAsync).toBeUndefined();
+    expect(recovery.fallback().shredBatchAsync).toBeUndefined();
 
     const switched = jest.fn();
     bindSqliteStore('js-memory', 'js-memory.db', { bindSqlite: switched }, { inMemory: true, shredInJs: true });
-    expect(switched.mock.calls[0][0].shredJsonArrayAsync).toBeUndefined();
+    expect(switched.mock.calls[0][0].shredBatchAsync).toBeUndefined();
   });
 
   it('keeps the native shred on a connection by default', () => {
@@ -543,8 +548,8 @@ describe('binding a store — getting SQLite back', () => {
     bindSqliteStore('native', 'native.db', { bindSqlite });
     const [conn, { recovery }] = bindSqlite.mock.calls[0];
 
-    expect(conn.shredJsonArrayAsync).toEqual(expect.any(Function));
-    expect(recovery.fallback().shredJsonArrayAsync).toEqual(expect.any(Function));
+    expect(conn.shredBatchAsync).toEqual(expect.any(Function));
+    expect(recovery.fallback().shredBatchAsync).toEqual(expect.any(Function));
   });
 
   it('hands the store a reopen that deletes the database only when asked to', () => {

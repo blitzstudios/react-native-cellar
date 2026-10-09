@@ -161,11 +161,11 @@ describe('guardedConnection', () => {
     const onFatal = jest.fn();
     const broken: SqliteConnection = {
       execute: () => ({ rows: { _array: [] } }),
-      shredJsonArrayAsync: () => Promise.reject(new Error('a payload shape the native shredder cannot take')),
+      shredBatchAsync: () => Promise.reject(new Error('a payload shape the native shredder cannot take')),
     };
     const conn = guardedConnection(broken, onFatal);
 
-    await expect(conn.shredJsonArrayAsync!({} as never, '[]', [])).rejects.toThrow(/cannot take/);
+    await expect(conn.shredBatchAsync!([{ shred: {} as never, rawJson: '[]', binds: [] }])).rejects.toThrow(/cannot take/);
     // A shred that could not parse says nothing about the disk, so the store keeps its SQLite backend.
     expect(onFatal).not.toHaveBeenCalled();
   });
@@ -175,13 +175,13 @@ describe('guardedConnection', () => {
       execute: () => {
         throw new Error('SQLITE_IOERR: disk I/O error');
       },
-      shredJsonArrayAsync: jest.fn(async () => 5),
+      shredBatchAsync: jest.fn(async () => undefined),
     };
     const conn = guardedConnection(broken, () => {});
     conn.execute('SELECT 1;');
 
-    await expect(conn.shredJsonArrayAsync!({} as never, '[]', [])).resolves.toBe(0);
-    expect(broken.shredJsonArrayAsync).not.toHaveBeenCalled();
+    await expect(conn.shredBatchAsync!([{ shred: {} as never, rawJson: '[]', binds: [] }])).resolves.toBeUndefined();
+    expect(broken.shredBatchAsync).not.toHaveBeenCalled();
   });
 
   itProd('guards the read handle as well, which is where every read actually goes', () => {
@@ -200,7 +200,7 @@ describe('guardedConnection', () => {
     expect(readRows(conn, 'SELECT * FROM things;')).toEqual([{ id: 'a' }]);
     // Callers branch on whether the driver has these, so the wrapper mirrors the driver's own set exactly.
     expect(conn.executeBatch).toBeUndefined();
-    expect(conn.shredJsonArrayAsync).toBeUndefined();
+    expect(conn.shredBatchAsync).toBeUndefined();
     expect(conn.reader).toBeUndefined();
   });
 
@@ -255,7 +255,7 @@ describe('a native shred the driver refuses', () => {
         calls.push(sql);
         return { rows: { _array: [] } };
       },
-      shredJsonArrayAsync: () => Promise.reject(new Error('a payload shape the native shredder cannot take')),
+      shredBatchAsync: () => Promise.reject(new Error('a payload shape the native shredder cannot take')),
     };
     const onFatal = jest.fn();
     const table = createSqliteRowTable(schema, guardedConnection(conn, onFatal), {

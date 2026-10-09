@@ -42,7 +42,7 @@ export type { PartitionKeyColumn, StoreTableSchema } from './table/partitioned';
 export type { ChangeSet, WriteResult, WriteSteps } from './table/change_set';
 export { ALL_ENTITIES, NO_CHANGES } from './table/change_set';
 export { createSqliteRowTable } from './table/sqlite';
-export type { SqliteConnection, PinnedConnection } from './table/connection';
+export type { BatchCommand, PinnedConnection, ShredCommand, SqliteConnection } from './table/connection';
 export { readRows, readRowsIn, pinnedReader } from './table/connection';
 
 // Getting rows in: a fetch a partition drives, and a socket feed a store drives itself.

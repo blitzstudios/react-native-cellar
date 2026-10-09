@@ -74,7 +74,7 @@ async function written(inJs: boolean) {
   table.overwrite({ partition_key: 'seed' }, BODY.map(({ id }) => ({ id, ...Object.fromEntries(NAMES.map((name) => [name, SEED])) })));
   const parse = (raw: string) => (JSON.parse(raw) as unknown[]).map((element) => evalShredElement(SPEC, element, BINDS)!) as never[];
   await table.shred({ partition_key: 'test' }, JSON.stringify(BODY), parse, { variant: 'all', binds: [BINDS[1]] }, inJs);
-  return { rows: readRows<Record<string, SqlValue>>(conn, `SELECT id, ${NAMES.join(', ')} FROM parity__rows ORDER BY id;`), shreds: conn.calls.shredJsonArrayAsync };
+  return { rows: readRows<Record<string, SqlValue>>(conn, `SELECT id, ${NAMES.join(', ')} FROM parity__rows ORDER BY id;`), shreds: conn.calls.shredBatchAsync };
 }
 
 describe('absent columns — the native shred against the JS path', () => {

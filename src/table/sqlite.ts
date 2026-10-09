@@ -43,28 +43,65 @@ function yieldToEventLoop(): Promise<void> {
   });
 }
 
-const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+/** A step timed on the JS thread. */
+type JsStep = 'queuedMs' | 'shredMs' | 'readBackMs';
+/** A step timed by SQLite, between two of a batch's clock marks. */
+type NativeStep = 'shredMs' | 'applyMs';
 
-type StepName = 'queuedMs' | 'shredMs' | 'applyMs' | 'readBackMs';
-
-/** Times a write's steps back to back: each `lap` charges the time since the previous one to its step. */
-function stepTimer(startedAt: number) {
-  let last = startedAt;
-  const ms: Record<StepName, number> = { queuedMs: 0, shredMs: 0, applyMs: 0, readBackMs: 0 };
+/**
+ * Times one write's steps in `Date.now()` time. SQLite's `julianday('now')` reads the same wall clock, so the marks a
+ * batch records and the laps taken around it subtract from each other.
+ */
+export function stepTimer(calledAt: number) {
+  const ms = { queuedMs: 0, shredMs: 0, applyMs: 0, dispatchMs: 0, resumeMs: 0, readBackMs: 0 };
+  let last = calledAt;
+  let timed = true;
   return {
-    lap(step: StepName): void {
-      const at = now();
+    /** Charges the time since the last lap to `step`. */
+    lap(step: JsStep): void {
+      const at = Date.now();
       ms[step] += at - last;
       last = at;
     },
-    steps(path: WriteSteps['path']): WriteSteps {
-      const round = (value: number): number => Math.round(value * 10) / 10;
-      return { path, queuedMs: round(ms.queuedMs), shredMs: round(ms.shredMs), applyMs: round(ms.applyMs), readBackMs: round(ms.readBackMs) };
+    /**
+     * Charges a batch that has just resolved: each native step the time between its two marks, and the rest to handing
+     * the batch over and to picking its result back up. A batch whose marks did not all come back leaves the write
+     * untimed.
+     */
+    batch(resumedAt: number, marks: readonly number[], native: readonly NativeStep[]): void {
+      if (marks.length !== native.length + 1) timed = false;
+      else {
+        ms.dispatchMs += Math.max(0, marks[0] - last);
+        native.forEach((step, index) => {
+          ms[step] += Math.max(0, marks[index + 1] - marks[index]);
+        });
+        ms.resumeMs += Math.max(0, resumedAt - marks[native.length]);
+      }
+      last = resumedAt;
+    },
+    steps(path: WriteSteps['path']): WriteSteps | undefined {
+      if (!timed) return undefined;
+      const { round } = Math;
+      return {
+        path,
+        queuedMs: round(ms.queuedMs),
+        shredMs: round(ms.shredMs),
+        applyMs: round(ms.applyMs),
+        dispatchMs: round(ms.dispatchMs),
+        resumeMs: round(ms.resumeMs),
+        readBackMs: round(ms.readBackMs),
+      };
     },
   };
 }
 
 type StepTimer = ReturnType<typeof stepTimer>;
+
+/** A write's result with its steps, which a write whose batch lost its clock marks goes without. */
+function withSteps(result: WriteResult, timer: StepTimer, path: WriteSteps['path']): WriteResult {
+  const steps = timer.steps(path);
+  return steps ? { ...result, steps } : result;
+}
 
 /** A shred spec whose wiring is wrong: a bug, and the one shred failure that propagates past the fallback. */
 class ShredSpecMisconfigured extends Error {}
@@ -217,9 +254,9 @@ export function createSqliteRowTable<Row extends RowShape>(
   ) => (sharedSql ? sharedSql.diff(mode, where, writeId, absentSets, nativeFills) : diff.diff(mode, where, writeId));
 
   /**
-   * Async writes run one at a time. Each stages its rows and then diffs the stage in a second step, and the native
-   * shred cannot join the diff's transaction, so a second write starting in between would empty or refill the stage
-   * the first one is about to diff. SQLite serializes writes on the one writer handle anyway, so this costs nothing.
+   * Async writes run one at a time. A write reads back what its batch changed, and when, only once the JS thread picks
+   * up its result, so a second write's batch landing in between would empty the stage, the change log and the clock
+   * it is about to read. SQLite serializes writes on the one writer handle anyway, so this costs nothing.
    */
   /** Settles with nothing, so the queue does not keep the last write's result, a whole partition's change set, alive. */
   let writeTail: Promise<void> = Promise.resolve();
@@ -383,18 +420,48 @@ export function createSqliteRowTable<Row extends RowShape>(
     return read;
   };
 
+  /**
+   * Where a timed batch records SQLite's clock. Each table has its own, since writes to different tables can share a
+   * connection, and a write empties it before marking it.
+   */
+  const clockTable = `temp.${schema.table}__write_clock`;
+  const clockStart: BatchCommand[] = [
+    [`CREATE TABLE IF NOT EXISTS ${clockTable} (step INTEGER PRIMARY KEY, at REAL NOT NULL);`, []],
+    [`DELETE FROM ${clockTable};`, []],
+  ];
+  /** Records SQLite's clock, in ms since the epoch like `Date.now()`, as the batch's `step`th mark. */
+  const clockMark = (step: number): BatchCommand => [
+    `INSERT INTO ${clockTable} (step, at) VALUES (?, (julianday('now') - 2440587.5) * 86400000.0);`,
+    [step],
+  ];
+  /** Reads back the marks of the batch that has just resolved and charges it to `timer`. Whether every mark came back. */
+  const chargeBatch = (timer: StepTimer, native: readonly NativeStep[]): boolean => {
+    const resumedAt = Date.now();
+    const result = conn.execute(`SELECT at FROM ${clockTable} ORDER BY step;`);
+    const marks = ((result.rows?._array ?? []) as Array<{ at: number }>).map((row) => row.at);
+    result.dispose?.();
+    timer.batch(resumedAt, marks, native);
+    return marks.length === native.length + 1;
+  };
+
   /** Stages `rows` and applies them in one transaction, then reads back what changed. */
   async function stageAndApply(mode: WriteMode, where: Partial<Row>, rows: readonly Row[], timer?: StepTimer): Promise<WriteResult> {
     const writeId = nextWriteId();
-    await runBatchAsync(conn, [
+    const apply = [
       ...ensureFor(asyncDiff, shared?.async),
       asyncDiff.clear,
       ...asyncDiff.stageRows(rows),
       ...diffFor(asyncDiff, shared?.async, mode, where, writeId, asyncDiff.absentSets(rows)),
-    ]);
-    timer?.lap('applyMs');
+    ];
+    if (!timer) {
+      await runBatchAsync(conn, apply);
+      return readBack(asyncDiff, writeId, shared?.async);
+    }
+    timer.lap('shredMs');
+    await runBatchAsync(conn, [...clockStart, clockMark(0), ...apply, clockMark(1)]);
+    chargeBatch(timer, ['applyMs']);
     const result = readBack(asyncDiff, writeId, shared?.async);
-    timer?.lap('readBackMs');
+    timer.lap('readBackMs');
     return result;
   }
 
@@ -415,18 +482,22 @@ export function createSqliteRowTable<Row extends RowShape>(
 
   const entityIdsOf = (rows: readonly Row[]): ReadonlySet<string> => (rows.length ? new Set(rows.map((row) => String(row[schema.entityId]))) : NO_CHANGES);
 
-  /** The entities a direct write landed, read back from the table, since the native shred's rows never reach JS. */
-  const entitiesLanded = (where: Partial<Row>, rows: number): WriteResult => {
+  /**
+   * The entities a direct write landed, read back from the table, since the native shred's rows never reach JS. `ran`
+   * is whether the write's batch is known to have run; one that did not, or a read that failed silently, says every
+   * entity changed rather than none.
+   */
+  const entitiesLanded = (where: Partial<Row>, ran: boolean): WriteResult => {
     const { sql, params } = whereClause(where);
-    const result = conn.execute(`SELECT DISTINCT ${schema.entityId} AS entity_id FROM ${schema.table}${sql};`, params);
-    const entityIds = new Set(((result.rows?._array ?? []) as Array<{ entity_id: SqlValue }>).map((row) => String(row.entity_id)));
+    const result = conn.execute(`SELECT ${schema.entityId} AS entity_id, COUNT(*) AS n FROM ${schema.table}${sql} GROUP BY ${schema.entityId};`, params);
+    const landed = (result.rows?._array ?? []) as Array<{ entity_id: SqlValue; n: number }>;
     result.dispose?.();
-    // Rows landed but none can be found: the read failed silently, so say everything changed rather than nothing.
-    if (rows > 0 && !entityIds.size) {
+    const rows = landed.reduce((total, row) => total + row.n, 0);
+    if (!ran) {
       diffLost();
       return { changes: ALL_ENTITIES, rows };
     }
-    return { changes: entityIds.size ? entityIds : NO_CHANGES, rows };
+    return { changes: landed.length ? new Set(landed.map((row) => String(row.entity_id))) : NO_CHANGES, rows };
   };
 
   /** A whole-partition replace written straight into the table, the way every write worked before change sets. */
@@ -446,7 +517,7 @@ export function createSqliteRowTable<Row extends RowShape>(
     timer.lap('queuedMs');
     const direct = partitionIsEmpty(where);
     let nativeError: unknown;
-    if (!inJs && conn.shredJsonArrayAsync && nativeShredSpec) {
+    if (!inJs && conn.shredBatchAsync && nativeShredSpec) {
       try {
         const variant = nativeShredSpec.variant(partition as Readonly<Record<string, unknown>>);
         const spec = nativeShredSpec.specs[variant];
@@ -457,26 +528,28 @@ export function createSqliteRowTable<Row extends RowShape>(
         const binds = schema.partitioned ? [where[PARTITION_KEY_COLUMN as keyof Row] as SqlValue, ...storeBinds] : storeBinds;
         let result: WriteResult;
         if (direct) {
-          const landed = await conn.shredJsonArrayAsync(spec, rawJson, binds);
-          timer.lap('shredMs');
-          result = entitiesLanded(where, landed);
-          timer.lap('readBackMs');
+          await conn.shredBatchAsync([...clockStart, clockMark(0), { shred: spec, rawJson, binds }, clockMark(1)]);
+          result = entitiesLanded(where, chargeBatch(timer, ['shredMs']));
         } else {
-          // Each awaited call waits for the JS thread before the next starts, which a busy frame can make long: the
-          // stage is readied synchronously, and everything after the shred is one batch.
-          runBatch(conn, [...ensureFor(asyncDiff, shared?.async), asyncDiff.clear]);
-          timer.lap('applyMs');
-          await conn.shredJsonArrayAsync(stageSpecFor(variant, spec), rawJson, binds);
-          timer.lap('shredMs');
+          // The diff runs in the shred's own batch, against the stage that shred filled.
           const writeId = nextWriteId();
           const fills = shared ? absentFromElementsFor(shared.async, variant, spec) : [];
-          await runBatchAsync(conn, diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [], fills));
-          timer.lap('applyMs');
+          await conn.shredBatchAsync([
+            ...clockStart,
+            clockMark(0),
+            ...ensureFor(asyncDiff, shared?.async),
+            asyncDiff.clear,
+            { shred: stageSpecFor(variant, spec), rawJson, binds },
+            clockMark(1),
+            ...diffFor(asyncDiff, shared?.async, 'replace', where, writeId, [], fills),
+            clockMark(2),
+          ]);
+          chargeBatch(timer, ['shredMs', 'applyMs']);
           result = readBack(asyncDiff, writeId, shared?.async);
-          timer.lap('readBackMs');
         }
+        timer.lap('readBackMs');
         presence.afterDelete(where);
-        return { ...result, steps: timer.steps(direct ? 'native-direct' : 'native') };
+        return withSteps(result, timer, direct ? 'native-direct' : 'native');
       } catch (error) {
         if (error instanceof ShredSpecMisconfigured) throw error;
         nativeError = error;
@@ -485,7 +558,6 @@ export function createSqliteRowTable<Row extends RowShape>(
     let parsed: ReplaceRow<Row>[];
     try {
       parsed = parseRows(rawJson);
-      timer.lap('shredMs');
     } catch (error) {
       reportStoreDegradation({
         scope: `row_table.unparseable_body.${schema.table}`,
@@ -512,14 +584,16 @@ export function createSqliteRowTable<Row extends RowShape>(
     if (__DEV__) assertRowsMatchWhere(schema.table, where, rows);
     let result: WriteResult;
     if (direct) {
-      await runBatchAsync(conn, replaceDirectly(where, rows));
-      timer.lap('applyMs');
+      const replace = replaceDirectly(where, rows);
+      timer.lap('shredMs');
+      await runBatchAsync(conn, [...clockStart, clockMark(0), ...replace, clockMark(1)]);
+      chargeBatch(timer, ['applyMs']);
       result = { changes: entityIdsOf(rows), rows: rows.length };
     } else {
       result = await stageAndApply('replace', where, rows, timer);
     }
     presence.afterDelete(where);
-    return { ...result, steps: timer.steps(direct ? 'js-direct' : 'js') };
+    return withSteps(result, timer, direct ? 'js-direct' : 'js');
   }
 
   function selectRows(where: Partial<Row>): Row[] {
@@ -636,7 +710,7 @@ export function createSqliteRowTable<Row extends RowShape>(
     ): Promise<WriteResult> {
       // Deferral outside the queue, so overlapping ingests into an empty table share one drop and one rebuild while
       // their writes take turns inside it.
-      const timer = stepTimer(now());
+      const timer = stepTimer(Date.now());
       return withDeferredIndexes(() => serialized(() => shredOrParse(where, rawJson, parseRows, partition ?? where, inJs, timer)));
     },
 

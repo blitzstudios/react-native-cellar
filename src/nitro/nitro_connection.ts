@@ -117,11 +117,16 @@ function adaptHandle(conn: ReturnType<typeof open>): PinnedConnection {
     executeBatchAsync: async (commands) => {
       await conn.executeBatchAsync(commands.map(toBatchCommand));
     },
-    shredJsonArrayAsync: async (spec: ShredSpec, rawJson: string, scopeBinds: ReadonlyArray<string | number | null>): Promise<number> => {
-      const params = toNativeParams([serializeSpec(spec), rawJson, ...scopeBinds]);
-      const result = await conn.executeAsync(NITRO_SHRED_SENTINEL, params);
-      const rowsAffected = (result as { rowsAffected?: number } | undefined)?.rowsAffected;
-      return typeof rowsAffected === 'number' ? rowsAffected : 0;
+    // Nitro runs every batch statement through the path that recognizes the sentinel, and the shred's savepoint nests
+    // inside the batch's transaction.
+    shredBatchAsync: async (commands) => {
+      await conn.executeBatchAsync(
+        commands.map((command) =>
+          Array.isArray(command)
+            ? toBatchCommand(command)
+            : { query: NITRO_SHRED_SENTINEL, params: toNativeParams([serializeSpec(command.shred), command.rawJson, ...command.binds]) },
+        ),
+      );
     },
   };
 }
@@ -216,8 +221,8 @@ export function openNitroConnection(name: string, opts?: NitroConnectionOptions)
     }
   }
 
-  const { shredJsonArrayAsync, ...writerHandle } = adaptHandle(writer);
-  const adapted: SqliteConnection = { ...writerHandle, ...(opts?.shredInJs ? {} : { shredJsonArrayAsync }), reader };
+  const { shredBatchAsync, ...writerHandle } = adaptHandle(writer);
+  const adapted: SqliteConnection = { ...writerHandle, ...(opts?.shredInJs ? {} : { shredBatchAsync }), reader };
   openConnections.set(name, { conn: adapted, handles });
   openedDuringBind?.add(name);
   return adapted;

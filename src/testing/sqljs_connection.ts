@@ -4,7 +4,7 @@ import path from 'path';
 
 import { evalShredSpec } from '../write/shred_spec';
 import type { ShredSpec } from '../write/shred_spec';
-import { PinnedConnection, QueryExecResult, SqliteConnection } from '../table/connection';
+import { BatchCommand, PinnedConnection, QueryExecResult, ShredCommand, SqliteConnection } from '../table/connection';
 
 interface SqlJsStatement {
   bind(params: Array<string | number | null>): void;
@@ -44,7 +44,7 @@ export interface SqlJsCallLog {
   executeAsync: number;
   executeBatch: number;
   executeBatchAsync: number;
-  shredJsonArrayAsync: number;
+  shredBatchAsync: number;
   /** Calls to the reader's {@linkcode SqliteConnection.execute | execute}. */
   readerExecute: number;
   /** Calls to a result's {@linkcode QueryExecResult.dispose | dispose}. */
@@ -88,6 +88,13 @@ function shredSql(spec: ShredSpec, rows: ReadonlyArray<Record<string, string | n
   return cmds;
 }
 
+/** The statements a native shred runs for one command, which parse the body in JS here. */
+function shredCommandSql({ shred: spec, rawJson, binds }: ShredCommand) {
+  const parsed = JSON.parse(rawJson) as unknown;
+  const elements = spec.source === 'objectValues' ? Object.values(parsed as Record<string, unknown>) : (parsed as unknown[]);
+  return shredSql(spec, evalShredSpec(spec, elements, binds), binds);
+}
+
 /** Creates a connection to a new in-memory sql.js database. Requires {@linkcode initSqlJs} to have finished. */
 export function createSqlJsConnection(options: SqlJsConnectionOptions = {}): SqlJsConnection {
   if (!SqlModule) throw new Error('createSqlJsConnection: call `await initSqlJs()` in beforeAll first');
@@ -99,7 +106,7 @@ export function createSqlJsConnection(options: SqlJsConnectionOptions = {}): Sql
     executeAsync: 0,
     executeBatch: 0,
     executeBatchAsync: 0,
-    shredJsonArrayAsync: 0,
+    shredBatchAsync: 0,
     readerExecute: 0,
     dispose: 0,
   };
@@ -176,20 +183,19 @@ export function createSqlJsConnection(options: SqlJsConnectionOptions = {}): Sql
         throw error;
       }
     },
-    shredJsonArrayAsync: async (spec, rawJson, binds) => {
-      calls.shredJsonArrayAsync += 1;
-      const parsed = JSON.parse(rawJson) as unknown;
-      const elements = spec.source === 'objectValues' ? Object.values(parsed as Record<string, unknown>) : (parsed as unknown[]);
-      const rows = evalShredSpec(spec, elements, binds);
+    shredBatchAsync: async (commands) => {
+      calls.shredBatchAsync += 1;
       run('BEGIN;');
       try {
-        for (const [sql, params] of shredSql(spec, rows, binds)) run(sql, params);
+        for (const command of commands) {
+          if (Array.isArray(command)) run(...(command as BatchCommand));
+          else for (const [sql, params] of shredCommandSql(command as ShredCommand)) run(sql, params);
+        }
         run('COMMIT;');
       } catch (error) {
         run('ROLLBACK;');
         throw error;
       }
-      return rows.length;
     },
   };
 }
