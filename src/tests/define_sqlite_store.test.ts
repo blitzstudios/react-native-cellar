@@ -107,24 +107,26 @@ describe('defineSqliteStore — the running connection', () => {
     expect(forgets[0]).toHaveBeenCalledTimes(1);
   });
 
-  itDev('leaves the store where it was when it cannot be built over the connection', () => {
+  it('throws when it cannot set its schema up on the connection, and leaves the store where it was, so the bind can start the file over', () => {
     const { store } = labelledStore();
     store.bindSqlite(namedConn('disk').conn);
+    const reopen = jest.fn(() => namedConn('reopened').conn);
     const broken: SqliteConnection = {
       execute: () => {
-        throw new Error('migration failed');
+        throw new Error('use DROP VIEW to delete view things');
       },
     };
 
-    expect(() => store.bindSqlite(broken)).toThrow('migration failed');
+    expect(() => store.bindSqlite(broken, { recovery: { reopen } })).toThrow('use DROP VIEW to delete view things');
     expect(store.reads.label).toBe('disk');
+    expect(reopen).not.toHaveBeenCalled();
   });
 
-  itProd('in a release build, takes a connection that fails while building for a failure, and leaves it', async () => {
+  itProd('in a release build, takes a storage failure while building for a failure of the connection, which the file is kept through', async () => {
     const { store } = labelledStore();
     const broken: SqliteConnection = {
       execute: () => {
-        throw new Error('migration failed');
+        throw new Error('disk I/O error');
       },
     };
 
@@ -132,6 +134,30 @@ describe('defineSqliteStore — the running connection', () => {
     await flush();
 
     expect(store.reads.label).toBe('unbound');
+  });
+
+  itProd('in a release build, recovers a write that fails once built rather than throwing it', async () => {
+    const store = defineSqliteStore({
+      name: 'write_store',
+      schema,
+      partition: ({ id }: { id?: string }) => (id ? { id } : null),
+      build: (cellar) => ({ reads: { write: () => cellar.table.overwrite({ id: 'a' }, [{ id: 'a' }]) } }),
+    });
+    const failing = { now: false };
+    const disk: SqliteConnection = {
+      execute: (sql: string) => {
+        if (failing.now && !sql.startsWith('SELECT')) throw new Error('NOT NULL constraint failed: things.id');
+        return { rows: { _array: [] } };
+      },
+    };
+    const reopen = jest.fn(() => namedConn('reopened').conn);
+    store.bindSqlite(disk, { recovery: { reopen } });
+
+    failing.now = true;
+    expect(() => store.reads.write()).not.toThrow();
+    await flush();
+
+    expect(reopen).toHaveBeenCalledWith({ discard: false });
   });
 
   it('lists the running surface, so a group can be enumerated like the object it stands for', () => {

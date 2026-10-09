@@ -107,7 +107,7 @@ const EMPTY_RESULT: QueryExecResult = { rows: { _array: [] } };
  * A statement refused because another one held the connection, rather than because the database is unusable. SQLite
  * reports these by message only, so matching them is the whole of the distinction.
  */
-const CONTENTION = /cannot start a transaction within a transaction|no such savepoint|database (?:table )?is locked|SQLITE_BUSY/i;
+export const CONTENTION = /cannot start a transaction within a transaction|no such savepoint|database (?:table )?is locked|SQLITE_BUSY/i;
 
 /**
  * How many contended failures to absorb before treating the connection as broken. Contention is a bug worth fixing

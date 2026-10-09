@@ -10,7 +10,7 @@ import { reportStoreDegradation } from './diagnostics/telemetry';
 import { createVersionAtom, entityChangesOf, VersionAtom } from './reactivity/version_atom';
 import { FindOpts, RowShape, RowTable } from './table/types';
 import { ShredSpec } from './write/shred_spec';
-import { guardedConnection, SqliteConnection } from './table/connection';
+import { CONTENTION, guardedConnection, SqliteConnection, STORAGE_FAILURE } from './table/connection';
 import { createOnceGuard } from './diagnostics/once_guard';
 import { createSqliteRowTable } from './table/sqlite';
 import { nativeSpecOf, PartitionKeyColumn, partitionedSchema, StoreTableSchema, PARTITION_KEY_COLUMN } from './table/partitioned';
@@ -575,11 +575,18 @@ export function defineSqliteStore<
 
   /**
    * The store over SQLite on `conn`, guarded so that a failure on it reopens the database or moves the store off it.
+   * A failure while building throws, unless it is of the storage or contention: the schema setup that failed would fail
+   * the same way on every reopen, and the bind can start the file over.
    */
   const buildGuarded = (conn: SqliteConnection, options: BindOptions): Functions => {
+    let building = true;
     const guarded = guardedConnection(
       conn,
-      (error, op) => onSqliteFailure(error, op, options),
+      (error, op) => {
+        const message = messageOf(error);
+        if (building && !STORAGE_FAILURE.test(message) && !CONTENTION.test(message)) throw error;
+        onSqliteFailure(error, op, options);
+      },
       (error, op) =>
         reportStoreDegradation({
           scope: `${config.name}.contention`,
@@ -601,7 +608,9 @@ export function defineSqliteStore<
         });
       },
     );
-    return buildOver(guarded, !!options.temporary, version, conn).surface;
+    const { surface } = buildOver(guarded, !!options.temporary, version, conn);
+    building = false;
+    return surface;
   };
 
   /**
