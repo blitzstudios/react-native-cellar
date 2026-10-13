@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectedSummary } from '../shared/protocol';
-import { formatBytes, formatCell, isBlob, parseJsonText } from './format';
+import { formatBytes, formatCell, isBlob, parseJsonText, partitionLabel } from './format';
 
 type BindingState = InspectedSummary['binding']['state'];
 
@@ -85,19 +85,70 @@ export function JsonView({ value }: { value: unknown }) {
   return <pre className="json">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-/** A cell's whole value: JSON pretty-printed, a blob as hex, text as it is. */
-export function ValueDetail({ column, value, onClose }: { column: string; value: unknown; onClose: () => void }) {
-  const json = parseJsonText(value);
+/** What's selected in a view, beside it: hidden until something is, and closed with its ✕ or Escape. */
+export function DetailPane({ title, meta, actions, onClose, children }: { title: ReactNode; meta?: ReactNode; actions?: ReactNode; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <aside className="detail-pane" aria-label="Details">
+      <header className="detail-pane-header">
+        <h3 className="detail-pane-title">{title}</h3>
+        {meta ? <span className="muted small nowrap">{meta}</span> : null}
+        <span className="spacer" />
+        <button type="button" className="button button-small" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </header>
+      {actions ? <div className="detail-pane-actions">{actions}</div> : null}
+      <div className="detail-pane-body">{children}</div>
+    </aside>
+  );
+}
+
+/** A partition key as its short label, with the whole key on hover. */
+export function PartitionLabel({ partitionKey }: { partitionKey: string }) {
+  const { lead, parts } = partitionLabel(partitionKey);
+  return (
+    <span className="partition-label" title={partitionKey}>
+      {lead !== undefined ? <span className="partition-lead">{lead}</span> : null}
+      {parts.map((part, index) => (
+        <span key={index} className="partition-part">
+          {part.label ? <span className="partition-part-label">{part.label}</span> : null}
+          {part.value}
+        </span>
+      ))}
+      {lead === undefined && !parts.length ? <span className="muted">(no key)</span> : null}
+    </span>
+  );
+}
+
+/** A cell's whole value, or a whole row's: JSON pretty-printed, a blob as hex, text as it is. */
+export function ValueDetail({ title, value, onClose }: { title: string; value: unknown; onClose: () => void }) {
+  const row = typeof value === 'object' && value !== null && !isBlob(value) ? value : undefined;
+  const json = row ?? parseJsonText(value);
   const [copied, setCopied] = useState(false);
   const text = json !== undefined ? JSON.stringify(json, null, 2) : isBlob(value) ? value.hex : formatCell(value);
+  const meta =
+    row !== undefined
+      ? `${Object.keys(row).length} columns`
+      : value === null
+        ? 'NULL'
+        : isBlob(value)
+          ? `blob · ${formatBytes(value.bytes)}${value.bytes > 64 ? ' (first 64 bytes)' : ''}`
+          : json !== undefined
+            ? 'JSON'
+            : typeof value;
   return (
-    <aside className="value-detail">
-      <header>
-        <span className="value-detail-title">{column}</span>
-        <span className="muted">
-          {value === null ? 'NULL' : isBlob(value) ? `blob · ${formatBytes(value.bytes)}${value.bytes > 64 ? ' (first 64 bytes)' : ''}` : json !== undefined ? 'JSON' : typeof value}
-        </span>
-        <span className="spacer" />
+    <DetailPane
+      title={<span className="value-detail-title">{title}</span>}
+      meta={meta}
+      onClose={onClose}
+      actions={
         <button
           type="button"
           className="button button-small"
@@ -110,12 +161,10 @@ export function ValueDetail({ column, value, onClose }: { column: string; value:
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
-        <button type="button" className="button button-small" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
-      </header>
-      <pre className="json">{text}</pre>
-    </aside>
+      }
+    >
+      <pre className="json json-fill">{text}</pre>
+    </DetailPane>
   );
 }
 

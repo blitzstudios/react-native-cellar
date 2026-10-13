@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { InspectedEntity, InspectedPartition, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { heapLabel } from './caches_view';
-import { Empty, ErrorBanner, JsonView } from './components';
-import { formatClock, formatCount, quoteName } from './format';
+import { DetailPane, Empty, ErrorBanner, JsonView, PartitionLabel } from './components';
+import { formatClock, formatCount, partitionRowsSql, partitionText, quoteName } from './format';
 import { errorMessage, useLatestEventId, useThrottledEffect } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
@@ -94,14 +94,15 @@ export function EntitiesView({
     setSelected(ref);
   };
   const shown = list && list.partition === partition ? list : undefined;
+  const close = useCallback(() => setSelected(undefined), []);
 
   return (
     <div className="entities-view">
       <div className="toolbar">
         <select className="select" value={partition ?? ''} onChange={(event) => setPartition(event.target.value)} aria-label="Partition" disabled={!partitions?.length}>
           {(partitions ?? []).map((candidate) => (
-            <option key={candidate.key} value={candidate.key}>
-              {candidate.key} · {formatCount(candidate.entities)}
+            <option key={candidate.key} value={candidate.key} title={candidate.key}>
+              {partitionText(candidate.key)} ({formatCount(candidate.entities)})
             </option>
           ))}
         </select>
@@ -114,8 +115,8 @@ export function EntitiesView({
         ) : null}
       </div>
       {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
-      <div className="entities-body">
-        <div className="table-scroll entities-list">
+      <div className="split">
+        <div className="table-scroll">
           {partitions && !partitions.length ? (
             <Empty title="No partitions" />
           ) : (
@@ -128,7 +129,7 @@ export function EntitiesView({
               </thead>
               <tbody>
                 {(shown?.rows ?? []).map((row) => (
-                  <tr key={row.id} className={`clickable-row${sameRef(selected, row) ? ' row-open' : ''}`} onClick={() => setSelected(row)}>
+                  <tr key={row.id} className={`clickable-row${sameRef(selected, row) ? ' row-open' : ''}`} onClick={() => setSelected(sameRef(selected, row) ? undefined : row)}>
                     <td>
                       <code>{row.id}</code>
                     </td>
@@ -139,24 +140,19 @@ export function EntitiesView({
             </table>
           )}
         </div>
-        <div className="entity-detail">
-          {selected ? (
-            <EntityDetail
-              key={`${selected.partition}\u0000${selected.id}`}
-              rpc={rpc}
-              store={store}
-              entityRef={selected}
-              mode={mode}
-              events={events}
-              onSelect={select}
-              onRows={() =>
-                onQuery(`SELECT *\nFROM ${table}\nWHERE partition_key = ? AND ${entity} = ?`, JSON.stringify([selected.partition, selected.id]))
-              }
-            />
-          ) : (
-            <Empty title="Select an entity" />
-          )}
-        </div>
+        {selected ? (
+          <EntityDetail
+            key={`${selected.partition}\u0000${selected.id}`}
+            rpc={rpc}
+            store={store}
+            entityRef={selected}
+            mode={mode}
+            events={events}
+            onSelect={select}
+            onClose={close}
+            onRows={() => onQuery(partitionRowsSql(store, true), JSON.stringify([selected.partition, selected.id]))}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -170,6 +166,7 @@ function EntityDetail({
   events,
   onSelect,
   onRows,
+  onClose,
 }: {
   rpc: CellarRpc | null;
   store: StoreOverview;
@@ -177,6 +174,7 @@ function EntityDetail({
   events: readonly InspectorEvent[];
   onSelect: (ref: EntityRef) => void;
   onRows: () => void;
+  onClose: () => void;
   mode: 'live' | 'dump';
 }) {
   const [entity, setEntity] = useState<InspectedEntity>();
@@ -207,23 +205,26 @@ function EntityDetail({
   }, [load]);
   useThrottledEffect(load, latest, 1000, latest > 0);
 
-  if (error) return <ErrorBanner message={error} />;
-  if (!entity) return <div className="muted pad">…</div>;
-  const chosen = open === undefined ? undefined : entity.cacheEntries[open];
+  const chosen = open === undefined ? undefined : entity?.cacheEntries[open];
   return (
-    <div className="entity">
-      <header className="entity-header">
-        <h3>
-          <code>{id}</code>
-        </h3>
-        <span className="muted">
-          in <code>{partition}</code>
-          {mode === 'live' ? ` · ${entity.version ? `changed at v${entity.version}` : 'unchanged this session'}` : null}
-        </span>
+    <DetailPane
+      title={<code>{id}</code>}
+      meta={mode === 'live' && entity ? (entity.version ? `changed at v${entity.version}` : 'unchanged this session') : undefined}
+      onClose={onClose}
+      actions={
         <button type="button" className="button button-small" onClick={onRows} title="Query this entity's rows">
           Rows
         </button>
-      </header>
+      }
+    >
+      <div className="muted">
+        in <PartitionLabel partitionKey={partition} />
+      </div>
+      {error ? <ErrorBanner message={error} /> : null}
+      {!entity ? (
+        error ? null : <div className="muted">…</div>
+      ) : (
+        <>
       <section>
         <h4>Rows</h4>
         {entity.rows.length ? <JsonView value={entity.rows.length === 1 ? entity.rows[0] : entity.rows} /> : <div className="muted">None</div>}
@@ -294,12 +295,14 @@ function EntityDetail({
           <div className="entities">
             {entity.sameIdIn.map((other) => (
               <button key={other} type="button" className="chip chip-on" onClick={() => onSelect({ partition: other, id })}>
-                {other}
+                <PartitionLabel partitionKey={other} />
               </button>
             ))}
           </div>
         </section>
       ) : null}
-    </div>
+        </>
+      )}
+    </DetailPane>
   );
 }

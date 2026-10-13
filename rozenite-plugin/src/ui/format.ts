@@ -1,5 +1,7 @@
 /** How the panel writes numbers, sizes, durations and times. */
 
+import type { StoreOverview } from '../shared/protocol';
+
 export function formatCount(value: number): string {
   return value.toLocaleString('en-US');
 }
@@ -80,6 +82,18 @@ export function toCsv(columns: readonly string[], rows: readonly unknown[][]): s
   return [columns.map(cell).join(','), ...rows.map((row) => row.map(cell).join(','))].join('\n');
 }
 
+/** One row as an object keyed by column, its JSON text parsed; a repeated column name gets a `(2)`, `(3)`… after it. */
+export function rowObject(columns: readonly string[], row: readonly unknown[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  columns.forEach((column, index) => {
+    let name = column;
+    for (let n = 2; name in out; n += 1) name = `${column} (${n})`;
+    const value = row[index] ?? null;
+    out[name] = parseJsonText(value) ?? (isBlob(value) ? formatCell(value) : value);
+  });
+  return out;
+}
+
 /** Rows as a JSON array of objects keyed by column. */
 export function toJsonRows(columns: readonly string[], rows: readonly unknown[][]): string {
   return JSON.stringify(
@@ -107,4 +121,72 @@ export function parseParams(text: string): { params: Array<string | number | nul
 /** A double-quoted SQL name. */
 export function quoteName(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** Field names that say what kind of partition a key is, shown first and set apart. */
+const LEAD_FIELDS = new Set(['request', 'kind', 'type']);
+const NUMERIC = /^-?\d+(\.\d+)?$/;
+
+export interface PartitionLabelParts {
+  lead?: string;
+  /** Text values bare, then numbers after a label naming them, as `season 2026` or `game 202610515` for `gameId`. */
+  parts: Array<{ label?: string; value: string }>;
+}
+
+/**
+ * A partition key as a short label. Cellar keys a partition as its description's `name=value` pairs joined with `&`, so
+ * the names are mostly noise: a value says what it is, except a number. A key in any other shape is one bare part.
+ */
+export function partitionLabel(key: string): PartitionLabelParts {
+  if (!key) return { parts: [] };
+  const pairs = key.split('&').map((pair) => {
+    const at = pair.indexOf('=');
+    return at > 0 ? [decode(pair.slice(0, at)), decode(pair.slice(at + 1))] : undefined;
+  });
+  if (pairs.some((pair) => !pair)) return { parts: [{ value: key }] };
+  let lead: string | undefined;
+  const text: PartitionLabelParts['parts'] = [];
+  const numbers: PartitionLabelParts['parts'] = [];
+  for (const [name, value] of pairs as Array<[string, string]>) {
+    if (lead === undefined && LEAD_FIELDS.has(name)) lead = value;
+    else if (NUMERIC.test(value)) numbers.push({ label: name.replace(/_?id$/i, '') || name, value });
+    else text.push({ value });
+  }
+  return { ...(lead === undefined ? {} : { lead }), parts: [...text, ...numbers] };
+}
+
+/** A partition key's short label as plain text, for places that take no markup. */
+export function partitionText(key: string): string {
+  const { lead, parts } = partitionLabel(key);
+  const words = [...(lead === undefined ? [] : [lead]), ...parts.map((part) => (part.label ? `${part.label} ${part.value}` : part.value))];
+  return words.length ? words.join(' · ') : '(no key)';
+}
+
+function decode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+const storesRowsOnce = (store: StoreOverview) => store.summary.storedRows !== undefined;
+
+/** The first rows a store stores: from `<table>__rows`, each once, where it has one, rather than the view over it. */
+export function allRowsSql(store: StoreOverview): string {
+  const { table } = store.schema;
+  return `SELECT *\nFROM ${quoteName(storesRowsOnce(store) ? `${table}__rows` : table)}\nLIMIT 100`;
+}
+
+/**
+ * The rows one partition holds, taking the partition key as its `?`, and with `entity` the entity's id as a second. Where
+ * the store stores each row once, they come from `<table>__rows` through `<table>__members` rather than the view.
+ */
+export function partitionRowsSql(store: StoreOverview, entity = false): string {
+  const { table, entityColumn } = store.schema;
+  if (!storesRowsOnce(store)) return `SELECT *\nFROM ${quoteName(table)}\nWHERE partition_key = ?${entity ? ` AND ${quoteName(entityColumn)} = ?` : ''}`;
+  return (
+    `SELECT r.*\nFROM ${quoteName(`${table}__members`)} m\nJOIN ${quoteName(`${table}__rows`)} r ON r.rid = m.rid\n` +
+    `WHERE m.partition_key = ?${entity ? ` AND r.${quoteName(entityColumn)} = ?` : ''}`
+  );
 }

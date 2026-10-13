@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { formatAgo, formatCell, formatFetchRows, parseJsonText, parseParams, toCsv, toJsonRows } from '../ui/format';
+import {
+  allRowsSql,
+  formatAgo,
+  formatCell,
+  formatFetchRows,
+  parseJsonText,
+  parseParams,
+  partitionLabel,
+  partitionRowsSql,
+  partitionText,
+  rowObject,
+  toCsv,
+  toJsonRows,
+} from '../ui/format';
 import { scopeNamesStore } from '../ui/activity_view';
 import { parseFrames, shortPath } from '../ui/callsite';
 import { reportNumbers, splitScope } from '../ui/degradations';
 import { fetchStatsOf } from '../ui/overview';
 import { mergeEvents } from '../ui/use_cellar';
-import type { InspectorEvent } from '../shared/protocol';
+import type { InspectorEvent, StoreOverview } from '../shared/protocol';
 
 describe('params', () => {
   it('reads a JSON array, bare values, or nothing', () => {
@@ -120,6 +133,39 @@ describe('degradation reports', () => {
     expect(splitScope('player_store_ingest.oversized_prime.mlb')).toEqual({ rule: 'oversized_prime', subject: 'mlb' });
     expect(splitScope('memo.undersized.player.byTeam')).toEqual({ rule: 'undersized', subject: 'player.byTeam' });
     expect(splitScope('player_stats_store.in_memory')).toEqual({ rule: 'in_memory', subject: 'player_stats_store' });
+  });
+});
+
+describe('partition labels', () => {
+  it('leads with its kind, then text values bare and numbers after a name', () => {
+    expect(partitionLabel('category=proj&gameId=202610515&request=game&season=2026&seasonType=regular&sport=nfl')).toEqual({
+      lead: 'game',
+      parts: [{ value: 'proj' }, { value: 'regular' }, { value: 'nfl' }, { label: 'game', value: '202610515' }, { label: 'season', value: '2026' }],
+    });
+    expect(partitionText('playerId=11630&request=player&sport=nfl')).toBe('player · nfl · player 11630');
+    expect(partitionText('season=2025&seasonType=regular&sport=nfl')).toBe('regular · nfl · season 2025');
+  });
+
+  it('decodes values, and keeps a key in any other shape whole', () => {
+    expect(partitionText('teams=KC%2CBUF&sport=nfl')).toBe('KC,BUF · nfl');
+    expect(partitionText('nfl:2026')).toBe('nfl:2026');
+    expect(partitionText('')).toBe('(no key)');
+  });
+});
+
+describe('rows', () => {
+  it('keys a row by column, parsing JSON and numbering a repeated name', () => {
+    expect(rowObject(['rid', 'stats', 'rid'], [1, '{"pts":3}', 2])).toEqual({ rid: 1, stats: { pts: 3 }, 'rid (2)': 2 });
+  });
+
+  it('reads a partition’s rows from __rows where rows are stored once, and the table otherwise', () => {
+    const store = (storedRows?: number) =>
+      ({ schema: { table: 'games', entityColumn: 'team' }, summary: storedRows === undefined ? {} : { storedRows } }) as unknown as StoreOverview;
+    expect(partitionRowsSql(store(3), true)).toBe(
+      'SELECT r.*\nFROM "games__members" m\nJOIN "games__rows" r ON r.rid = m.rid\nWHERE m.partition_key = ? AND r."team" = ?',
+    );
+    expect(allRowsSql(store(3))).toBe('SELECT *\nFROM "games__rows"\nLIMIT 100');
+    expect(partitionRowsSql(store())).toBe('SELECT *\nFROM "games"\nWHERE partition_key = ?');
   });
 });
 

@@ -1,20 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { InspectorEvent } from '../shared/protocol';
-import { Callsite, ExtraChips } from './callsite';
-import { reportNumbers } from './degradations';
-import { Empty, KindBadge } from './components';
-import { formatClock, formatCount, formatFetchRows, formatMs, shortStoreName } from './format';
+import { ExtraChips } from './callsite';
+import { DegradationDetail, ScopeSubject, reportNumbers, splitScope } from './degradations';
+import { DetailPane, Empty, JsonView, KindBadge, PartitionLabel } from './components';
+import { formatClock, formatCount, formatFetchRows, formatMs, partitionText, shortStoreName } from './format';
 
 const KINDS: InspectorEvent['kind'][] = ['write', 'fetch', 'binding', 'degradation'];
 /** How many events the list draws; the rest are a filter away. */
 const SHOWN_MAX = 1000;
 
+const matchesPartition = (key: string, needle: string) => key.toLowerCase().includes(needle) || partitionText(key).toLowerCase().includes(needle);
+
 function matchesText(event: InspectorEvent, needle: string): boolean {
   switch (event.kind) {
     case 'write':
-      return event.partition.toLowerCase().includes(needle) || (event.entities !== 'all' && event.entities.some((id) => id.toLowerCase().includes(needle)));
+      return matchesPartition(event.partition, needle) || (event.entities !== 'all' && event.entities.some((id) => id.toLowerCase().includes(needle)));
     case 'fetch':
-      return event.partition.toLowerCase().includes(needle);
+      return matchesPartition(event.partition, needle);
     case 'binding':
       return (event.binding.database ?? '').toLowerCase().includes(needle) || event.binding.state.includes(needle);
     case 'degradation':
@@ -57,6 +59,8 @@ export function ActivityView({ events, store }: { events: readonly InspectorEven
     }
     return matching;
   }, [source, kinds, text, store, clearedAt]);
+  const selected = open === undefined ? undefined : shown.find((event) => event.id === open);
+  const close = useCallback(() => setOpen(undefined), []);
 
   const toggle = (kind: InspectorEvent['kind']) =>
     setKinds((current) => {
@@ -87,22 +91,29 @@ export function ActivityView({ events, store }: { events: readonly InspectorEven
       {!shown.length ? (
         <Empty title="No events" />
       ) : (
-        <div className="table-scroll">
-          <table className="table events">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Kind</th>
-                {store ? null : <th>Store</th>}
-                <th>What happened</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((event) => (
-                <EventRow key={event.id} event={event} showStore={!store} open={open === event.id} onToggle={() => setOpen(open === event.id ? undefined : event.id)} />
-              ))}
-            </tbody>
-          </table>
+        <div className="split">
+          <div className="table-scroll">
+            <table className="table events">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Kind</th>
+                  {store ? null : <th>Store</th>}
+                  <th>What happened</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((event) => (
+                  <EventRow key={event.id} event={event} showStore={!store} open={selected?.id === event.id} onToggle={() => setOpen(selected?.id === event.id ? undefined : event.id)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {selected ? (
+            <DetailPane title={<KindBadge kind={selected.kind} />} meta={`${formatClock(selected.at)}${'store' in selected ? ` · ${shortStoreName(selected.store)}` : ''}`} onClose={close}>
+              <EventDetail event={selected} />
+            </DetailPane>
+          ) : null}
         </div>
       )}
     </div>
@@ -110,24 +121,44 @@ export function ActivityView({ events, store }: { events: readonly InspectorEven
 }
 
 function EventRow({ event, showStore, open, onToggle }: { event: InspectorEvent; showStore: boolean; open: boolean; onToggle: () => void }) {
-  const expandable = (event.kind === 'write' && event.entities !== 'all' && event.entities.length > 0) || event.kind === 'degradation';
   return (
-    <>
-      <tr className={`event event-${event.kind}${event.kind === 'degradation' && event.severity === 'error' ? ' event-error' : ''}`} onClick={expandable ? onToggle : undefined}>
-        <td className="time">{formatClock(event.at)}</td>
-        <td>
-          <KindBadge kind={event.kind} />
-        </td>
-        {showStore ? <td>{'store' in event ? shortStoreName(event.store) : <span className="muted">—</span>}</td> : null}
-        <td>
-          <EventSummary event={event} />
-          {expandable ? <span className="disclosure-mark muted"> {open ? '▾' : '▸'}</span> : null}
-        </td>
-      </tr>
-      {open ? (
-        <tr className="row-detail">
-          <td colSpan={showStore ? 4 : 3}>
-            {event.kind === 'write' && event.entities !== 'all' ? (
+    <tr
+      className={`clickable-row event event-${event.kind}${event.kind === 'degradation' && event.severity === 'error' ? ' event-error' : ''}${open ? ' row-open' : ''}`}
+      onClick={onToggle}
+    >
+      <td className="time">{formatClock(event.at)}</td>
+      <td>
+        <KindBadge kind={event.kind} />
+      </td>
+      {showStore ? <td>{'store' in event ? shortStoreName(event.store) : <span className="muted">—</span>}</td> : null}
+      <td>
+        <EventSummary event={event} />
+      </td>
+    </tr>
+  );
+}
+
+function EventDetail({ event }: { event: InspectorEvent }) {
+  switch (event.kind) {
+    case 'write':
+      return (
+        <>
+          <dl className="facts">
+            <dt>Partition</dt>
+            <dd>
+              <PartitionLabel partitionKey={event.partition} />
+              <div>
+                <code className="wrap muted small">{event.partition}</code>
+              </div>
+            </dd>
+            <dt>Version</dt>
+            <dd>v{event.version}</dd>
+            <dt>Changed</dt>
+            <dd>{event.entityCount === null ? 'every entity' : `${formatCount(event.entityCount)} ${event.entityCount === 1 ? 'entity' : 'entities'}`}</dd>
+          </dl>
+          {event.entities !== 'all' && event.entities.length ? (
+            <section>
+              <h4>Entities</h4>
               <div className="entities">
                 {event.entities.map((id) => (
                   <code key={id}>{id}</code>
@@ -136,18 +167,39 @@ function EventRow({ event, showStore, open, onToggle }: { event: InspectorEvent;
                   <span className="muted">and {formatCount(event.entityCount - event.entities.length)} more</span>
                 ) : null}
               </div>
-            ) : event.kind === 'degradation' ? (
-              <div className="degradation-detail">
-                <div className="muted">{event.context}</div>
-                {event.error ? <pre className="json">{event.error}</pre> : null}
-                {event.callsite ? <Callsite stack={event.callsite} kind={event.callsiteKind} /> : null}
-              </div>
-            ) : null}
-          </td>
-        </tr>
-      ) : null}
-    </>
-  );
+            </section>
+          ) : null}
+        </>
+      );
+    case 'fetch':
+      return (
+        <dl className="facts">
+          <dt>Partition</dt>
+          <dd>
+            <PartitionLabel partitionKey={event.partition} />
+            <div>
+              <code className="wrap muted small">{event.partition}</code>
+            </div>
+          </dd>
+          <dt>Rows</dt>
+          <dd>{formatFetchRows(event.rows)}</dd>
+          <dt>Request</dt>
+          <dd>{formatMs(event.fetchMs)}</dd>
+          <dt>Write</dt>
+          <dd>{formatMs(event.ingestMs)}</dd>
+          {event.chars !== null ? (
+            <>
+              <dt>Body</dt>
+              <dd>{formatCount(event.chars)} chars</dd>
+            </>
+          ) : null}
+        </dl>
+      );
+    case 'binding':
+      return <JsonView value={event.binding} />;
+    case 'degradation':
+      return <DegradationDetail report={event} />;
+  }
 }
 
 function EventSummary({ event }: { event: InspectorEvent }) {
@@ -155,14 +207,14 @@ function EventSummary({ event }: { event: InspectorEvent }) {
     case 'write':
       return (
         <span>
-          <code>{event.partition}</code> → v{event.version} ·{' '}
+          <PartitionLabel partitionKey={event.partition} /> → v{event.version} ·{' '}
           {event.entityCount === null ? 'every entity' : `${formatCount(event.entityCount)} ${event.entityCount === 1 ? 'entity' : 'entities'} changed`}
         </span>
       );
     case 'fetch':
       return (
         <span>
-          <code>{event.partition}</code> · {formatFetchRows(event.rows)} · request {formatMs(event.fetchMs)} · write {formatMs(event.ingestMs)}
+          <PartitionLabel partitionKey={event.partition} /> · {formatFetchRows(event.rows)} · request {formatMs(event.fetchMs)} · write {formatMs(event.ingestMs)}
           {event.chars !== null ? ` · ${formatCount(event.chars)} chars` : ''}
         </span>
       );
@@ -182,7 +234,8 @@ function EventSummary({ event }: { event: InspectorEvent }) {
     case 'degradation':
       return (
         <span>
-          <code>{event.scope}</code> {event.severity !== 'error' ? <span className="muted">{event.severity === 'info' ? 'notice' : 'advice'}</span> : null}
+          <code>{splitScope(event.scope).rule}</code> <ScopeSubject subject={splitScope(event.scope).subject} />{' '}
+          {event.severity !== 'error' ? <span className="muted">{event.severity === 'info' ? 'notice' : 'advice'}</span> : null}
  <ExtraChips extra={reportNumbers(event)} />
         </span>
       );

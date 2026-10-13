@@ -43,6 +43,8 @@ interface DumpStore {
   metaTable: string;
   columns: Array<{ name: string; type: string; notNull: boolean }>;
   entityColumn: string;
+  /** How many rows its `<table>__rows` holds, where it stores each row once. */
+  storedRows?: number;
 }
 
 /**
@@ -62,7 +64,9 @@ function storesOf(db: Database): DumpStore[] {
     if (columns[0]?.name !== 'partition_key') continue;
     const rest = columns.slice(1);
     const entityColumn = (rest.find((column) => column.name.endsWith('_id')) ?? rest[0])?.name ?? 'partition_key';
-    stores.push({ table, metaTable: `${table}_meta`, columns, entityColumn });
+    const rowsTable = `${table}__rows`;
+    const storedRows = tables.has(rowsTable) ? Number(objects(db, `SELECT COUNT(*) AS n FROM ${quote(rowsTable)}`)[0]?.n ?? 0) : undefined;
+    stores.push({ table, metaTable: `${table}_meta`, columns, entityColumn, ...(storedRows === undefined ? {} : { storedRows }) });
   }
   return stores;
 }
@@ -135,6 +139,7 @@ export function createDumpRpc(SQL: SqlJsStatic, bytes: Uint8Array, fileName: str
         binding: { state: 'database', database: fileName, since: 0, reopens: 0 },
         rows: partitions.reduce((sum, partition) => sum + partition.rows, 0),
         partitions: partitions.length,
+        ...(store.storedRows === undefined ? {} : { storedRows: store.storedRows }),
         caches: { count: 0, entries: 0, heapBytes: 0, sharedBytes: 0 },
       },
     };
@@ -163,7 +168,13 @@ export function createDumpRpc(SQL: SqlJsStatic, bytes: Uint8Array, fileName: str
     entity: async ({ store, key, id }: { store: string; key: string; id: string }) => {
       const found = storeOf(store);
       const entity = quote(found.entityColumn);
-      const rows = objects(db, `SELECT * FROM ${quote(found.table)} WHERE partition_key = ? AND ${entity} = ? LIMIT 50`, [key, id]);
+      const rows = objects(
+        db,
+        found.storedRows === undefined
+          ? `SELECT * FROM ${quote(found.table)} WHERE partition_key = ? AND ${entity} = ? LIMIT 50`
+          : `SELECT r.* FROM ${quote(`${found.table}__members`)} m JOIN ${quote(`${found.table}__rows`)} r ON r.rid = m.rid WHERE m.partition_key = ? AND r.${entity} = ? LIMIT 50`,
+        [key, id],
+      );
       const others = objects(db, `SELECT DISTINCT partition_key AS key FROM ${quote(found.table)} WHERE ${entity} = ? AND partition_key <> ? ORDER BY partition_key`, [id, key]);
       return { partition: key, id, rows, version: 0, cacheEntries: [], sameIdIn: others.map((other) => String(other.key)) };
     },

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { IngestTiming, InspectorEvent, StoreOverview } from '../shared/protocol';
-import { Empty, ErrorBanner, StateBadge, Stat } from './components';
+import { DetailPane, Empty, ErrorBanner, StateBadge, Stat } from './components';
 import { heapLabel } from './caches_view';
-import { Degradations } from './degradations';
-import { formatAgo, formatBytes, formatCount, formatMs, shortStoreName } from './format';
+import { DegradationDetail, Degradations, splitScope } from './degradations';
+import type { Degradation } from './degradations';
+import { formatAgo, formatBytes, formatClock, formatCount, formatMs, partitionText, shortStoreName } from './format';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
@@ -34,6 +35,7 @@ export function Overview({
   const now = useNow();
   const [timings, setTimings] = useState<IngestTiming[]>();
   const [error, setError] = useState<string>();
+  const [selectedReport, setSelectedReport] = useState<number>();
 
   const loadRollup = useCallback(async () => {
     if (!rpc) return;
@@ -69,141 +71,146 @@ export function Overview({
     }),
     { rows: 0, partitions: 0, bytes: 0, heap: 0 },
   );
-  const offDatabase = stores.filter((store) => store.summary.binding.state !== 'database');
+  const report = useMemo(
+    () => (selectedReport === undefined ? undefined : events.find((event): event is Degradation => event.kind === 'degradation' && event.id === selectedReport)),
+    [events, selectedReport],
+  );
+  const closeReport = useCallback(() => setSelectedReport(undefined), []);
 
   return (
-    <div className="overview">
-      <div className="stats">
-        <Stat label="stores" value={formatCount(stores.length)} />
-        <Stat label="rows" value={formatCount(totals.rows)} />
-        <Stat label="partitions" value={formatCount(totals.partitions)} />
-        <Stat label={mode === 'dump' ? 'file' : 'on disk'} value={formatBytes(mode === 'dump' ? dumpBytes : totals.bytes)} />
+    <div className="split">
+      <div className="overview">
+        <div className="stats">
+          <Stat label="rows" value={formatCount(totals.rows)} />
+          <Stat label="partitions" value={formatCount(totals.partitions)} />
+          <Stat label={mode === 'dump' ? 'file' : 'on disk'} value={formatBytes(mode === 'dump' ? dumpBytes : totals.bytes)} />
+          {mode === 'live' ? <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold, a shared object counted once" /> : null}
+        </div>
+
+        {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
+
+        <section>
+          <h3>Stores</h3>
+          {stores.length ? (
+            <table className="table clickable">
+              <thead>
+                <tr>
+                  <th>Store</th>
+                  {mode === 'live' ? <th>Runs on</th> : null}
+                  <th className="num">Rows</th>
+                  <th className="num">Partitions</th>
+                  {mode === 'live' ? (
+                    <>
+                      <th className="num">On disk</th>
+                      <th className="num">Cache heap</th>
+                      <th className="num">Writes / min</th>
+                      <th>Last write</th>
+                    </>
+                  ) : null}
+                </tr>
+              </thead>
+              <tbody>
+                {stores.map((store) => {
+                  const recent = activity.get(store.name);
+                  return (
+                    <tr key={store.name} onClick={() => onSelect(store.name)}>
+                      <td>
+                        <strong>{shortStoreName(store.name)}</strong> <span className="muted">{store.schema.table}</span>
+                      </td>
+                      {mode === 'live' ? (
+                        <td>
+                          <StateBadge state={store.summary.binding.state} /> {store.summary.binding.database ? <span className="muted">{store.summary.binding.database}</span> : null}
+                        </td>
+                      ) : null}
+                      <td className="num">{formatCount(store.summary.rows)}</td>
+                      <td className="num">{formatCount(store.summary.partitions)}</td>
+                      {mode === 'live' ? (
+                        <>
+                          <td className="num">{formatBytes(store.summary.databaseBytes)}</td>
+                          <td className="num" title={`${formatCount(store.summary.caches?.entries ?? 0)} entries in ${store.summary.caches?.count ?? 0} caches`}>
+                            {heapLabel(store.summary.caches?.heapBytes)}
+                          </td>
+                          <td className="num">{recent?.writesLastMinute ?? 0}</td>
+                          <td>{formatAgo(recent?.lastWrite, now)}</td>
+                        </>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <Empty title="No stores" />
+          )}
+        </section>
+
         {mode === 'live' ? (
           <>
-            <Stat label="cache heap" value={heapLabel(totals.heap)} title="Estimated from what the caches hold, a shared object counted once" />
-            <Stat label="off their database" value={formatCount(offDatabase.length)} />
+        <section>
+          <h3 className="section-head">
+            Fetches <span className="muted small">latest 128</span>
+            <button type="button" className="button button-small" onClick={() => onClear({ ...cleared, fetchesBefore: Date.now() })}>
+              Clear
+            </button>
+          </h3>
+          {fetchStats.length ? (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Store</th>
+                  <th className="num">Fetches</th>
+                  <th className="num" title="304 Not Modified, or a body identical to the last">Unchanged</th>
+                  <th className="num">Avg request</th>
+                  <th className="num">Avg write</th>
+                  <th className="num">Slowest</th>
+                  <th className="num">Total request</th>
+                  <th className="num">Total write</th>
+                  <th className="num">Rows written</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fetchStats.map((stat) => (
+                  <tr key={stat.store}>
+                    <td>{shortStoreName(stat.store)}</td>
+                    <td className="num">{formatCount(stat.fetches)}</td>
+                    <td className="num">{formatCount(stat.unchanged)}</td>
+                    <td className="num">{formatMs(stat.fetchMs / stat.fetches)}</td>
+                    <td className="num">{formatMs(stat.ingestMs / stat.fetches)}</td>
+                    <td className="num" title={`${partitionText(stat.slowest.partition)}\n${stat.slowest.partition}`}>
+                      {formatMs(stat.slowest.ms)}
+                    </td>
+                    <td className="num">{formatMs(stat.fetchMs)}</td>
+                    <td className="num">{formatMs(stat.ingestMs)}</td>
+                    <td className="num">{formatCount(stat.rows)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="muted">None</div>
+          )}
+        </section>
+
+        <section>
+          <h3 className="section-head">
+            Degradations
+            <button
+              type="button"
+              className="button button-small"
+              onClick={() => onClear({ ...cleared, degradationsThrough: events.length ? events[events.length - 1].id : 0 })}
+            >
+              Clear
+            </button>
+          </h3>
+          <Degradations events={events} after={cleared.degradationsThrough} selected={report?.id} onSelect={setSelectedReport} />
+        </section>
           </>
         ) : null}
       </div>
-
-      {error ? <ErrorBanner message={error} onDismiss={() => setError(undefined)} /> : null}
-
-      <section>
-        <h3>Stores</h3>
-        {stores.length ? (
-          <table className="table clickable">
-            <thead>
-              <tr>
-                <th>Store</th>
-                {mode === 'live' ? <th>Runs on</th> : null}
-                <th className="num">Rows</th>
-                <th className="num">Partitions</th>
-                {mode === 'live' ? (
-                  <>
-                    <th className="num">On disk</th>
-                    <th className="num">Cache heap</th>
-                    <th className="num">Writes / min</th>
-                    <th>Last write</th>
-                  </>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {stores.map((store) => {
-                const recent = activity.get(store.name);
-                return (
-                  <tr key={store.name} onClick={() => onSelect(store.name)}>
-                    <td>
-                      <strong>{shortStoreName(store.name)}</strong> <span className="muted">{store.schema.table}</span>
-                    </td>
-                    {mode === 'live' ? (
-                      <td>
-                        <StateBadge state={store.summary.binding.state} /> {store.summary.binding.database ? <span className="muted">{store.summary.binding.database}</span> : null}
-                      </td>
-                    ) : null}
-                    <td className="num">{formatCount(store.summary.rows)}</td>
-                    <td className="num">{formatCount(store.summary.partitions)}</td>
-                    {mode === 'live' ? (
-                      <>
-                        <td className="num">{formatBytes(store.summary.databaseBytes)}</td>
-                        <td className="num" title={`${formatCount(store.summary.caches?.entries ?? 0)} entries in ${store.summary.caches?.count ?? 0} caches`}>
-                          {heapLabel(store.summary.caches?.heapBytes)}
-                        </td>
-                        <td className="num">{recent?.writesLastMinute ?? 0}</td>
-                        <td>{formatAgo(recent?.lastWrite, now)}</td>
-                      </>
-                    ) : null}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <Empty title="No stores" />
-        )}
-      </section>
-
-      {mode === 'live' ? (
-        <>
-      <section>
-        <h3 className="section-head">
-          Fetches <span className="muted small">latest 128</span>
-          <button type="button" className="button button-small" onClick={() => onClear({ ...cleared, fetchesBefore: Date.now() })}>
-            Clear
-          </button>
-        </h3>
-        {fetchStats.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Store</th>
-                <th className="num">Fetches</th>
-                <th className="num" title="304 Not Modified, or a body identical to the last">Unchanged</th>
-                <th className="num">Avg request</th>
-                <th className="num">Avg write</th>
-                <th className="num">Slowest</th>
-                <th className="num">Total request</th>
-                <th className="num">Total write</th>
-                <th className="num">Rows written</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fetchStats.map((stat) => (
-                <tr key={stat.store}>
-                  <td>{shortStoreName(stat.store)}</td>
-                  <td className="num">{formatCount(stat.fetches)}</td>
-                  <td className="num">{formatCount(stat.unchanged)}</td>
-                  <td className="num">{formatMs(stat.fetchMs / stat.fetches)}</td>
-                  <td className="num">{formatMs(stat.ingestMs / stat.fetches)}</td>
-                  <td className="num" title={stat.slowest.partition}>
-                    {formatMs(stat.slowest.ms)}
-                  </td>
-                  <td className="num">{formatMs(stat.fetchMs)}</td>
-                  <td className="num">{formatMs(stat.ingestMs)}</td>
-                  <td className="num">{formatCount(stat.rows)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="muted">None</div>
-        )}
-      </section>
-
-      <section>
-        <h3 className="section-head">
-          Degradations
-          <button
-            type="button"
-            className="button button-small"
-            onClick={() => onClear({ ...cleared, degradationsThrough: events.length ? events[events.length - 1].id : 0 })}
-          >
-            Clear
-          </button>
-        </h3>
-        <Degradations events={events} after={cleared.degradationsThrough} />
-      </section>
-        </>
+      {report ? (
+        <DetailPane title={<code>{splitScope(report.scope).rule}</code>} meta={formatClock(report.at)} onClose={closeReport}>
+          <DegradationDetail report={report} />
+        </DetailPane>
       ) : null}
     </div>
   );

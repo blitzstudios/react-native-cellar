@@ -105,7 +105,7 @@ describe('the calls the panel makes', () => {
     expect(await session.rpc.method('entity').invoke({ store: 'protocol_entity_store', key: 'season=2026&sport=nfl', id: 'KC' })).toEqual({
       partition: 'season=2026&sport=nfl',
       id: 'KC',
-      rows: [{ partition_key: 'season=2026&sport=nfl', team: 'KC', sport: 'nfl', score: 27 }],
+      rows: [{ rid: expect.any(Number), team: 'KC', sport: 'nfl', score: 27 }],
       version: 1,
       cacheEntries: [],
       sameIdIn: ['season=2026&sport=nba'],

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
 import type { InspectedCache, InspectedCacheEntries, StoreOverview } from '../shared/protocol';
-import { Empty, ErrorBanner, JsonView } from './components';
+import { DetailPane, Empty, ErrorBanner, JsonView } from './components';
 import { formatAgo, formatBytes, formatCount } from './format';
 import { errorMessage, useNow } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
@@ -53,6 +52,8 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
     (sum, cache) => ({ entries: sum.entries + cache.entries, heap: sum.heap + (cache.heapBytes ?? 0), partial: sum.partial || !!cache.heapPartial }),
     { entries: 0, heap: 0, partial: false },
   );
+  const selected = list.find((cache) => cache.cache === open);
+  const close = useCallback(() => setOpen(undefined), []);
 
   return (
     <div className="caches-view">
@@ -60,127 +61,102 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
       {caches && !caches.length ? (
         <Empty title="No caches" />
       ) : (
-        <div className="table-scroll">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Cache</th>
-                <th>Per</th>
-                <th>Keyed by</th>
-                <th>Entries</th>
-                <th className="num" title="What this cache holds, including objects it shares with another cache">
-                  Heap
-                </th>
-                <th className="num">Hit rate</th>
-                <th className="num">Hits</th>
-                <th className="num" title="Built at an older version, before a write">
-                  Stale
-                </th>
-                <th className="num" title="Never built, or evicted">
-                  Absent
-                </th>
-                <th className="num">Evicted</th>
-                <th className="num" title="Evicted keys asked for again">
-                  Re-read
-                </th>
-                <th className="num">Builds</th>
-                <th className="num" title="Builds that isEqual found unchanged">
-                  Kept
-                </th>
-                <th>Since</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((cache) => {
-                const rate = hitRate(cache);
-                const verdict = cacheVerdict(cache);
-                const fill = cache.max ? Math.min(1, cache.entries / cache.max) : 0;
-                const isOpen = open === cache.cache;
-                return (
-                  <CacheRows key={cache.name} isOpen={isOpen} rpc={rpc} store={store} cache={cache} onToggle={() => setOpen(isOpen ? undefined : cache.cache)}>
-                    <td>
-                      <span className="disclosure-mark muted">{isOpen ? '▾' : '▸'}</span>
-                      <code>{cache.cache}</code>
-                      {verdict ? <div className="warning small">{verdict}</div> : null}
-                    </td>
-                    <td>{cache.kind}</td>
-                    <td className="muted">{cache.keyedBy}</td>
-                    <td>
-                      <div className="meter" title={`${cache.entries} of ${cache.max}`}>
-                        <div className="meter-fill" style={{ width: `${fill * 100}%` }} />
-                      </div>
-                      <span className="small">
-                        {formatCount(cache.entries)} / {formatCount(cache.max)}
-                      </span>
-                    </td>
-                    <td className="num">{heapLabel(cache.heapBytes, cache.heapPartial)}</td>
-                    <td className="num">{rate === null ? '—' : `${Math.round(rate * 100)}%`}</td>
-                    <td className="num">{formatCount(cache.hits)}</td>
-                    <td className="num">{formatCount(cache.stale)}</td>
-                    <td className="num">{formatCount(cache.absent)}</td>
-                    <td className="num">{formatCount(cache.evictions)}</td>
-                    <td className="num">{formatCount(cache.rereads)}</td>
-                    <td className="num">{formatCount(cache.builds)}</td>
-                    <td className="num">{formatCount(cache.reused)}</td>
-                    <td>{formatAgo(cache.since, now)}</td>
-                  </CacheRows>
-                );
-              })}
-            </tbody>
-            {list.length > 1 ? (
-              <tfoot>
+        <div className="split">
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={3}>Total</td>
-                  <td className="small">{formatCount(totals.entries)}</td>
-                  <td className="num" title="A row two caches share is counted once">
-                    {heapLabel(store.summary.caches?.heapBytes ?? totals.heap, totals.partial)}
-                    {store.summary.caches?.sharedBytes ? (
-                      <div className="muted small">
-                        {formatBytes(store.summary.caches.heapBytes + store.summary.caches.sharedBytes)} across caches, less{' '}
-                        {formatBytes(store.summary.caches.sharedBytes)} they share
-                      </div>
-                    ) : null}
-                  </td>
-                  <td colSpan={9} />
+                  <th>Cache</th>
+                  <th>Per</th>
+                  <th>Keyed by</th>
+                  <th>Entries</th>
+                  <th className="num" title="What this cache holds, including objects it shares with another cache">
+                    Heap
+                  </th>
+                  <th className="num">Hit rate</th>
+                  <th className="num">Hits</th>
+                  <th className="num" title="Built at an older version, before a write">
+                    Stale
+                  </th>
+                  <th className="num" title="Never built, or evicted">
+                    Absent
+                  </th>
+                  <th className="num">Evicted</th>
+                  <th className="num" title="Evicted keys asked for again">
+                    Re-read
+                  </th>
+                  <th className="num">Builds</th>
+                  <th className="num" title="Builds that isEqual found unchanged">
+                    Kept
+                  </th>
+                  <th>Since</th>
                 </tr>
-              </tfoot>
-            ) : null}
-          </table>
+              </thead>
+              <tbody>
+                {list.map((cache) => {
+                  const rate = hitRate(cache);
+                  const verdict = cacheVerdict(cache);
+                  const fill = cache.max ? Math.min(1, cache.entries / cache.max) : 0;
+                  const isOpen = open === cache.cache;
+                  return (
+                    <tr key={cache.name} className={`clickable-row${verdict ? ' row-warning' : ''}${isOpen ? ' row-open' : ''}`} onClick={() => setOpen(isOpen ? undefined : cache.cache)}>
+                      <td>
+                        <code>{cache.cache}</code>
+                        {verdict ? <div className="warning small">{verdict}</div> : null}
+                      </td>
+                      <td>{cache.kind}</td>
+                      <td className="muted">{cache.keyedBy}</td>
+                      <td>
+                        <div className="meter" title={`${cache.entries} of ${cache.max}`}>
+                          <div className="meter-fill" style={{ width: `${fill * 100}%` }} />
+                        </div>
+                        <span className="small">
+                          {formatCount(cache.entries)} / {formatCount(cache.max)}
+                        </span>
+                      </td>
+                      <td className="num">{heapLabel(cache.heapBytes, cache.heapPartial)}</td>
+                      <td className="num">{rate === null ? '—' : `${Math.round(rate * 100)}%`}</td>
+                      <td className="num">{formatCount(cache.hits)}</td>
+                      <td className="num">{formatCount(cache.stale)}</td>
+                      <td className="num">{formatCount(cache.absent)}</td>
+                      <td className="num">{formatCount(cache.evictions)}</td>
+                      <td className="num">{formatCount(cache.rereads)}</td>
+                      <td className="num">{formatCount(cache.builds)}</td>
+                      <td className="num">{formatCount(cache.reused)}</td>
+                      <td>{formatAgo(cache.since, now)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {list.length > 1 ? (
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}>Total</td>
+                    <td className="small">{formatCount(totals.entries)}</td>
+                    <td className="num" title="A row two caches share is counted once">
+                      {heapLabel(store.summary.caches?.heapBytes ?? totals.heap, totals.partial)}
+                      {store.summary.caches?.sharedBytes ? (
+                        <div className="muted small">
+                          {formatBytes(store.summary.caches.heapBytes + store.summary.caches.sharedBytes)} across caches, less{' '}
+                          {formatBytes(store.summary.caches.sharedBytes)} they share
+                        </div>
+                      ) : null}
+                    </td>
+                    <td colSpan={9} />
+                  </tr>
+                </tfoot>
+              ) : null}
+            </table>
+          </div>
+          {selected ? (
+            <DetailPane title={<code>{selected.cache}</code>} meta={`per ${selected.kind} · keyed by ${selected.keyedBy}`} onClose={close}>
+              {cacheVerdict(selected) ? <div className="warning">{cacheVerdict(selected)}</div> : null}
+              <CacheEntries key={selected.cache} rpc={rpc} store={store} cache={selected} />
+            </DetailPane>
+          ) : null}
         </div>
       )}
     </div>
-  );
-}
-
-function CacheRows({
-  isOpen,
-  onToggle,
-  rpc,
-  store,
-  cache,
-  children,
-}: {
-  isOpen: boolean;
-  onToggle: () => void;
-  rpc: CellarRpc | null;
-  store: StoreOverview;
-  cache: InspectedCache;
-  children: ReactNode;
-}) {
-  const verdict = cacheVerdict(cache);
-  return (
-    <>
-      <tr className={`clickable-row${verdict ? ' row-warning' : ''}${isOpen ? ' row-open' : ''}`} onClick={onToggle}>
-        {children}
-      </tr>
-      {isOpen ? (
-        <tr className="row-detail">
-          <td colSpan={14}>
-            <CacheEntries rpc={rpc} store={store} cache={cache} />
-          </td>
-        </tr>
-      ) : null}
-    </>
   );
 }
 
@@ -216,7 +192,7 @@ function CacheEntries({ rpc, store, cache }: { rpc: CellarRpc | null; store: Sto
           Next ›
         </button>
       </div>
-      <div className="cache-entries-body">
+      <div>
         <table className="table entries-table">
           <thead>
             <tr>
@@ -241,8 +217,17 @@ function CacheEntries({ rpc, store, cache }: { rpc: CellarRpc | null; store: Sto
             ))}
           </tbody>
         </table>
-        <div className="entry-value">{chosen ? <JsonView value={chosen.value} /> : <div className="muted pad">Select an entry</div>}</div>
       </div>
+      {chosen ? (
+        <section className="entry-value">
+          <h4>
+            Value of <code>{chosen.key.join(' / ') || '∅'}</code>
+          </h4>
+          <JsonView value={chosen.value} />
+        </section>
+      ) : (
+        <div className="muted">Select an entry for its value</div>
+      )}
     </div>
   );
 }

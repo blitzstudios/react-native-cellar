@@ -49,12 +49,22 @@ it('lists the stores, shows a store’s partitions, and queries a partition’s 
   fireEvent.click(await within(sidebar).findByTitle('panel_games_store'));
 
   expect(await screen.findByRole('heading', { name: 'panel_games' })).toBeTruthy();
-  expect(await screen.findByText('season=2026&sport=nfl')).toBeTruthy();
+  const label = await screen.findByTitle('season=2026&sport=nfl');
+  expect(label.textContent).toBe('nflseason2026');
+  expect(screen.queryByRole('complementary', { name: 'Details' })).toBeNull();
 
-  fireEvent.click(screen.getByTitle("Query this partition's rows"));
+  fireEvent.click(label);
+  const details = await screen.findByRole('complementary', { name: 'Details' });
+  fireEvent.click(within(details).getByTitle("Query this partition's rows"));
   expect(await screen.findByText('KC')).toBeTruthy();
   expect(screen.getByText('BUF')).toBeTruthy();
   expect((screen.getByLabelText('Params') as HTMLInputElement).value).toBe('["season=2026&sport=nfl"]');
+  expect((screen.getByLabelText('SQL') as HTMLTextAreaElement).value).toContain('"games__rows"');
+
+  fireEvent.click(screen.getAllByTitle('Open this row')[0]);
+  const row = await screen.findByRole('complementary', { name: 'Details' });
+  expect(within(row).getByText('Row 1')).toBeTruthy();
+  expect(within(row).getByText(/"sport": "nfl"/)).toBeTruthy();
 });
 
 it('shows a refused write as an error, and re-runs a live query when the store writes', async () => {
@@ -88,7 +98,7 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
 
   fireEvent.click(within(sidebar).getByText('Activity'));
   expect(await screen.findByRole('heading', { name: 'Activity' })).toBeTruthy();
-  await waitFor(() => expect(screen.getAllByText('season=2026&sport=nfl').length).toBeGreaterThan(0), { timeout: 3000 });
+  await waitFor(() => expect(screen.getAllByTitle('season=2026&sport=nfl').length).toBeGreaterThan(0), { timeout: 3000 });
   expect(screen.getAllByText('panel_activity').length).toBeGreaterThan(0);
 
   fireEvent.click(within(sidebar).getByTitle('panel_activity_store'));
@@ -110,7 +120,7 @@ it('lists one partition’s entities at a time, and moves to another partition u
   fireEvent.click(screen.getByText('MIA'));
   expect(await screen.findByRole('heading', { name: 'MIA' })).toBeTruthy();
 
-  fireEvent.click(await screen.findByRole('button', { name: 'season=2026&sport=nba' }));
+  fireEvent.click(within(screen.getByRole('complementary', { name: 'Details' })).getByTitle('season=2026&sport=nba'));
   await waitFor(() => expect(partition.value).toBe('season=2026&sport=nba'));
   await waitFor(() => expect(screen.queryByText('KC')).toBeNull());
   expect(screen.getAllByText('MIA').length).toBeGreaterThan(0);

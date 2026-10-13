@@ -1,7 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { InspectedEntityChanges, InspectedPartition, InspectorEvent, StoreOverview } from '../shared/protocol';
-import { Empty, ErrorBanner, JsonView, KindBadge, SortHeader } from './components';
-import { formatAgo, formatClock, formatCount, formatFetchRows, formatMs } from './format';
+import { DetailPane, Empty, ErrorBanner, JsonView, KindBadge, PartitionLabel, SortHeader } from './components';
+import { formatAgo, formatClock, formatCount, formatFetchRows, formatMs, partitionText } from './format';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
 
@@ -42,7 +42,7 @@ export function PartitionsView({
   const [error, setError] = useState<string>();
   const [filter, setFilter] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; descending: boolean }>({ key: 'key', descending: false });
-  const [expanded, setExpanded] = useState<string>();
+  const [selectedKey, setSelectedKey] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const now = useNow();
 
@@ -58,7 +58,7 @@ export function PartitionsView({
 
   useEffect(() => {
     setPartitions(undefined);
-    setExpanded(undefined);
+    setSelectedKey(undefined);
     load();
   }, [load]);
 
@@ -79,7 +79,11 @@ export function PartitionsView({
   const shown = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const matching = (partitions ?? []).filter(
-      (partition) => !needle || partition.key.toLowerCase().includes(needle) || JSON.stringify(partition.partition ?? '').toLowerCase().includes(needle),
+      (partition) =>
+        !needle ||
+        partition.key.toLowerCase().includes(needle) ||
+        partitionText(partition.key).toLowerCase().includes(needle) ||
+        JSON.stringify(partition.partition ?? '').toLowerCase().includes(needle),
     );
     const sorted = [...matching].sort(compare[sort.key]);
     return sort.descending ? sorted.reverse() : sorted;
@@ -87,6 +91,8 @@ export function PartitionsView({
 
   const onSort = (key: SortKey) => setSort((current) => ({ key, descending: current.key === key ? !current.descending : key !== 'key' }));
   const totalRows = (partitions ?? []).reduce((sum, partition) => sum + partition.rows, 0);
+  const selected = partitions?.find((partition) => partition.key === selectedKey);
+  const close = useCallback(() => setSelectedKey(undefined), []);
 
   return (
     <div className="partitions-view">
@@ -105,105 +111,118 @@ export function PartitionsView({
       {partitions && !partitions.length ? (
         <Empty title="No partitions" />
       ) : (
-        <div className="table-scroll">
-          <table className="table">
-            <thead>
-              <tr>
-                <SortHeader label="Partition" sortKey="key" sort={sort} onSort={onSort} />
-                <SortHeader label="Rows" sortKey="rows" sort={sort} onSort={onSort} align="right" />
-                <SortHeader label="Entities" sortKey="entities" sort={sort} onSort={onSort} align="right" />
-                {mode === 'live' ? <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" /> : null}
-                <th>ETag</th>
-                {mode === 'live' ? <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} /> : null}
-                <th className="actions-pinned" />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((partition) => {
-                const open = expanded === partition.key;
-                return (
-                  <Fragment key={partition.key}>
-                    <tr className={open ? 'row-open' : undefined}>
+        <div className="split">
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <SortHeader label="Partition" sortKey="key" sort={sort} onSort={onSort} />
+                  <SortHeader label="Rows" sortKey="rows" sort={sort} onSort={onSort} align="right" />
+                  <SortHeader label="Entities" sortKey="entities" sort={sort} onSort={onSort} align="right" />
+                  {mode === 'live' ? <SortHeader label="Version" sortKey="version" sort={sort} onSort={onSort} align="right" /> : null}
+                  {selected ? null : <th>ETag</th>}
+                  {mode === 'live' && !selected ? <SortHeader label="Fetched" sortKey="fetchedAt" sort={sort} onSort={onSort} /> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((partition) => {
+                  const open = selectedKey === partition.key;
+                  return (
+                    <tr key={partition.key} className={`clickable-row${open ? ' row-open' : ''}`} onClick={() => setSelectedKey(open ? undefined : partition.key)} aria-selected={open}>
                       <td className="partition-key">
-                        <button
-                          type="button"
-                          className="disclosure"
-                          onClick={() => setExpanded(open ? undefined : partition.key)}
-                          aria-expanded={open}
-                          title={partition.key}
-                        >
-                          <span className="disclosure-mark">{open ? '▾' : '▸'}</span>
-                          <code>{partition.key}</code>
-                        </button>
+                        <PartitionLabel partitionKey={partition.key} />
                       </td>
                       <td className="num">{formatCount(partition.rows)}</td>
                       <td className="num">{formatCount(partition.entities)}</td>
                       {mode === 'live' ? <td className="num">{partition.version}</td> : null}
-                      <td className="etag" title={partition.etag ?? undefined}>
-                        {partition.etag ?? <span className="muted">none</span>}
-                      </td>
-                      {mode === 'live' ? (
-                        <td title={partition.fetchedAt ? new Date(partition.fetchedAt).toLocaleString() : 'Not fetched this session'}>
+                      {selected ? null : (
+                        <td className="etag" title={partition.etag ?? undefined}>
+                          {partition.etag ?? <span className="muted">none</span>}
+                        </td>
+                      )}
+                      {mode === 'live' && !selected ? (
+                        <td className="nowrap" title={partition.fetchedAt ? new Date(partition.fetchedAt).toLocaleString() : 'Not fetched this session'}>
                           {partition.fetchedAt ? formatAgo(partition.fetchedAt, now) : <span className="muted">not this session</span>}
                         </td>
                       ) : null}
-                      <td className="actions actions-pinned">
-                        <button type="button" className="button button-small" onClick={() => onQueryPartition(partition.key)} title="Query this partition's rows">
-                          Rows
-                        </button>
-                        {mode === 'live' ? (
-                          <>
-                        <button
-                          type="button"
-                          className="button button-small"
-                          title="Fetch this partition again, sending its ETag"
-                          onClick={() =>
-                            act('Refetching', async () => {
-                              const refetched = await rpc?.method('refetch').invoke({ store: store.name, key: partition.key });
-                              if (refetched === false) throw new Error('This store does not fetch its partitions.');
-                            })
-                          }
-                        >
-                          Refetch
-                        </button>
-                        <button
-                          type="button"
-                          className="button button-small"
-                          disabled={!partition.etag}
-                          title="Delete the ETag, so the next fetch downloads the whole body"
-                          onClick={() => act('ETag cleared', () => rpc!.method('clearEtag').invoke({ store: store.name, key: partition.key }))}
-                        >
-                          Clear ETag
-                        </button>
-                          </>
-                        ) : null}
-                      </td>
                     </tr>
-                    {open ? (
-                      <tr className="row-detail">
-                        <td colSpan={mode === 'live' ? 7 : 5}>
-                          <div className="partition-detail">
-                            <section>
-                              <h4>Description</h4>
-                              {partition.partition === undefined ? <div className="muted">None</div> : <JsonView value={partition.partition} />}
-                            </section>
-                            <section>
-                              <h4>Recent activity</h4>
-                              <PartitionTimeline events={partitionEvents(events, store.name, partition.key)} />
-                            </section>
-                            <section>
-                              <h4>Recently changed entities</h4>
-                              <EntityChanges rpc={rpc} store={store} partitionKey={partition.key} version={partition.version} />
-                            </section>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {selected ? (
+            <DetailPane
+              title={<PartitionLabel partitionKey={selected.key} />}
+              onClose={close}
+              actions={
+                <>
+                  <button type="button" className="button button-small" onClick={() => onQueryPartition(selected.key)} title="Query this partition's rows">
+                    Rows
+                  </button>
+                  {mode === 'live' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="button button-small"
+                        title="Fetch this partition again, sending its ETag"
+                        onClick={() =>
+                          act('Refetching', async () => {
+                            const refetched = await rpc?.method('refetch').invoke({ store: store.name, key: selected.key });
+                            if (refetched === false) throw new Error('This store does not fetch its partitions.');
+                          })
+                        }
+                      >
+                        Refetch
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-small"
+                        disabled={!selected.etag}
+                        title="Delete the ETag, so the next fetch downloads the whole body"
+                        onClick={() => act('ETag cleared', () => rpc!.method('clearEtag').invoke({ store: store.name, key: selected.key }))}
+                      >
+                        Clear ETag
+                      </button>
+                    </>
+                  ) : null}
+                </>
+              }
+            >
+              <dl className="facts">
+                <dt>Key</dt>
+                <dd>
+                  <code className="wrap">{selected.key}</code>
+                </dd>
+                <dt>Rows</dt>
+                <dd>
+                  {formatCount(selected.rows)} · {formatCount(selected.entities)} entities
+                </dd>
+                {mode === 'live' ? (
+                  <>
+                    <dt>Version</dt>
+                    <dd>v{selected.version}</dd>
+                    <dt>Fetched</dt>
+                    <dd>{selected.fetchedAt ? `${formatAgo(selected.fetchedAt, now)} · ${new Date(selected.fetchedAt).toLocaleTimeString()}` : <span className="muted">not this session</span>}</dd>
+                  </>
+                ) : null}
+                <dt>ETag</dt>
+                <dd>{selected.etag ? <code className="wrap">{selected.etag}</code> : <span className="muted">none</span>}</dd>
+              </dl>
+              <section>
+                <h4>Description</h4>
+                {selected.partition === undefined ? <div className="muted">None</div> : <JsonView value={selected.partition} />}
+              </section>
+              <section>
+                <h4>Recent activity</h4>
+                <PartitionTimeline events={partitionEvents(events, store.name, selected.key)} />
+              </section>
+              <section>
+                <h4>Recently changed entities</h4>
+                <EntityChanges key={selected.key} rpc={rpc} store={store} partitionKey={selected.key} version={selected.version} />
+              </section>
+            </DetailPane>
+          ) : null}
         </div>
       )}
     </div>

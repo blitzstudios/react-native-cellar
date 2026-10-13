@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InspectedQueryResult, InspectorEvent, StoreOverview } from '../shared/protocol';
 import { ErrorBanner, ValueDetail } from './components';
-import { formatAgo, formatCount, formatMs, parseParams, quoteName, toCsv, toJsonRows } from './format';
+import { allRowsSql, formatAgo, formatCount, formatMs, parseParams, partitionRowsSql, quoteName, rowObject, toCsv, toJsonRows } from './format';
 import { ResultGrid } from './result_grid';
 import type { SelectedCell } from './result_grid';
 import { errorMessage, useLatestEventId, useNow, useThrottledEffect } from './use_cellar';
@@ -22,7 +22,7 @@ const HISTORY_MAX = 30;
 const LIVE_INTERVAL_MS = 1000;
 
 export function defaultDraft(store: StoreOverview): QueryDraft {
-  return { sql: `SELECT *\nFROM ${quoteName(store.schema.table)}\nLIMIT 100`, params: '', limit: 500, live: false };
+  return { sql: allRowsSql(store), params: '', limit: 500, live: false };
 }
 
 interface Snippet {
@@ -49,7 +49,7 @@ function snippetsFor(store: StoreOverview): Snippet[] {
           },
         ];
   return [
-    { label: 'Rows in one partition', sql: `SELECT *\nFROM ${t}\nWHERE partition_key = ?`, params: '[""]' },
+    { label: 'Rows in one partition', sql: partitionRowsSql(store), params: '[""]' },
     { label: 'Rows per partition', sql: `SELECT partition_key, COUNT(*) AS rows, COUNT(DISTINCT ${quoteName(entityColumn)}) AS entities\nFROM ${t}\nGROUP BY partition_key\nORDER BY rows DESC` },
     { label: `One ${entityColumn} across partitions`, sql: `SELECT *\nFROM ${t}\nWHERE ${quoteName(entityColumn)} = ?\nORDER BY partition_key`, params: '[""]' },
     ...stored,
@@ -170,7 +170,7 @@ export function QueryView({
     });
   };
 
-  const selectedValue = result && selected ? result.rows[selected.row]?.[selected.column] : undefined;
+  const selectedRow = result && selected ? result.rows[selected.row] : undefined;
 
   return (
     <div className="query-view">
@@ -298,8 +298,12 @@ export function QueryView({
             ) : (
               <div className="muted pad">No rows.</div>
             )}
-            {selected && result.rows[selected.row] ? (
-              <ValueDetail column={result.columns[selected.column]} value={selectedValue ?? null} onClose={() => setSelected(undefined)} />
+            {selected && selectedRow ? (
+              selected.column === undefined ? (
+                <ValueDetail title={`Row ${formatCount(result.offset + selected.row + 1)}`} value={rowObject(result.columns, selectedRow)} onClose={() => setSelected(undefined)} />
+              ) : (
+                <ValueDetail title={result.columns[selected.column]} value={selectedRow[selected.column] ?? null} onClose={() => setSelected(undefined)} />
+              )
             ) : null}
           </div>
         </div>

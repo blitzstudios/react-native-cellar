@@ -5,7 +5,7 @@ import { ActivityView } from './activity_view';
 import { CachesView, heapLabel } from './caches_view';
 import { EntitiesView } from './entities_view';
 import { CloseIcon, Empty, OpenIcon, SaveIcon, StateBadge } from './components';
-import { formatBytes, formatCount, quoteName, shortStoreName } from './format';
+import { formatBytes, formatCount, partitionRowsSql, shortStoreName } from './format';
 import { Overview } from './overview';
 import type { OverviewCleared } from './overview';
 import { PartitionsView } from './partitions_view';
@@ -70,8 +70,7 @@ export default function CellarPanel() {
     setRunTokens((current) => ({ ...current, [target.name]: (current[target.name] ?? 0) + 1 }));
     setTab('query');
   };
-  const queryPartition = (target: StoreOverview, key: string) =>
-    openQuery(target, `SELECT *\nFROM ${quoteName(target.schema.table)}\nWHERE partition_key = ?`, JSON.stringify([key]));
+  const queryPartition = (target: StoreOverview, key: string) => openQuery(target, partitionRowsSql(target), JSON.stringify([key]));
 
   return (
     <div className="panel">
