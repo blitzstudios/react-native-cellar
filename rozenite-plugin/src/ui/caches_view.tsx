@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { InspectedCache, InspectedCacheEntries, StoreOverview } from '../shared/protocol';
-import { DetailPane, Empty, ErrorBanner, JsonView } from './components';
+import { DetailPane, Empty, ErrorBanner, ValueDetail } from './components';
 import { formatAgo, formatBytes, formatCount } from './format';
 import { errorMessage, useNow } from './use_cellar';
 import type { CellarRpc } from './use_cellar';
@@ -8,6 +8,10 @@ import type { CellarRpc } from './use_cellar';
 /** How often the counts are read again while the tab is open, in ms: they move on every read, not only on writes. */
 const REFRESH_MS = 1500;
 const ENTRIES_PAGE = 25;
+
+type CacheEntry = InspectedCacheEntries['entries'][number];
+
+const entryKey = (entry: CacheEntry) => entry.key.join(' / ') || '∅';
 
 /** A cache's hits as a share of its lookups, or `null` before its first lookup. */
 export function hitRate(cache: InspectedCache): number | null {
@@ -31,6 +35,7 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
   const [caches, setCaches] = useState<InspectedCache[]>();
   const [error, setError] = useState<string>();
   const [open, setOpen] = useState<string>();
+  const [entry, setEntry] = useState<CacheEntry>();
   const now = useNow(REFRESH_MS);
 
   const load = useCallback(async () => {
@@ -53,7 +58,15 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
     { entries: 0, heap: 0, partial: false },
   );
   const selected = list.find((cache) => cache.cache === open);
-  const close = useCallback(() => setOpen(undefined), []);
+  const toggle = (cache: string | undefined) => {
+    setOpen(cache);
+    setEntry(undefined);
+  };
+  const close = useCallback(() => {
+    setOpen(undefined);
+    setEntry(undefined);
+  }, []);
+  const closeEntry = useCallback(() => setEntry(undefined), []);
 
   return (
     <div className="caches-view">
@@ -99,7 +112,7 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
                   const fill = cache.max ? Math.min(1, cache.entries / cache.max) : 0;
                   const isOpen = open === cache.cache;
                   return (
-                    <tr key={cache.name} className={`clickable-row${verdict ? ' row-warning' : ''}${isOpen ? ' row-open' : ''}`} onClick={() => setOpen(isOpen ? undefined : cache.cache)}>
+                    <tr key={cache.name} className={`clickable-row${verdict ? ' row-warning' : ''}${isOpen ? ' row-open' : ''}`} onClick={() => toggle(isOpen ? undefined : cache.cache)}>
                       <td>
                         <code>{cache.cache}</code>
                         {verdict ? <div className="warning small">{verdict}</div> : null}
@@ -151,8 +164,11 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
           {selected ? (
             <DetailPane title={<code>{selected.cache}</code>} meta={`per ${selected.kind} · keyed by ${selected.keyedBy}`} onClose={close}>
               {cacheVerdict(selected) ? <div className="warning">{cacheVerdict(selected)}</div> : null}
-              <CacheEntries key={selected.cache} rpc={rpc} store={store} cache={selected} />
+              <CacheEntries key={selected.cache} rpc={rpc} store={store} cache={selected} chosen={entry} onChoose={setEntry} />
             </DetailPane>
+          ) : null}
+          {selected && entry ? (
+            <ValueDetail title={entryKey(entry)} value={entry.value} meta={`v${entry.version} · ${heapLabel(entry.heapBytes)}`} onClose={closeEntry} />
           ) : null}
         </div>
       )}
@@ -161,10 +177,21 @@ export function CachesView({ rpc, store }: { rpc: CellarRpc | null; store: Store
 }
 
 /** A cache's entries, most recently used first, a page at a time. */
-function CacheEntries({ rpc, store, cache }: { rpc: CellarRpc | null; store: StoreOverview; cache: InspectedCache }) {
+function CacheEntries({
+  rpc,
+  store,
+  cache,
+  chosen,
+  onChoose,
+}: {
+  rpc: CellarRpc | null;
+  store: StoreOverview;
+  cache: InspectedCache;
+  chosen: CacheEntry | undefined;
+  onChoose: (entry: CacheEntry | undefined) => void;
+}) {
   const [page, setPage] = useState<InspectedCacheEntries>();
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<number>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -178,7 +205,6 @@ function CacheEntries({ rpc, store, cache }: { rpc: CellarRpc | null; store: Sto
   if (error) return <div className="error-text">{error}</div>;
   if (!page) return <div className="muted">…</div>;
   if (!page.total) return <div className="muted">Empty</div>;
-  const chosen = selected === undefined ? undefined : page.entries[selected];
   return (
     <div className="cache-entries">
       <div className="toolbar compact">
@@ -202,32 +228,26 @@ function CacheEntries({ rpc, store, cache }: { rpc: CellarRpc | null; store: Sto
             </tr>
           </thead>
           <tbody>
-            {page.entries.map((entry, index) => (
-              <tr key={`${entry.key.join('/')}-${index}`} className={`clickable-row${selected === index ? ' row-open' : ''}`} onClick={() => setSelected(selected === index ? undefined : index)}>
-                <td>
-                  {entry.key.map((part, partIndex) => (
-                    <code key={partIndex} className="key-part">
-                      {part || '∅'}
-                    </code>
-                  ))}
-                </td>
-                <td className="num">v{entry.version}</td>
-                <td className="num">{heapLabel(entry.heapBytes)}</td>
-              </tr>
-            ))}
+            {page.entries.map((entry, index) => {
+              const isChosen = !!chosen && entryKey(chosen) === entryKey(entry);
+              return (
+                <tr key={`${entry.key.join('/')}-${index}`} className={`clickable-row${isChosen ? ' row-open' : ''}`} onClick={() => onChoose(isChosen ? undefined : entry)}>
+                  <td>
+                    {entry.key.map((part, partIndex) => (
+                      <code key={partIndex} className="key-part">
+                        {part || '∅'}
+                      </code>
+                    ))}
+                  </td>
+                  <td className="num">v{entry.version}</td>
+                  <td className="num">{heapLabel(entry.heapBytes)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      {chosen ? (
-        <section className="entry-value">
-          <h4>
-            Value of <code>{chosen.key.join(' / ') || '∅'}</code>
-          </h4>
-          <JsonView value={chosen.value} />
-        </section>
-      ) : (
-        <div className="muted">Select an entry for its value</div>
-      )}
+      {chosen ? null : <div className="muted">Select an entry for its value</div>}
     </div>
   );
 }

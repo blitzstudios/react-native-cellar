@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { InspectedSummary } from '../shared/protocol';
 import { formatBytes, formatCell, isBlob, parseJsonText, partitionLabel } from './format';
@@ -85,15 +85,25 @@ export function JsonView({ value }: { value: unknown }) {
   return <pre className="json">{JSON.stringify(value, null, 2)}</pre>;
 }
 
+/** The open detail panes, oldest first: Escape closes only the newest, so a pane opened from another closes first. */
+const openPanes: object[] = [];
+
 /** What's selected in a view, beside it: hidden until something is, and closed with its ✕ or Escape. */
 export function DetailPane({ title, meta, actions, onClose, children }: { title: ReactNode; meta?: ReactNode; actions?: ReactNode; onClose: () => void; children: ReactNode }) {
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
+    const pane = {};
+    openPanes.push(pane);
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && openPanes[openPanes.length - 1] === pane) close.current();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      openPanes.splice(openPanes.indexOf(pane), 1);
+    };
+  }, []);
   return (
     <aside className="detail-pane" aria-label="Details">
       <header className="detail-pane-header">
@@ -128,13 +138,14 @@ export function PartitionLabel({ partitionKey }: { partitionKey: string }) {
 }
 
 /** A cell's whole value, or a whole row's: JSON pretty-printed, a blob as hex, text as it is. */
-export function ValueDetail({ title, value, onClose }: { title: string; value: unknown; onClose: () => void }) {
+export function ValueDetail({ title, value, meta: givenMeta, onClose }: { title: string; value: unknown; meta?: ReactNode; onClose: () => void }) {
   const row = typeof value === 'object' && value !== null && !isBlob(value) ? value : undefined;
   const json = row ?? parseJsonText(value);
   const [copied, setCopied] = useState(false);
   const text = json !== undefined ? JSON.stringify(json, null, 2) : isBlob(value) ? value.hex : formatCell(value);
   const meta =
-    row !== undefined
+    givenMeta ??
+    (row !== undefined
       ? `${Object.keys(row).length} columns`
       : value === null
         ? 'NULL'
@@ -142,7 +153,7 @@ export function ValueDetail({ title, value, onClose }: { title: string; value: u
           ? `blob · ${formatBytes(value.bytes)}${value.bytes > 64 ? ' (first 64 bytes)' : ''}`
           : json !== undefined
             ? 'JSON'
-            : typeof value;
+            : typeof value);
   return (
     <DetailPane
       title={<span className="value-detail-title">{title}</span>}

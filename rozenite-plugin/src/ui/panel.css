@@ -640,6 +640,11 @@ textarea:focus {
   background: var(--bg-soft);
 }
 
+.split:has(> .detail-pane + .detail-pane) > .detail-pane {
+  width: 32%;
+  min-width: 260px;
+}
+
 .detail-pane-header {
   display: flex;
   align-items: center;
@@ -1162,10 +1167,6 @@ h4 {
   padding: 0 4px;
   border-radius: 3px;
   background: var(--bg-hover);
-}
-
-.entry-value .json {
-  max-height: 420px;
 }
 
 tfoot td {

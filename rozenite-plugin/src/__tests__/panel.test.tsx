@@ -7,7 +7,7 @@ import { registerCellarHandlers } from '../react-native/handlers';
 import { PLUGIN_ID } from '../shared/protocol';
 import type { CellarEventMap } from '../shared/protocol';
 import CellarPanel from '../ui/panel';
-import { NBA, NFL, NFL_GAMES, gamesStore, loadSqlJs } from './fixtures';
+import { NBA, NFL, NFL_GAMES, cachedStore, gamesStore, loadSqlJs } from './fixtures';
 
 vi.mock('sql.js/dist/sql-wasm.wasm?url', async () => {
   const { createRequire } = await import('node:module');
@@ -104,6 +104,29 @@ it('shows every store’s writes in the global activity feed, and a store’s ca
   fireEvent.click(within(sidebar).getByTitle('panel_activity_store'));
   fireEvent.click(await screen.findByRole('tab', { name: 'Caches' }));
   expect(await screen.findByText('No caches')).toBeTruthy();
+});
+
+it('opens a cache entry’s value in its own pane beside the entries, which Escape closes first', async () => {
+  const store = await cachedStore('panel_cached_store');
+  store.lifecycle.teamsOf(NFL, ['KC', 'BUF']);
+  await renderPanel();
+  const sidebar = await screen.findByRole('navigation');
+  fireEvent.click(await within(sidebar).findByTitle('panel_cached_store'));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Caches' }));
+
+  fireEvent.click(await screen.findByText('teams'));
+  const entries = await screen.findByRole('complementary', { name: 'Details' });
+  fireEvent.click(await within(entries).findByText('season=2026&sport=nfl'));
+
+  const panes = await screen.findAllByRole('complementary', { name: 'Details' });
+  expect(panes).toHaveLength(2);
+  expect(panes[1].textContent).toContain('"BUF"');
+  expect(entries.textContent).not.toContain('"BUF"');
+
+  fireEvent.keyDown(window, { key: 'Escape' });
+  await waitFor(() => expect(screen.getAllByRole('complementary', { name: 'Details' })).toHaveLength(1));
+  fireEvent.keyDown(window, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Details' })).toBeNull());
 });
 
 it('lists one partition’s entities at a time, and moves to another partition using the same id', async () => {
