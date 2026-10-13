@@ -72,7 +72,7 @@ export interface InspectedPartition {
 export interface InspectedEntity {
   partition: string;
   id: string;
-  /** Its rows, previewed, at most 50. */
+  /** Its rows as `<table>__rows` stores them, each once with its `rid` and without `partition_key`; previewed, at most 50. */
   rows: unknown[];
   /** The partition version at which it last changed; 0 if it hasn't this session. */
   version: number;
@@ -312,6 +312,16 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
 
   const tableOrder = new Map([...Object.keys(schema.columns), meta.column, ...(meta.recordColumn ? [meta.recordColumn] : [])].map((column, index) => [column, index]));
 
+  // A store's entity rows are its stored rows, each once, rather than the view's row per partition holding one.
+  const perPartition = new Set<string>((schema.perPartition ?? []) as string[]);
+  const entityRowColumns = schema.partitioned
+    ? ['rid', ...Object.keys(schema.columns).filter((column) => column !== PARTITION_KEY_COLUMN && !perPartition.has(column))]
+    : Object.keys(schema.columns);
+  const { rows: rowsTable, members: membersTable } = sharedTableNames(schema.table);
+  const entityRowsSql = schema.partitioned
+    ? `SELECT r.* FROM ${quote(membersTable)} m JOIN ${quote(rowsTable)} r ON r.rid = m.rid WHERE m.${quote(PARTITION_KEY_COLUMN)} = ? AND r.${quote(schema.entityId)} = ? LIMIT 50;`
+    : `SELECT * FROM ${table} WHERE ${keyColumn} = ? AND ${quote(schema.entityId)} = ? LIMIT 50;`;
+
   /** The caches' totals, estimated at most every {@linkcode CACHE_TOTALS_MS}, since a summary is asked for after every burst of writes. */
   let totals: { at: number; value: InspectedSummary['caches'] } | undefined;
   const cacheTotals = async (): Promise<InspectedSummary['caches']> => {
@@ -426,7 +436,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
       if (!running) return { partition: partitionKey, id: entityId, rows: [], version: 0, cacheEntries, sameIdIn: [] };
       const entity = quote(schema.entityId);
       const [rows, others] = await Promise.all([
-        read<Record<string, unknown>>(running.conn, `SELECT * FROM ${table} WHERE ${keyColumn} = ? AND ${entity} = ? LIMIT 50;`, [partitionKey, entityId]),
+        read<Record<string, unknown>>(running.conn, entityRowsSql, [partitionKey, entityId]),
         read<{ key: string }>(running.conn, `SELECT DISTINCT ${keyColumn} AS key FROM ${table} WHERE ${entity} = ? AND ${keyColumn} <> ? ORDER BY ${keyColumn};`, [
           entityId,
           partitionKey,
@@ -436,7 +446,7 @@ export function createInspectedStore<Row extends RowShape>(source: InspectedStor
         partition: partitionKey,
         id: entityId,
         // In the table's column order, which nitro's row objects don't keep.
-        rows: rows.map((row) => previewValue(Object.fromEntries(Object.keys(schema.columns).map((column) => [column, row[column]])))),
+        rows: rows.map((row) => previewValue(Object.fromEntries(entityRowColumns.map((column) => [column, row[column]])))),
         version: running.entityVersionOf(partitionKey, entityId),
         cacheEntries,
         sameIdIn: others.map((other) => other.key),

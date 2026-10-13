@@ -198,7 +198,7 @@ describe('partitions', () => {
     expect(await inspected.entity('season=2026&sport=nfl', 'BUF')).toEqual({
       partition: 'season=2026&sport=nfl',
       id: 'BUF',
-      rows: [{ partition_key: 'season=2026&sport=nfl', team: 'BUF', sport: 'nfl', score: 21 }],
+      rows: [{ rid: expect.any(Number), team: 'BUF', sport: 'nfl', score: 21 }],
       version: 2,
       cacheEntries: [],
       sameIdIn: ['season=2026&sport=nba'],
