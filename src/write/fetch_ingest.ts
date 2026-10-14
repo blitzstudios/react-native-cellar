@@ -65,7 +65,19 @@ export interface RawQuery {
    * either way; this only decides when the partition's fetch state is discarded.
    */
   cacheTime?: number;
+  /**
+   * How many times a failed fetch is retried, or, given the failures so far (0 on the first) and the error, whether to
+   * retry. Defaults to the app's React Query default.
+   */
+  retry?: number | ((failureCount: number, error: unknown) => boolean);
+  /** The wait before each retry, in ms, or the wait given the failures so far (0 on the first) and the error. */
+  retryDelay?: number | ((failureCount: number, error: unknown) => number);
 }
+
+/** The parts of a partition's {@linkcode RawQuery} that go on its React Query query as they are. */
+type QueryPolicy = Pick<RawQuery, 'staleTime' | 'cacheTime' | 'retry' | 'retryDelay'>;
+
+const POLICY_KEYS = ['staleTime', 'cacheTime', 'retry', 'retryDelay'] as const;
 
 /**
  * How {@linkcode createFetchIngest} fetches and writes a store's partitions (a partition is the set of rows one fetch
@@ -227,15 +239,15 @@ export interface FetchIngest<Key> {
 }
 
 /**
- * The timings for a hook holding its position while addressing nothing: no keys at all, rather than keys carrying
+ * The policy for a hook holding its position while addressing nothing: no keys at all, rather than keys carrying
  * `undefined`.
  *
  * React Query reads `staleTime` off the observer with a `= 0` default, and `defaultQueryOptions` merges by spread, so
  * a key that is *present* and `undefined` overrides the client's configured default and lands on 0 — data is stale the
- * moment it arrives. Omitting the key lets the default stand. A store's partition has real timings whether or not a
- * given caller is enabled, so `timingsFor` is asked for them either way and this is only for an absent key.
+ * moment it arrives. Omitting the key lets the default stand. A store's partition has a real policy whether or not a
+ * given caller is enabled, so `policyFor` is asked for it either way and this is only for an absent key.
  */
-const NO_TIMINGS: { staleTime?: number; cacheTime?: number } = {};
+const NO_POLICY: QueryPolicy = {};
 
 /**
  * Above this, one partition landing is worth knowing about. Priming is by partition and a read of a slice pays for
@@ -441,26 +453,25 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
   };
 
   /**
-   * A key's stale and cache times and nothing else, safe to spread into a query spec:
+   * A key's {@linkcode QueryPolicy} and nothing else, safe to spread into a query spec:
    * {@linkcode FetchIngestConfig.rawQuery | rawQuery} hands back the whole request,
    * {@linkcode RawQuery.queryFn | queryFn} included, and spreading that would replace the ingest with the bare request.
-   * A time the store left undefined is left out rather than copied over, so it cannot override a configured default
+   * A field the store left undefined is left out rather than copied over, so it cannot override a configured default
    * with `undefined`.
    *
    * {@linkcode FetchIngestConfig.rawQuery | rawQuery} may throw during render — a locator short of a value — and the
    * request itself surfaces that.
    */
-  const timingsFor = (key: Key): { staleTime?: number; cacheTime?: number } => {
+  const policyFor = (key: Key): QueryPolicy => {
     let raw: RawQuery;
     try {
       raw = cfg.rawQuery(key);
     } catch {
-      return NO_TIMINGS;
+      return NO_POLICY;
     }
-    const timings: { staleTime?: number; cacheTime?: number } = {};
-    if (raw.staleTime !== undefined) timings.staleTime = raw.staleTime;
-    if (raw.cacheTime !== undefined) timings.cacheTime = raw.cacheTime;
-    return timings;
+    const policy: Record<string, unknown> = {};
+    for (const field of POLICY_KEYS) if (raw[field] !== undefined) policy[field] = raw[field];
+    return policy as QueryPolicy;
   };
 
   function usePrime(key: Key | undefined, enabled?: boolean, opts?: PrimeIntent): PrimeState {
@@ -472,14 +483,14 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     // Asked for whenever the key names a partition, not only when this caller is enabled. A disabled caller still
     // constructs the observer, and an observer constructed without a staleTime treats its data as stale on arrival —
     // it then fetches when it is enabled, however fresh the cache is.
-    const timings = addressable ? timingsFor(key as Key) : NO_TIMINGS;
+    const policy = addressable ? policyFor(key as Key) : NO_POLICY;
     // The runtime is installed once during startup, so which hook this resolves to is fixed for the app's lifetime.
     const runtime = queryRuntime();
     const result = runtime.useQuery<{ version: number; count: number }>({
       queryKey: queryKey(parts),
       queryFn: () => runIngest(key as Key),
       enabled: isEnabled,
-      ...timings,
+      ...policy,
       notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
       ...metaFor(opts),
     });
@@ -502,7 +513,7 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
             queryKey: queryKey(parts),
             queryFn: () => runIngest(key),
             enabled,
-            ...timingsFor(key),
+            ...policyFor(key),
             notifyOnChangeProps: NOTIFY_ON_PRIME_STATE,
             ...metaFor(opts),
           };
@@ -523,11 +534,11 @@ export function createFetchIngest<Key>(cfg: FetchIngestConfig<Key>): FetchIngest
     if (!addressesPartition(parts)) return Promise.resolve({ version: cfg.version.get(parts), count: 0 });
     if (__DEV__) noteFetchCaller(partitionLabel(parts), opts?.via ?? 'fetch');
     // Shares `usePrime`'s query key, so a partition a hook already primed resolves from the query cache — and that is
-    // `staleTime`'s decision, so the timings are spread rather than named, to keep an absent one absent.
+    // `staleTime`'s decision, so the policy is spread rather than named, to keep an absent field absent.
     return queryRuntime().client().fetchQuery<{ version: number; count: number }>({
       queryKey: queryKey(parts),
       queryFn: () => runIngest(key),
-      ...timingsFor(key),
+      ...policyFor(key),
       ...(opts?.staleTime === undefined ? {} : { staleTime: opts.staleTime }),
     });
   }

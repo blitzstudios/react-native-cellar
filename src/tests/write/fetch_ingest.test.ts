@@ -106,7 +106,8 @@ describe('createFetchIngest — timings never reach React Query as present-but-u
    * each observer once from its first render's options, so a prime that mounts disabled would bake that in and then
    * fetch as soon as it is enabled, however fresh the cache is. That is one full body per mount.
    */
-  const timingKeysOf = (options: Record<string, unknown>): string[] => Object.keys(options).filter((key) => key === 'staleTime' || key === 'cacheTime');
+  const timingKeysOf = (options: Record<string, unknown>): string[] =>
+    Object.keys(options).filter((key) => ['staleTime', 'cacheTime', 'retry', 'retryDelay'].includes(key));
 
   it('carries the partition timings even while the caller is disabled, since that is when the observer is built', () => {
     const harness = makeCfg();
@@ -165,6 +166,39 @@ describe('createFetchIngest — timings never reach React Query as present-but-u
     renderHook(() => ingest.usePrime('week'));
 
     expect(timingKeysOf(useFocusGatedQueryMock.mock.calls[0][0])).toEqual([]);
+  });
+});
+
+describe('createFetchIngest — a store’s retry policy', () => {
+  const retry = (failureCount: number): boolean => failureCount < 5;
+  const retryDelay = (failureCount: number): number => [0, 2000][failureCount] ?? 30000;
+  const withRetry = () =>
+    makeCfg({
+      rawQuery: jest.fn(() => ({ queryFn: jest.fn(), staleTime: 1000, retry, retryDelay })),
+    });
+
+  it('goes on every query the partition runs under: the prime, the primed set, and the prefetch', async () => {
+    const ingest = createFetchIngest(withRetry().cfg);
+
+    renderHook(() => ingest.usePrime('us'));
+    renderHook(() => ingest.usePrimeMany(['us', 'eu']));
+    await ingest.prefetch('us').catch(() => {});
+
+    expect(useFocusGatedQueryMock.mock.calls[0][0]).toMatchObject({ retry, retryDelay });
+    for (const query of useFocusGatedQueriesMock.mock.calls[0][0].queries) expect(query).toMatchObject({ retry, retryDelay });
+    expect(fetchQueryMock.mock.calls[0][0]).toMatchObject({ retry, retryDelay });
+  });
+
+  it("leaves the keys off when the store sets none, so the app's default stands", async () => {
+    const ingest = createFetchIngest(makeCfg().cfg);
+
+    renderHook(() => ingest.usePrime('us'));
+    await ingest.prefetch('us').catch(() => {});
+
+    expect(useFocusGatedQueryMock.mock.calls[0][0]).not.toHaveProperty('retry');
+    expect(useFocusGatedQueryMock.mock.calls[0][0]).not.toHaveProperty('retryDelay');
+    expect(fetchQueryMock.mock.calls[0][0]).not.toHaveProperty('retry');
+    expect(fetchQueryMock.mock.calls[0][0]).not.toHaveProperty('retryDelay');
   });
 });
 

@@ -64,6 +64,10 @@ export interface QuerySpec<T> {
   staleTime?: number;
   /** How long an unused query stays cached, in ms. */
   cacheTime?: number;
+  /** How many times a failed fetch is retried, or whether to retry given the failures so far and the error. */
+  retry?: number | ((failureCount: number, error: unknown) => boolean);
+  /** The wait before each retry, in ms, or the wait given the failures so far and the error. */
+  retryDelay?: number | ((failureCount: number, error: unknown) => number);
   /**
    * The result fields whose changes re-render the caller. Cellar passes
    * {@linkcode QueryStatus.isInitialLoading | isInitialLoading} and {@linkcode QueryStatus.isError | isError} only, so
@@ -92,7 +96,7 @@ export interface QueryStatus {
  */
 export interface QueryClient {
   /** Fetches a query, or returns its cached result if still fresh. */
-  fetchQuery: <T>(spec: Pick<QuerySpec<T>, 'queryKey' | 'queryFn' | 'staleTime' | 'cacheTime'>) => Promise<T>;
+  fetchQuery: <T>(spec: Pick<QuerySpec<T>, 'queryKey' | 'queryFn' | 'staleTime' | 'cacheTime' | 'retry' | 'retryDelay'>) => Promise<T>;
   /** Marks matching queries stale, refetching the ones in use. */
   invalidateQueries: (filters: {
     /** The key to match; queries whose key starts with it match, unless `exact`. */
