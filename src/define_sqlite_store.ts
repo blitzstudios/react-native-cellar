@@ -580,10 +580,7 @@ export function defineSqliteStore<
    */
   const buildGuarded = (conn: SqliteConnection, options: BindOptions): Functions => {
     let building = true;
-    // Set once the build returns. A surface the store has since moved off of is superseded: a write it still had in
-    // flight resumes on a connection nothing reads from any more — and, because nitro addresses a handle by name, may
-    // resume on the connection that replaced it, where none of its `TEMP` tables exist. What that write runs into is
-    // not news about the database the store runs on now, so it must neither be reported nor move the store.
+    // A failure on a surface the store has moved off of says nothing about the one it runs on.
     let built: Functions | undefined;
     const superseded = (): boolean => built !== undefined && running !== built;
     const guarded = guardedConnection(
