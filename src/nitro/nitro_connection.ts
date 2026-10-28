@@ -141,9 +141,9 @@ function isHandleInUse(error: unknown): boolean {
  *
  * {@linkcode closeNitroConnection} can only hand back handles this module's own map knows about, and that map lives in
  * the JS heap. An iOS CodePush reload replaces the JS runtime in the same native process, so the new runtime starts
- * with an empty map while nitro's registry still holds every handle the old one opened. The writer survives that,
- * because `open` addresses a database by name and re-registers it; a secondary handle's name is exclusive, so the
- * reader is the one that collides.
+ * with an empty map while nitro's registry still holds every handle the old one opened. `open` registers a writer over
+ * the old one without complaint, which leaks it ({@linkcode reclaimStaleWriter} closes it first); a secondary handle's
+ * name is exclusive, so the reader is the one that collides.
  *
  * Losing it is not the small thing it reads as. {@linkcode readRows} falls back to the writer handle, so the ranker's
  * multi statement `TEMP` work starts interleaving with an ingest's savepoint on one connection, SQLite refuses the
@@ -171,6 +171,15 @@ function openReader(name: string): ReturnType<typeof openSecondary> | undefined 
   return openSecondary({ name, handle: `${preferred}:${Date.now().toString(36)}` });
 }
 
+/** A JS reload leaves the previous runtime's writer registered natively; close it before opening our own. */
+function reclaimStaleWriter(name: string): void {
+  try {
+    NitroSQLite.native.close(name);
+  } catch {
+    /* nothing registered under the name: a cold start */
+  }
+}
+
 /** Options for {@linkcode openNitroConnection}. */
 export interface NitroConnectionOptions {
   /**
@@ -193,7 +202,9 @@ export function openNitroConnection(name: string, opts?: NitroConnectionOptions)
   // Reopening a database this process already holds — a Fast Refresh re-running init, or a store rebound after a
   // schema change — has to hand the previous handles back first. Registering over them would leak them, and because a
   // secondary handle's name is exclusive, the reader is the one that would not come back.
+  const heldByThisRuntime = openConnections.has(name);
   closeNitroConnection(name);
+  if (!heldByThisRuntime) reclaimStaleWriter(name);
 
   const writer = open({ name });
   applyPragmas(writer, name);
