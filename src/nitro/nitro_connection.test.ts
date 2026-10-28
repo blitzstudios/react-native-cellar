@@ -154,7 +154,7 @@ describe('openNitroConnection — the dedicated read handle', () => {
     expect(lastReport().context).toContain('a reopen and a refetch');
   });
 
-  // An iOS CodePush reload replaces the JS runtime inside the running process, so `openConnections` comes back empty
+  // A JS reload replaces the JS runtime inside the running process, so `openConnections` comes back empty
   // while nitro still holds every handle the previous runtime opened. The writer re-registers by name; the reader is
   // the one whose name is exclusive, and losing it is what puts the store's whole working set back on the JS heap.
   it('reclaims a reader handle a previous JS runtime left open, rather than giving it up', () => {

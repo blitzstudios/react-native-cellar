@@ -49,8 +49,8 @@ const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
 /**
  * A store on its in-memory fallback that a retry binds back onto its file still has the fallback's writes in flight.
- * Each resumes on the fallback's connection, and in the app on whatever nitro now holds under that name — such as a
- * fresh in-memory database with none of its `TEMP` tables (SLEEPER-PROD-84T1, SLEEPER-PROD-84GX).
+ * Each resumes on the fallback's connection, and on a device on whatever nitro now holds under that name — such as a
+ * fresh in-memory database with none of its `TEMP` tables.
  */
 describe('defineSqliteStore — a failure on a connection the store has moved off of', () => {
   beforeEach(() => {
