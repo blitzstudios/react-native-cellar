@@ -180,8 +180,9 @@ describe('openNitroConnection — the dedicated read handle', () => {
       throw handleInUse();
     });
     mockOpenSecondary.mockReturnValue(reader as never);
-    mockNativeClose.mockImplementationOnce(() => {
-      throw new Error('not ours to close');
+    // Keyed by name: the stale writer's close, which runs first when this runtime does not hold the name, goes through.
+    mockNativeClose.mockImplementation((handle: string) => {
+      if (handle === 'things:reader') throw new Error('not ours to close');
     });
 
     const conn = openNitroConnection('things', { dedicatedReader: true });
@@ -189,6 +190,7 @@ describe('openNitroConnection — the dedicated read handle', () => {
     expect(conn.reader).toBeDefined();
     expect(String(mockOpenSecondary.mock.lastCall?.[0].handle)).toMatch(/^things:reader:.+/);
     expect(captureException).not.toHaveBeenCalled();
+    mockNativeClose.mockImplementation(() => undefined);
   });
 });
 
@@ -327,6 +329,46 @@ describe('binding a store', () => {
  * untidy: they are what makes the *next* attempt — a retry, or a Fast Refresh re-running the same init — report a
  * handle collision on top of the failure that actually happened.
  */
+// The writer half of the same reload. nitro's `open` registers over a name it already holds without closing the old
+// handle, and every statement of a batch looks its handle up by name, so a batch the old runtime had in flight would
+// finish on the new handle and leave its `BEGIN EXCLUSIVE` open on the leaked one: every write after it fails as
+// `database is locked` until the app is killed.
+describe('openNitroConnection — the writer a previous JS runtime left open', () => {
+  it('closes it by name before opening its own, so it cannot keep the lock', () => {
+    mockOpen.mockReturnValue(fakeHandle() as never);
+
+    openNitroConnection('reloaded.db');
+
+    expect(mockNativeClose).toHaveBeenCalledWith('reloaded.db');
+    expect(mockNativeClose.mock.invocationCallOrder[0]).toBeLessThan(mockOpen.mock.invocationCallOrder[0]);
+  });
+
+  it('opens as usual when nothing is registered under the name, which is a cold start', () => {
+    mockOpen.mockReturnValue(fakeHandle() as never);
+    mockNativeClose.mockImplementationOnce(() => {
+      throw new Error('Database reloaded2.db is not open');
+    });
+
+    const conn = openNitroConnection('reloaded2.db');
+
+    expect(conn).toBeDefined();
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it('leaves the close to its own handles when this runtime already holds the name, as on a reopen', () => {
+    const first = fakeHandle();
+    mockOpen.mockReturnValue(first as never);
+    openNitroConnection('held.db');
+    mockNativeClose.mockClear();
+
+    mockOpen.mockReturnValue(fakeHandle() as never);
+    openNitroConnection('held.db');
+
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(mockNativeClose).not.toHaveBeenCalledWith('held.db');
+  });
+});
+
 describe('binding a store — the handles a failure opened', () => {
   const failingBind = (name: string, writer: FakeHandle, reader: FakeHandle) => {
     mockOpen.mockReturnValue(writer as never);
