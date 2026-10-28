@@ -140,7 +140,7 @@ function isHandleInUse(error: unknown): boolean {
  * Opens `name`'s dedicated reader, reclaiming the handle if a previous JS runtime left it open.
  *
  * {@linkcode closeNitroConnection} can only hand back handles this module's own map knows about, and that map lives in
- * the JS heap. An iOS CodePush reload replaces the JS runtime in the same native process, so the new runtime starts
+ * the JS heap. A JS reload replaces the JS runtime in the same native process, so the new runtime starts
  * with an empty map while nitro's registry still holds every handle the old one opened. `open` registers a writer over
  * the old one without complaint, which leaks it ({@linkcode reclaimStaleWriter} closes it first); a secondary handle's
  * name is exclusive, so the reader is the one that collides.
