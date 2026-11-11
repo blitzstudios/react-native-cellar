@@ -270,6 +270,43 @@ import { bindSqlJsStore } from '@sleeperhq/react-native-cellar/sqljs';
 initSqlJs({ locateFile: (file) => `/static/${file}` }).then((SQL) => bindSqlJsStore('items', SQL, itemStore));
 ```
 
+On a server that renders with React, such as Next.js, each store binds to a `node:sqlite` database of its own. A worker
+thread writes it, so parsing and writing a fetched body never holds up a render. The process also says it renders on
+the server:
+
+```ts
+import { configureCellar, reactQueryRuntime } from '@sleeperhq/react-native-cellar';
+import { bindNodeStore } from '@sleeperhq/react-native-cellar/node';
+
+configureCellar({ errors, query: reactQueryRuntime({ client: () => serverQueryClient, useQuery, useQueries }), serverRendering: true });
+bindNodeStore('items', itemStore);
+```
+
+With `serverRendering`, hooks never read a store or fetch: they answer from a snapshot, so the HTML is what the browser
+renders first, before its own stores are bound. A page's server code captures the reads its components will make and
+hands the snapshot to `CellarHydrate`:
+
+```tsx
+const snapshot = await dehydrateReads([
+  readCall(ItemService.Hooks.useGroupItems, { groupId }),
+  readCall(ScoreService.Hooks.useLiveScore, { gameId }, { live: true }),
+]);
+return <CellarHydrate snapshot={snapshot}><Page /></CellarHydrate>;
+```
+
+`dehydrateReads` fetches each read's partitions unless they are fresh, waits for them, and returns each read's value as
+plain data, filed under the read and its args. In the browser a read answers from it while its store has no rows for the
+partition, and doesn't fetch the partition, so a page whose server already sent what it shows downloads none of it
+again. `live: true` is for a value that keeps changing: the browser fetches the partition and moves to the store's value
+once it lands. A call the snapshot doesn't hold renders as it would without one, `empty` and loading, on the server and
+in the browser's first render alike.
+
+The server's query client is one per process, not per request, so a partition stays fresh across requests for its
+`staleTime` and two requests that need it share one fetch. The database is a file in the OS temp directory unless
+`path` names one, and since it is only a cache, binding deletes whatever was there. The `./node` entry is CommonJS,
+because its writer is a file beside it; a bundler should leave the package external (`serverExternalPackages` in
+Next.js).
+
 `useQuery` and `useQueries` are passed in rather than imported, so an app keeps its own fetch policy — focus
 gating, retries, whatever it already does. `reactQueryRuntime` takes React Query v4's hooks, or an app's wrappers of
 them, with whatever generics they declare. Until `configureCellar` runs Cellar is inert: reads answer
@@ -426,6 +463,8 @@ with nothing to compare against, its rows go straight in and every entity counts
 | --- | --- |
 | `configureCellar(services)` | where an error report goes, and the React Query runtime an ingest mounts on |
 | `reactQueryRuntime({ client, useQuery, useQueries })` | an app's React Query v4 client and hooks as that runtime, typed without casts at the call site |
+| `dehydrateReads(calls)`, `readCall(read, params, { live })` | a server's snapshot of what a page's reads answer, as plain data |
+| `CellarHydrate` | hands a snapshot to the reads under it, which answer from it until their store has the rows |
 | `createBoundedLru(max)` | the LRU map every cache here keeps its entries in, for an app's own bounded memo |
 | `reportStoreDegradation`, `createOnceGuard` | how Cellar reports a silent slowdown, and warn-once guards a test can reset |
 
@@ -436,6 +475,7 @@ with nothing to compare against, its rows go straight in and every entity counts
 | `@sleeperhq/react-native-cellar` | everything above: what a store, a service or a screen writes against |
 | `…/nitro` | `openNitroConnection`, `bindSqliteStore` and `retrySqliteStores`, over `react-native-nitro-sqlite` — the only part that touches native code — and `dumpSqliteStores`, which copies every store's database into one file for a desktop SQLite browser |
 | `…/sqljs` | `bindSqlJsStore` and `openSqlJsConnection`, over a sql.js module the app loads — what the web runs on |
+| `…/node` | `bindNodeStore` and `openNodeConnection`, over `node:sqlite`, with writes on a worker thread — what a server that renders runs on. CommonJS only |
 | `…/testing` | sql.js off-device (`createTestRowTable`, `createSqlJsConnection`), an in-process version atom, the host services as spies, and the internals only a test reaches for |
 | `…/diagnostics` | `getIngestTimings` and `rollupIngestTimings`, for a developer surface; no shipping screen reads these |
 | `…/inspector` | every declared store (`inspectedStores`) with its schema, where it runs, its partitions and the entities they changed lately, one entity (an id within a partition) with its rows and cache entries, its caches with their hits, misses, evictions, estimated heap and entries, and read-only SQL over its database a page at a time; and a log of what the stores did — writes, moves between databases, fetches, degradation reports with their numbers and callsite — with a listener for each new event (`onInspectorEvent`). What the DevTools plugin reads; the log is recorded in development builds only |
