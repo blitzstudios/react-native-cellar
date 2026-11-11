@@ -16,6 +16,8 @@ interface SqlJsStatement {
   step(): boolean;
   /** The current row, as an object keyed by column. */
   getAsObject(): unknown;
+  /** Ends the statement's run, so it can be bound and stepped again. */
+  reset(): void;
   /** Frees the statement. */
   free(): void;
 }
@@ -38,22 +40,44 @@ interface BindableStore {
   bindSqlite: (conn: SqliteConnection, options?: BindOptions) => void;
 }
 
+/** Prepared statements kept per database; a store runs a few dozen distinct ones, each of them over and over. */
+const STATEMENT_CACHE_MAX = 256;
+
 /**
  * Opens a new in-memory sql.js database as a {@linkcode SqliteConnection}. sql.js is synchronous, so the async methods
- * wrap the sync ones.
+ * wrap the sync ones. Statements are prepared once and kept, since an ingest runs the same insert once per row.
  */
 export function openSqlJsConnection(SQL: SqlJsModule): SqliteConnection {
   const db = new SQL.Database();
+  const statements = new Map<string, SqlJsStatement>();
+
+  /** The statement for `sql`, most recently used last, so the oldest is the one evicted. */
+  const prepared = (sql: string): SqlJsStatement => {
+    let statement = statements.get(sql);
+    if (statement) {
+      statements.delete(sql);
+    } else {
+      statement = db.prepare(sql);
+      if (statements.size >= STATEMENT_CACHE_MAX) {
+        const [oldest, evicted] = statements.entries().next().value as [string, SqlJsStatement];
+        statements.delete(oldest);
+        evicted.free();
+      }
+    }
+    statements.set(sql, statement);
+    return statement;
+  };
 
   const run = (sql: string, params?: ReadonlyArray<string | number | null | undefined>): QueryExecResult => {
-    const statement = db.prepare(sql);
+    const statement = prepared(sql);
     try {
       statement.bind((params ?? []).map((param) => (param === undefined ? null : param)));
       const rows: unknown[] = [];
       while (statement.step()) rows.push(statement.getAsObject());
       return { rows: { _array: rows } };
     } finally {
-      statement.free();
+      // A statement left mid-run holds its table, and SQLite refuses to drop or alter a table a statement holds.
+      statement.reset();
     }
   };
 
