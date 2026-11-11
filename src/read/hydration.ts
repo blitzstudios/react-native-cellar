@@ -89,9 +89,20 @@ type Entries = ReadonlyMap<string, SnapshotEntry>;
 
 const CONTEXT = Symbol.for('cellar.read.hydration');
 const registry = globalThis as unknown as Record<symbol, React.Context<Entries | undefined> | undefined>;
-// One context however many copies of Cellar a server bundle loads, so a provider from one reaches a read from another.
-const HydrationContext = (registry[CONTEXT] ??= React.createContext<Entries | undefined>(undefined));
-HydrationContext.displayName = 'CellarHydrate';
+
+/**
+ * One context however many copies of Cellar a server bundle loads, so a provider from one reaches a read from another.
+ * Made on first use: a React Server Component imports this module under a React build with no `createContext`.
+ */
+function hydrationContext(): React.Context<Entries | undefined> {
+  let context = registry[CONTEXT];
+  if (!context) {
+    context = React.createContext<Entries | undefined>(undefined);
+    context.displayName = 'CellarHydrate';
+    registry[CONTEXT] = context;
+  }
+  return context;
+}
 
 export interface CellarHydrateProps {
   /** What {@linkcode dehydrateReads} returned on the server. */
@@ -105,6 +116,7 @@ export interface CellarHydrateProps {
  * above, an inner entry winning.
  */
 export function CellarHydrate({ snapshot, children }: CellarHydrateProps): React.ReactElement {
+  const HydrationContext = hydrationContext();
   const outer = useContext(HydrationContext);
   const entries = useMemo(() => {
     const own = Object.entries(snapshot?.reads ?? {});
@@ -118,6 +130,6 @@ export function CellarHydrate({ snapshot, children }: CellarHydrateProps): React
 
 /** The snapshot entry for one read call, if a {@linkcode CellarHydrate} above holds one; `readId` undefined looks up nothing. */
 export function useHydrated(readId: string | undefined, argsKey: string): SnapshotEntry | undefined {
-  const entries = useContext(HydrationContext);
+  const entries = useContext(hydrationContext());
   return readId && entries ? entries.get(snapshotKeyOf(readId, argsKey)) : undefined;
 }

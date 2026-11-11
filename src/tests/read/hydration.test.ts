@@ -266,6 +266,22 @@ describe('a hook under CellarHydrate — in the browser', () => {
   });
 });
 
+describe('the module', () => {
+  it('loads under a React with no createContext, as a React Server Component imports it', () => {
+    jest.isolateModules(() => {
+      jest.doMock('react', () => ({ ...jest.requireActual('react'), createContext: undefined }));
+      const registry = globalThis as unknown as Record<symbol, unknown>;
+      const held = registry[Symbol.for('cellar.read.hydration')];
+      delete registry[Symbol.for('cellar.read.hydration')];
+
+      // eslint-disable-next-line global-require
+      expect(() => require('../../read/hydration')).not.toThrow();
+      registry[Symbol.for('cellar.read.hydration')] = held;
+      jest.dontMock('react');
+    });
+  });
+});
+
 describe('a hook — when the process renders on the server', () => {
   it('answers from the snapshot even when the store holds newer rows, so the HTML matches the snapshot the browser gets', async () => {
     const { snapshot, service } = await serverSnapshot((s) => [readCall(s.useCard, { sport: 'nfl', playerId: 'p1' })]);
