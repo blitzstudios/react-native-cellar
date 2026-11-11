@@ -4,7 +4,7 @@
  * or, for a call the main thread is blocked on, on the sync port with a signal it waits on.
  */
 
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { workerData, type MessagePort } from 'node:worker_threads';
 
 import { shredCommandStatements } from '../write/js_shred';
@@ -26,6 +26,14 @@ export type WriterRequest =
   | { id: number; sync: true; kind: 'ready' };
 
 export type WriterReply = { id: number; rows?: unknown[]; error?: { message: string; code?: string } };
+
+/**
+ * `node:sqlite`, loaded at run time rather than imported: a bundler that doesn't know the module yet would turn a static
+ * import into a reference it can't resolve, and fail the build of the server that bundles this.
+ */
+export function nodeSqlite(): typeof import('node:sqlite') {
+  return process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
+}
 
 /** Prepared statements kept per connection; a store runs a few dozen distinct ones over and over. */
 const STATEMENT_CACHE_MAX = 256;
@@ -55,7 +63,8 @@ function startWriter({ path, requests, replies, signal }: WriterData): void {
   const g = globalThis as { __DEV__?: boolean };
   g.__DEV__ ??= process.env.NODE_ENV !== 'production';
 
-  const db = new DatabaseSync(path);
+  const { DatabaseSync: Database } = nodeSqlite();
+  const db = new Database(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF; PRAGMA busy_timeout = 5000;');
   const prepare = statementCache(db);
   const run = (sql: string, params?: readonly Param[]): unknown[] => prepare(sql).all(...bindable(params));

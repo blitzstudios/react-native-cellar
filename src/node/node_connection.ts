@@ -8,13 +8,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { MessageChannel, receiveMessageOnPort, Worker } from 'node:worker_threads';
 
 import type { BindOptions } from '../define_sqlite_store';
 import { reportStoreDegradation } from '../diagnostics/telemetry';
 import type { BatchCommand, PinnedConnection, QueryExecResult, ShredCommand, SqliteConnection } from '../table/connection';
-import { bindable, statementCache, type Param, type WriterReply, type WriterRequest } from './writer';
+import { bindable, nodeSqlite, statementCache, type Param, type WriterReply, type WriterRequest } from './writer';
 
 /** How long a call the main thread blocks on may wait behind the writes queued ahead of it. */
 const SYNC_TIMEOUT_MS = 30_000;
@@ -111,6 +110,7 @@ export function openNodeConnection(options: NodeConnectionOptions = {}): NodeCon
 
   callSync({ kind: 'ready' });
 
+  const { DatabaseSync } = nodeSqlite();
   const db = new DatabaseSync(file);
   db.exec('PRAGMA busy_timeout = 5000;');
   const prepare = statementCache(db);
