@@ -7,6 +7,7 @@ import type { EachOf, Read, ReadAcross, ReadCallOptions } from './surface';
 import type { DataResult } from '../store_result';
 import type { CommonDef } from './surface';
 import type { RawQuery } from '../write/fetch_ingest';
+import { CAPTURE, type Capturable, type Captured, type readCall } from './hydration';
 
 /**
  * An id a caller may not have yet, such as a route param still loading. A published read accepts it as is, and returns
@@ -34,7 +35,7 @@ export type Loose<T> = { [K in keyof T]: T[K] | null | undefined };
 /**
  * A store read as a service publishes it (from {@linkcode pairRead}): a hook for components and a getter for other
  * code, which return the same value. The hook is named with `use` so React Compiler treats it as a hook rather than
- * memoizing the call away.
+ * memoizing the call away. Either can be handed to {@linkcode readCall} to capture the read for a server render.
  */
 export interface PairedRead<Params, T> {
   /**
@@ -42,26 +43,28 @@ export interface PairedRead<Params, T> {
    * state as a {@linkcode DataResult}, and re-renders the component when the value changes. Returns
    * {@linkcode CommonDef.empty | empty}, and fetches nothing, until every field it was passed has a value.
    */
-  useValue: (args: {
+  useValue: ((args: {
     /**
      * The read's args. Every value is nullable; the read returns {@linkcode CommonDef.empty | empty} until each has
      * one, apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}.
      */
     params: Params;
-  } & ReadOptions) => DataResult<T>;
+  } & ReadOptions) => DataResult<T>) &
+    Capturable<Params>;
   /**
    * The read's current value, for code outside a component. Starts a fetch if the partition has never been fetched (but
    * doesn't refetch a stale one), and returns {@linkcode CommonDef.empty | empty} until it has rows. Tracked: inside a
    * tracking scope (a {@linkcode PairedRead.useValue | useValue} read, `useTrackedStores`, a tracked selector), the
    * scope re-runs when the value changes.
    */
-  getValue: (args: {
+  getValue: ((args: {
     /**
      * The read's args. Every value is nullable; the read returns {@linkcode CommonDef.empty | empty} until each has
      * one, apart from the read's {@linkcode CommonDef.optionalArgs | optionalArgs}.
      */
     params: Params;
-  }) => T;
+  }) => T) &
+    Capturable<Params>;
 }
 
 /**
@@ -83,23 +86,24 @@ export function pairRead<Args, T>(read: () => Read<Args, T>): PairedRead<Loose<A
 export function pairRead<Args, T>(read: () => Read<Args, T> | ReadAcross<Args, T>): PairedRead<Loose<Args>, T> | PairedReadAcross<Loose<Args>, T> {
   // Sound because a read runs nothing until every value it was passed is in hand.
   const argsOf = (params: Loose<Args>): Args => params as unknown as Args;
+  const capturable = { [CAPTURE]: (params: Loose<Args>, live: boolean): Promise<Captured> => read().capture(argsOf(params), live) };
   return {
-    useValue: (args) => read().useValue(argsOf(args.params), args.options),
-    getValue: (args) => read().getValue(argsOf(args.params)),
-    useEach: (args) => {
+    useValue: Object.assign((args: { params: Loose<Args> } & ReadOptions) => read().useValue(argsOf(args.params), args.options), capturable),
+    getValue: Object.assign((args: { params: Loose<Args> }) => read().getValue(argsOf(args.params)), capturable),
+    useEach: Object.assign((args: { params: Loose<Args> } & ReadOptions) => {
       const current = read();
       if (!('useEach' in current)) throw new Error('useEach is only on a read across several partitions (defineReadAcross)');
       return current.useEach(argsOf(args.params), args.options);
-    },
+    }, capturable),
   };
 }
 
 /** A read across several partitions as a service publishes it: {@linkcode PairedRead}, plus its per-partition hook. */
 export interface PairedReadAcross<Params, T> extends PairedRead<Params, T> {
   /** One `DataResult` per partition the args name, in order: {@linkcode ReadAcross.useEach}. */
-  useEach: (args: { params: Params } & ReadOptions) => readonly DataResult<EachOf<T>>[];
+  useEach: ((args: { params: Params } & ReadOptions) => readonly DataResult<EachOf<T>>[]) & Capturable<Params>;
 }
 
 // Exported so the built declaration files keep these names in scope for the doc links above; an import that only a
 // doc comment uses is dropped from them.
-export type { CommonDef, DataResult, RawQuery, Read };
+export type { CommonDef, DataResult, RawQuery, Read, readCall };

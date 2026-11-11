@@ -55,6 +55,8 @@ export type { ShredOp, ShredSpec, NativeShredSpec } from './write/shred_spec';
 export { rowsOf } from './read/row_shaping';
 export type { MaybeId, ReadOptions, Loose, PairedRead, PairedReadAcross } from './read/facade';
 export { pairRead } from './read/facade';
+export type { Capturable, Captured, CellarHydrateProps, ReadCall, ReadSnapshot, SnapshotEntry } from './read/hydration';
+export { CAPTURE, CellarHydrate, dehydrateReads, readCall } from './read/hydration';
 export type { EachOf, ReadAcross } from './read/surface';
 export type { Coverage, CoverageProviderProps } from './read/coverage';
 export { createCoverage } from './read/coverage';

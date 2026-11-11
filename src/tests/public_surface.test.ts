@@ -28,19 +28,20 @@ function exportedFrom(entry: string): string[] {
 describe('the core entry point', () => {
   it('exports what a store, a service or a screen writes against, and nothing else', () => {
     expect(exportedFrom('index.ts')).toEqual([
-      'ALL_ENTITIES', 'BatchCommand', 'BoundedLru', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'CellarContext', 'ChangeSet',
+      'ALL_ENTITIES', 'BatchCommand', 'BoundedLru', 'CAPTURE', 'CacheDeclaration', 'CacheFactory', 'CacheKeyPart', 'Capturable',
+      'Captured', 'CellarContext', 'CellarHydrate', 'CellarHydrateProps', 'ChangeSet',
       'ColumnDef', 'Coverage', 'CoverageProviderProps', 'DATA_RESULT_KEYS', 'DataResult', 'DataStatus', 'DecodedRow', 'Dep',
       'DerivedValues', 'DerivedValuesDef', 'EachOf', 'EntityCacheDeclaration', 'Loose', 'MaybeId', 'NO_CHANGES',
       'NativeShredColumns', 'NativeShredSpec', 'PairedRead', 'PairedReadAcross', 'PartitionFetch', 'PartitionKeyColumn',
       'PartitionLifecycle', 'PartitionSpec', 'PinnedConnection', 'PrimeState', 'QueryClient',
-      'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RawQuery', 'ReadAcross', 'ReadGate',
-      'ReadGateRuntime', 'ReadOptions', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
-      'ShredColumnsBase', 'ShredCommand', 'ShredOp', 'ShredSpec', 'SqlValue', 'SqliteConnection', 'SqliteStore', 'StoreFetchSpec',
-      'StoreFunctions', 'StorePush', 'StorePushOf', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema',
+      'QueryRuntime', 'QuerySpec', 'QueryStatus', 'RawQuery', 'ReadAcross', 'ReadCall', 'ReadGate',
+      'ReadGateRuntime', 'ReadOptions', 'ReadSnapshot', 'RowOf', 'RowTable', 'RowTableSchema', 'ShredColumn', 'ShredColumns',
+      'ShredColumnsBase', 'ShredCommand', 'ShredOp', 'ShredSpec', 'SnapshotEntry', 'SqlValue', 'SqliteConnection', 'SqliteStore',
+      'StoreFetchSpec', 'StoreFunctions', 'StorePush', 'StorePushOf', 'StorePushSpec', 'StoreSurface', 'StoreTableSchema',
       'TrackedValueOptions', 'VersionAtom', 'WindowedBlock', 'WithReadSpec', 'WriteResult', 'WriteSteps',
       'byEntity', 'byPartition', 'configureCellar', 'createBoundedLru', 'createCoverage', 'createOnceGuard',
       'createSqliteRowTable', 'createTrackedSelector', 'createWindowedList', 'defineShredColumns', 'defineSqliteStore',
-      'makeResult', 'pairRead', 'partitionKeyOf', 'pinnedReader', 'reactQueryRuntime', 'readRows',
+      'dehydrateReads', 'makeResult', 'pairRead', 'partitionKeyOf', 'pinnedReader', 'reactQueryRuntime', 'readCall', 'readRows',
       'readRowsIn', 'reportStoreDegradation', 'rowsOf', 'runTracked', 'shallowEqualArray',
       'shallowEqualRecord', 'shallowEqualStruct', 'shallowEqualValue', 'shredColumnValue', 'useTrackedValue', 'withRead',
     ]);
