@@ -35,6 +35,29 @@ beforeAll(async () => {
   SQL = await factory({ locateFile: (file) => path.join(dist, file) });
 });
 
+/** sql.js, counting how often each statement is prepared and how many statements are freed. */
+function countingModule() {
+  const prepares = new Map<string, number>();
+  let frees = 0;
+  const module = {
+    Database: class {
+      private readonly db = new SQL.Database();
+
+      prepare(sql: string) {
+        prepares.set(sql, (prepares.get(sql) ?? 0) + 1);
+        const statement = this.db.prepare(sql);
+        const free = statement.free.bind(statement);
+        statement.free = () => {
+          frees += 1;
+          free();
+        };
+        return statement;
+      }
+    },
+  } as unknown as SqlJsModule;
+  return { module, prepared: (sql: string) => prepares.get(sql) ?? 0, freed: () => frees };
+}
+
 function itemStore() {
   return defineSqliteStore({
     name: 'items_store',
@@ -82,6 +105,50 @@ describe('sql.js on the web', () => {
     expect(conn.execute('SELECT count(*) AS n FROM t;').rows?._array).toEqual([{ n: 0 }]);
     conn.executeBatch!([['INSERT INTO t VALUES (?);', [1]], ['INSERT INTO t VALUES (?);', [2]]]);
     expect(conn.execute('SELECT count(*) AS n FROM t;').rows?._array).toEqual([{ n: 2 }]);
+  });
+
+  it('prepares a statement once, however many times it runs', () => {
+    const counted = countingModule();
+    const conn = openSqlJsConnection(counted.module);
+    conn.execute('CREATE TABLE t (x INTEGER);');
+
+    for (let x = 0; x < 50; x++) conn.execute('INSERT INTO t VALUES (?);', [x]);
+
+    expect(counted.prepared('INSERT INTO t VALUES (?);')).toBe(1);
+    expect(conn.execute('SELECT count(*) AS n FROM t;').rows?._array).toEqual([{ n: 50 }]);
+  });
+
+  it('runs a statement again after it failed partway', () => {
+    const conn = openSqlJsConnection(SQL);
+    conn.execute('CREATE TABLE t (x INTEGER PRIMARY KEY);');
+    conn.execute('INSERT INTO t VALUES (?);', [1]);
+
+    expect(() => conn.execute('INSERT INTO t VALUES (?);', [1])).toThrow();
+    conn.execute('INSERT INTO t VALUES (?);', [2]);
+    expect(conn.execute('SELECT x FROM t ORDER BY x;').rows?._array).toEqual([{ x: 1 }, { x: 2 }]);
+  });
+
+  it('leaves no statement holding a table, so the table can still be dropped and rebuilt', () => {
+    const conn = openSqlJsConnection(SQL);
+    conn.execute('CREATE TABLE t (x INTEGER);');
+    conn.execute('INSERT INTO t VALUES (?);', [1]);
+    conn.execute('SELECT x FROM t;');
+
+    conn.execute('DROP TABLE t;');
+    conn.execute('CREATE TABLE t (x INTEGER, y TEXT);');
+    conn.execute('INSERT INTO t VALUES (?, ?);', [2, 'two']);
+
+    expect(conn.execute('SELECT x, y FROM t;').rows?._array).toEqual([{ x: 2, y: 'two' }]);
+  });
+
+  it('keeps a bounded number of statements, freeing the least recently used', () => {
+    const counted = countingModule();
+    const conn = openSqlJsConnection(counted.module);
+    conn.execute('CREATE TABLE t (x INTEGER);');
+
+    for (let x = 0; x < 300; x++) conn.execute(`SELECT ${x} AS n FROM t;`);
+
+    expect(counted.freed()).toBe(300 + 1 - 256);
   });
 
   it('reports a bind that fails and leaves the store reading empty, rather than taking the page down', () => {
