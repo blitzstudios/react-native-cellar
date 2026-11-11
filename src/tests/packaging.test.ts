@@ -14,8 +14,15 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+import { configureCellar } from '../runtime';
+
 const ROOT = join(__dirname, '..', '..');
 const SUBPATHS = ['nitro', 'sqljs', 'testing', 'diagnostics', 'inspector', 'redux'];
+/**
+ * Subpaths that are CommonJS whatever the importer asks for: the Node entry starts its writer from a file beside it,
+ * which only CommonJS can locate. The state it shares with the core lives in a global slot rather than a module.
+ */
+const COMMONJS_ONLY = ['node'];
 
 function readPackage(...segments: string[]): Record<string, string> {
   return JSON.parse(readFileSync(join(ROOT, ...segments, 'package.json'), 'utf8'));
@@ -53,6 +60,24 @@ describe('entry point resolution', () => {
       .map((key) => key.replace(/^\.\//, ''))
       .sort();
 
-    expect(declared).toEqual([...SUBPATHS].sort());
+    expect(declared).toEqual([...SUBPATHS, ...COMMONJS_ONLY].sort());
+  });
+
+  it('sends a CommonJS-only subpath into the CommonJS build however it is imported, stub and exports alike', () => {
+    const exports = readPackage().exports as unknown as Record<string, Record<string, Record<string, string>>>;
+    for (const subpath of COMMONJS_ONLY) {
+      const entry = exports[`./${subpath}`];
+      const builds = [entry.import.default, entry.import.types, entry.require.default, entry.require.types, readPackage(subpath).main, readPackage(subpath).types];
+
+      expect(builds.map(buildOf)).toEqual(builds.map(() => 'commonjs'));
+    }
+  });
+
+  it('keeps the runtime a CommonJS-only subpath reads in one global slot, so both builds see one configuration', () => {
+    configureCellar({ serverRendering: true });
+    const slot = (globalThis as unknown as Record<symbol, { runtime: { serverRendering: boolean } } | undefined>)[Symbol.for('cellar.runtime')];
+
+    expect(slot?.runtime.serverRendering).toBe(true);
+    configureCellar({ serverRendering: false });
   });
 });

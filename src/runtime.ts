@@ -175,6 +175,13 @@ export interface CellarRuntime {
   query: QueryRuntime;
   /** The app's policy for when reads are live (subscribed to their data) and when they keep their last value. */
   gate: ReadGateRuntime;
+  /**
+   * Set in a process that renders on the server. Hooks answer only from the snapshot a `CellarHydrate` above them holds,
+   * never from a store, and never fetch, so the HTML is what the browser renders first, before its stores are bound.
+   * `getValue` and a store's lifecycle still read and fetch, which is how a server fills a snapshot with
+   * `dehydrateReads`.
+   */
+  serverRendering: boolean;
 }
 
 const unconfigured = createOnceGuard();
@@ -238,7 +245,11 @@ export const INERT_GATE: ReadGateRuntime = {
   useReadGate: () => ALWAYS_LIVE,
 };
 
-let runtime: CellarRuntime = { errors: INERT_ERRORS, query: INERT_QUERY, gate: INERT_GATE };
+const SLOT = Symbol.for('cellar.runtime');
+const slots = globalThis as unknown as Record<symbol, { runtime: CellarRuntime } | undefined>;
+// One configuration however many copies of Cellar a process loads: a server can reach the core through its ESM build and
+// through the CommonJS `./node` entry.
+const slot = (slots[SLOT] ??= { runtime: { errors: INERT_ERRORS, query: INERT_QUERY, gate: INERT_GATE, serverRendering: false } });
 
 /**
  * The React Query hooks and client an app already has, as Cellar's {@linkcode QueryRuntime}. The hooks can be React
@@ -266,26 +277,33 @@ export function reactQueryRuntime(hooks: {
  * configure them from different places, and a test can set one and leave the others as defaults.
  */
 export function configureCellar(next: Partial<CellarRuntime>): void {
-  runtime = {
-    errors: next.errors ?? runtime.errors,
-    query: next.query ?? runtime.query,
-    gate: next.gate ?? runtime.gate,
+  const current = slot.runtime;
+  slot.runtime = {
+    errors: next.errors ?? current.errors,
+    query: next.query ?? current.query,
+    gate: next.gate ?? current.gate,
+    serverRendering: next.serverRendering ?? current.serverRendering,
   };
+}
+
+/** Whether this process renders on the server; see {@linkcode CellarRuntime.serverRendering}. */
+export function isServerRendering(): boolean {
+  return slot.runtime.serverRendering;
 }
 
 /** The configured error sink. */
 export function errorSink(): ErrorSink {
-  return runtime.errors;
+  return slot.runtime.errors;
 }
 
 /** The configured query runtime. */
 export function queryRuntime(): QueryRuntime {
-  return runtime.query;
+  return slot.runtime.query;
 }
 
 /** The configured read gate runtime. */
 export function readGateRuntime(): ReadGateRuntime {
-  return runtime.gate;
+  return slot.runtime.gate;
 }
 
 /**
@@ -293,7 +311,7 @@ export function readGateRuntime(): ReadGateRuntime {
  * either way, so a call switching between the two keeps its hooks in the same order.
  */
 export function useReadGateFor(bypass: boolean | undefined): ReadGate {
-  const gate = runtime.gate.useReadGate();
+  const gate = slot.runtime.gate.useReadGate();
   return bypass ? ALWAYS_LIVE : gate;
 }
 

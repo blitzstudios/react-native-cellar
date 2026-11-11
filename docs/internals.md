@@ -439,6 +439,7 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | `push_ingest.ts`                                 | the push counterpart: buffer → dedupe → chunked write → bump, with per-partition holds for an in-flight fetch |
 | `shred_columns.ts`                               | co-located shred column table (each column's `sql` + its `js` twin), and `defineShredColumns`, which binds it to everything derived from it — `names`, `columnDefs`, `row`, `decode` (a stored row read back into JS values), and, once every column declares an `op`, `namedOps` and `ops` |
 | `shred_spec.ts`                                  | the native shred op language + its JS reference interpreter              |
+| `js_shred.ts`                                    | a native shred run in JS: the statements a shred command writes, built by the reference interpreter — what sql.js in tests and the Node writer run |
 
 | `read/` — how rows come out                      |                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------ |
@@ -447,6 +448,7 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | `row_shaping.ts`                                 | `rowsOf`: a query, then rows → list / ordered list / record / groups, each with the stable empty |
 | `derived_values.ts`                              | `byEntity` caches: a value per entity, built from the entity's rows by `fromRows` (usually a view model), kept until a write changes that entity, so a bump rebuilds only the entities that moved and every other reader gets the same reference back |
 | `facade.ts`                                      | what a service is written against: `pairRead`, so it exposes the hook and the imperative read together, plus the types its methods are spelled in (`ReadOptions`, `MaybeId`, `Loose`) |
+| `hydration.ts`                                   | read snapshots for a server render: `dehydrateReads` and `readCall` capture what reads answer, `CellarHydrate` hands it to the reads under it, and the lookup a hook makes before it reads its store. The context and the capture symbol are shared through `Symbol.for`, so a process loading two copies of Cellar still has one of each |
 | `windowed_list.ts`                               | windowed list reads (fetch a page, keep the rest in SQLite), and the per-row `useWindowedDetail` that indexes back into one |
 
 | `reactivity/` — how a write reaches a component  |                                                                          |
@@ -471,6 +473,11 @@ follow the trip a row takes: it lands in a `table/`, gets there through `write/`
 | `nitro/` — the device                            |                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------ |
 | `nitro_connection.ts`                            | the `SqliteConnection` over `react-native-nitro-sqlite`: pragmas, param coercion, the native shred sentinel, and the binds that degrade rather than throw |
+
+| `node/` — a server that renders                  |                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `node_connection.ts`                             | the `SqliteConnection` over `node:sqlite`: a reader on the main thread, and every write handed to the writer thread in order. A blocking call (`execute`, `executeBatch`) waits on a shared signal for its answer, which only happens inside a write's turn in the queue, where the writer is idle; WAL lets the reader run alongside a write |
+| `writer.ts`                                      | the worker thread that owns the database for writing: one ordered request port, a prepared-statement cache, and shred commands run through `js_shred.ts`, so parsing a body and writing its rows never land on the thread that renders |
 
 Two more entries ship beside the core one. `./diagnostics` holds what a developer surface dumps —
 `getIngestTimings` and `rollupIngestTimings` — kept out of the core entry because a shipping screen has no
