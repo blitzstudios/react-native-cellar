@@ -17,6 +17,7 @@ describe('pairRead', () => {
         calls.use.push([args, options]);
         return makeResult('used', 'success');
       },
+      capture: async () => undefined,
     };
     return { read, calls };
   };

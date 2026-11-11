@@ -32,7 +32,8 @@ import type { shallowEqualStruct } from '../caches';
 import type { byEntity } from './derived_values';
 import type { StoreSurface } from '../define_sqlite_store';
 import type { PrimeIntent } from '../write/fetch_ingest';
-import { queryRuntime, type QueryRuntime } from '../runtime';
+import { isServerRendering, queryRuntime, type QueryRuntime } from '../runtime';
+import { snapshotKeyOf, useHydrated, type Captured, type SnapshotEntry } from './hydration';
 
 /**
  * The parts of a store's fetch ingest that its reads use: the hooks that fetch partitions, and imperative fetch starts.
@@ -49,6 +50,8 @@ export interface FetchOwner<Key> {
   ensure: (key: Key) => void;
   /** Fetches a partition again now, however recently it was fetched. */
   refetch: (key: Key) => void;
+  /** Fetches a partition unless it is fresh, resolving once its rows are written; a server capture waits on it. */
+  prefetch?: (key: Key) => Promise<unknown>;
 }
 
 /**
@@ -246,6 +249,11 @@ export interface Read<Args, T> {
    * fetch's state as a {@linkcode DataResult}, and re-renders the component when the value changes.
    */
   useValue: (args: Args | undefined, options?: ReadCallOptions) => DataResult<T>;
+  /**
+   * Fetches the read's partitions unless they are fresh, waits for them, and returns the read's value as a snapshot
+   * entry. What `dehydrateReads` runs, through the facade.
+   */
+  capture: (args: Args | undefined, live: boolean) => Promise<Captured>;
 }
 
 /** The element type of a read's value when that value is a list, one entry per partition the read spans. */
@@ -383,12 +391,31 @@ function readGates(primes: () => boolean, addressable: boolean, primeWanted: boo
 }
 
 /**
- * The status and {@linkcode DataResult} every read ends with; `hasData` is a thunk, called once the read is known
- * enabled.
+ * Where a hook's value comes from beyond its store: the snapshot entry for its call, if any, and, when the process
+ * renders on the server, whether the browser's first render of it will be loading.
  */
-function useReadTail<T>(data: T, enabled: boolean, hasData: () => boolean, prime: PrimeState, doRefetch: () => void): DataResult<T> {
-  const status = runSubscribed(() => readStatus(enabled, enabled && hasData(), prime));
-  return useResult(data, status, prime.isFetching, doRefetch);
+interface Hydration {
+  entry: SnapshotEntry | undefined;
+  server: boolean;
+  serverLoading: boolean;
+}
+
+/** A hook with no snapshot entry, in a browser or on a device. */
+const UNHYDRATED: Hydration = Object.freeze({ entry: undefined, server: false, serverLoading: false });
+
+/**
+ * The status and {@linkcode DataResult} every read ends with; `hasData` is a thunk, called once the read is known
+ * enabled. A snapshot entry answers where the store has no rows for the read, and always on the server.
+ */
+function useReadTail<T>(data: T, enabled: boolean, hasData: () => boolean, prime: PrimeState, doRefetch: () => void, hydration = UNHYDRATED): DataResult<T> {
+  const present = runSubscribed(() => enabled && hasData());
+  const { entry, server } = hydration;
+  const fromSnapshot = entry !== undefined && (server || !present);
+  let status: DataStatus;
+  if (fromSnapshot) status = 'success';
+  else if (server) status = hydration.serverLoading ? 'loading' : 'success';
+  else status = readStatus(enabled, present, prime);
+  return useResult(fromSnapshot ? (entry.value as T) : data, status, prime.isFetching, doRefetch);
 }
 
 /** What a read's `select` returned when it stopped on an arg its caller didn't pass. */
@@ -518,6 +545,11 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       enabled: (args: object, enabled: ((args: never) => boolean) | undefined): boolean => predicate(args, enabled),
       /** The read's name in its store, for a warning or report to say which read it was. */
       label,
+      /** What a snapshot files the read under, its store and its name; undefined for a read no store has named. */
+      id: (): string | undefined => {
+        const name = self && readLabels.get(self);
+        return name ? `${store}.${name}` : undefined;
+      },
       /** Whether `prime` lets the read fetch; a `prime` that reads an arg its caller didn't pass doesn't. */
       primes: (args: object, prime: boolean | ((args: never) => boolean) | undefined): boolean =>
         typeof prime === 'function' ? predicate(args, prime) : prime ?? true,
@@ -580,12 +612,17 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const call = resolve(args);
       const key = call?.key;
       const parts = call ? call.parts : NO_PARTS;
-      const gates = gatesFor(args as Args, parts, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePriming(key, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? argsKeyOf(parts, args as object) : NO_ARGS_KEY;
-      if (__DEV__ && gates.read) noteRead(store, argsKey, batchSizeOf(args as object));
+      const hydrated = useHydrated(call ? runner.id() : undefined, argsKey);
+      const server = isServerRendering();
+      // A snapshot that isn't live is the read's answer until something else fetches the partition.
+      const primeWanted = (options?.prime ?? true) && !(hydrated && !hydrated.live);
+      const gates = gatesFor(args as Args, parts, (options?.enabled ?? true) && call !== undefined, primeWanted);
+      const live = gates.read && !server;
+      const prime = usePriming(key, gates.prime && !server, intentWith(call?.intent, options?.meta, runner.label));
+      if (__DEV__ && live) noteRead(store, argsKey, batchSizeOf(args as object));
       const data = useTrackedValue<T>(() => (hasOne(key as Key, parts) ? run(args as Args, key as Key, parts, () => argsKey) : def.empty), [argsKey], {
-        enabled: gates.read,
+        enabled: live,
         isEqual: def.isEqual ?? shallowEqualValue,
         empty: def.empty,
         bypassGate: bypassesGates(options?.meta),
@@ -593,10 +630,25 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const doRefetch = useCallback(() => {
         if (key !== undefined) ingest?.refetch(key);
       }, [argsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `argsKey` covers `key`
-      return useReadTail(data, gates.read, () => addressesPartition(parts) && hasOne(key as Key, parts), prime, doRefetch);
+      const hydration = hydrated || server ? { entry: hydrated, server, serverLoading: gates.read && gates.prime } : UNHYDRATED;
+      return useReadTail(data, live, () => addressesPartition(parts) && hasOne(key as Key, parts), prime, doRefetch, hydration);
     }
 
-    const read: Read<Args, T> = { getValue, useValue };
+    async function capture(args: Args | undefined, live: boolean): Promise<Captured> {
+      const id = runner.id();
+      if (!id) throw new Error(`${store}_store: only a read declared on a store can be captured for a snapshot`);
+      const call = resolve(args);
+      if (!call || !addressesPartition(call.parts)) return undefined;
+      const { key, parts } = call;
+      const gates = gatesFor(args as Args, parts, true);
+      if (!gates.read) return undefined;
+      if (gates.prime && ingest?.prefetch) await ingest.prefetch(key);
+      const argsKey = argsKeyOf(parts, args as object);
+      const value = hasOne(key, parts) ? runTracked(() => run(args as Args, key, parts, () => argsKey)).value : def.empty;
+      return [snapshotKeyOf(id, argsKey), live ? { value, live: true } : { value }];
+    }
+
+    const read: Read<Args, T> = { getValue, useValue, capture };
     runner.bind(read);
     return read;
   }
@@ -649,26 +701,36 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       return run(args as Args, call.keys, call.partitions, () => partitionsArgsKey(call.partitions, args as object));
     }
 
+    /** A call's snapshot entry, whether it renders on the server, and the gates that follow from both. */
+    const useCallGates = (args: Args | undefined, call: ReturnType<typeof resolve>, argsKey: string, options: ReadCallOptions | undefined) => {
+      const hydrated = useHydrated(call ? runner.id() : undefined, argsKey);
+      const server = isServerRendering();
+      const primeWanted = (options?.prime ?? true) && !(hydrated && !hydrated.live);
+      const gates = gatesFor(args as Args, call ? call.partitions : NO_PARTITIONS, (options?.enabled ?? true) && call !== undefined, primeWanted);
+      const hydration: Hydration = hydrated || server ? { entry: hydrated, server, serverLoading: gates.read && gates.prime } : UNHYDRATED;
+      return { live: gates.read && !server, prime: gates.prime && !server, hydration };
+    };
+
     function useValue(args: Args | undefined, options?: ReadCallOptions): DataResult<T> {
       const call = resolve(args);
       const keys = call ? call.keys : (NO_KEYS as readonly Key[]);
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
-      const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
+      const gates = useCallGates(args, call, argsKey, options);
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const data = useTrackedValue<T>(
         () => {
           trackPresence(partitions);
           return hasAny(entries) ? run(args as Args, keys, partitions, () => argsKey) : def.empty;
         },
         [argsKey],
-        { enabled: gates.read, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty, bypassGate: bypassesGates(options?.meta) },
+        { enabled: gates.live, isEqual: def.isEqual ?? shallowEqualValue, empty: def.empty, bypassGate: bypassesGates(options?.meta) },
       );
       const doRefetch = useCallback(() => {
         for (const key of keys) ingest?.refetch(key);
       }, [argsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `argsKey` covers `keys`
-      return useReadTail(data, gates.read, () => hasAny(entries), prime, doRefetch);
+      return useReadTail(data, gates.live, () => hasAny(entries), prime, doRefetch, gates.hydration);
     }
 
     function useEach(args: Args | undefined, options?: ReadCallOptions): readonly DataResult<EachOf<T>>[] {
@@ -676,9 +738,9 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const keys = call ? call.keys : (NO_KEYS as readonly Key[]);
       const entries = call ? call.entries : [];
       const partitions = call ? call.partitions : NO_PARTITIONS;
-      const gates = gatesFor(args as Args, partitions, (options?.enabled ?? true) && call !== undefined, options?.prime ?? true);
-      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const argsKey = call ? partitionsArgsKey(partitions, args as object) : NO_ARGS_KEY;
+      const gates = useCallGates(args, call, argsKey, options);
+      const prime = usePrimingAll(keys, gates.prime, intentWith(call?.intent, options?.meta, runner.label));
       const isEqual = def.isEqual ?? shallowEqualValue;
       // Which partitions hold rows is part of the tracked value, so one landing re-renders even when the value it adds
       // compares equal to the empty one it replaces.
@@ -690,7 +752,7 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
         },
         [argsKey],
         {
-          enabled: gates.read,
+          enabled: gates.live,
           isEqual: (left, right) => isEqual(left.value, right.value) && shallowEqualArray(left.present, right.present),
           empty: emptyEach,
           bypassGate: bypassesGates(options?.meta),
@@ -699,21 +761,46 @@ export function createReadSurface<Key>(kernel: ReadSurfaceKernel<Key>) {
       const doRefetch = useCallback(() => {
         for (const key of keys) ingest?.refetch(key);
       }, [argsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- `argsKey` covers `keys`
+      const { entry: hydrated, server, serverLoading } = gates.hydration;
+      const fromSnapshot = hydrated !== undefined && (server || !tracked.present.some(Boolean));
       return useMemo(
         () =>
           entries.map((entry, index) => {
-            const live = gates.read && addressesPartition(entry.parts);
-            const status = runSubscribed(() => readStatus(live, live && !!tracked.present[index], prime));
-            const items = tracked.value as unknown as readonly EachOf<T>[] | undefined;
+            const addressed = addressesPartition(entry.parts);
+            const items = (fromSnapshot ? hydrated?.value : tracked.value) as unknown as readonly EachOf<T>[] | undefined;
+            let status: DataStatus;
+            if (fromSnapshot) status = 'success';
+            else if (server) status = serverLoading && addressed ? 'loading' : 'success';
+            else {
+              const live = gates.live && addressed;
+              status = runSubscribed(() => readStatus(live, live && !!tracked.present[index], prime));
+            }
             return makeResult(items?.[index] as EachOf<T>, status, { isFetching: prime.isFetching, refetch: doRefetch });
           }),
         // `argsKey` covers `entries`; the prime state's fields, not its object, since the object is rebuilt each render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [tracked, argsKey, gates.read, prime.isInitialLoading, prime.isError, prime.isFetching, doRefetch],
+        [tracked, argsKey, gates.live, fromSnapshot, hydrated, server, serverLoading, prime.isInitialLoading, prime.isError, prime.isFetching, doRefetch],
       );
     }
 
-    const read: ReadAcross<Args, T> = { getValue, useValue, useEach };
+    async function capture(args: Args | undefined, live: boolean): Promise<Captured> {
+      const id = runner.id();
+      if (!id) throw new Error(`${store}_store: only a read declared on a store can be captured for a snapshot`);
+      const call = resolve(args);
+      if (!call || !call.partitions.some(addressesPartition)) return undefined;
+      const gates = gatesFor(args as Args, call.partitions, true);
+      if (!gates.read) return undefined;
+      if (gates.prime && ingest?.prefetch) {
+        const prefetch = ingest.prefetch;
+        await Promise.all(call.entries.filter((entry) => addressesPartition(entry.parts)).map((entry) => prefetch(entry.key)));
+      }
+      const argsKey = partitionsArgsKey(call.partitions, args as object);
+      const present = call.entries.map((entry) => addressesPartition(entry.parts) && hasOne(entry.key, entry.parts));
+      const value = present.some(Boolean) ? runTracked(() => run(args as Args, call.keys, call.partitions, () => argsKey)).value : def.empty;
+      return [snapshotKeyOf(id, argsKey), live ? { value, present, live: true } : { value, present }];
+    }
+
+    const read: ReadAcross<Args, T> = { getValue, useValue, useEach, capture };
     runner.bind(read);
     return read;
   }

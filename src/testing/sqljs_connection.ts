@@ -2,8 +2,7 @@
 
 import path from 'path';
 
-import { evalShredSpec } from '../write/shred_spec';
-import type { ShredSpec } from '../write/shred_spec';
+import { shredCommandStatements } from '../write/js_shred';
 import { BatchCommand, PinnedConnection, QueryExecResult, ShredCommand, SqliteConnection } from '../table/connection';
 
 interface SqlJsStatement {
@@ -73,26 +72,6 @@ export interface SqlJsConnectionOptions {
 function sanitize(params?: ReadonlyArray<string | number | null>): Array<string | number | null> {
   if (!params) return [];
   return params.map((param) => (param === undefined ? null : param));
-}
-
-function shredSql(spec: ShredSpec, rows: ReadonlyArray<Record<string, string | number | null | undefined>>, binds: ReadonlyArray<string | number | null>) {
-  const cmds: Array<[string, Array<string | number | null>]> = [];
-  const deleteWhere = spec.deleteWhere ?? [];
-  if (deleteWhere.length) {
-    const where = deleteWhere.map((column) => `${column.column} = ?`).join(' AND ');
-    cmds.push([`DELETE FROM ${spec.table} WHERE ${where};`, deleteWhere.map((column) => binds[column.bindIndex] ?? null)]);
-  }
-  const placeholders = spec.columns.map(() => '?').join(', ');
-  const insert = `${spec.insertVerb} INTO ${spec.table} (${spec.columns.join(', ')}) VALUES (${placeholders});`;
-  for (const row of rows) cmds.push([insert, spec.columns.map((column) => row[column] ?? null)]);
-  return cmds;
-}
-
-/** The statements a native shred runs for one command, which parse the body in JS here. */
-function shredCommandSql({ shred: spec, rawJson, binds }: ShredCommand) {
-  const parsed = JSON.parse(rawJson) as unknown;
-  const elements = spec.source === 'objectValues' ? Object.values(parsed as Record<string, unknown>) : (parsed as unknown[]);
-  return shredSql(spec, evalShredSpec(spec, elements, binds), binds);
 }
 
 /** Creates a connection to a new in-memory sql.js database. Requires {@linkcode initSqlJs} to have finished. */
@@ -189,7 +168,7 @@ export function createSqlJsConnection(options: SqlJsConnectionOptions = {}): Sql
       try {
         for (const command of commands) {
           if (Array.isArray(command)) run(...(command as BatchCommand));
-          else for (const [sql, params] of shredCommandSql(command as ShredCommand)) run(sql, params);
+          else for (const [sql, params] of shredCommandStatements(command as ShredCommand)) run(sql, params);
         }
         run('COMMIT;');
       } catch (error) {
